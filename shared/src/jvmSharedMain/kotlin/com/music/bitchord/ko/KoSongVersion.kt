@@ -532,7 +532,9 @@ internal object KoSongVersion {
                 // version"; say that it is retryable so the late retry's line
                 // can be read beside it.
                 val reason = if (definitive) "none" else "retry"
-                TrackLog.i(TAG, "song version: $videoId kept ($reason)", about = videoId)
+                val line = "song version: $videoId kept ($reason)"
+                // [KO] G7: the row is checked as it becomes next and again on prepare; say a verdict once.
+                if (!definitive || KoRepeatLog.shouldLog(videoId, line)) TrackLog.i(TAG, line, about = videoId)
             }
         } else {
             TrackLog.i(

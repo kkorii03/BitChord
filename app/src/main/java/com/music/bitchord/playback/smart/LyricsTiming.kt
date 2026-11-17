@@ -975,6 +975,9 @@ object LyricsTiming {
     /** Last base-apply line per (song, source): logged again only when it changes. */
     private val loggedBaseApply = ConcurrentHashMap<String, String>()
 
+    /** Last base-choice line per (song, source): logged again only when it changes (LOG-1117 G7). */
+    private val loggedBaseChoice = ConcurrentHashMap<String, String>()
+
     /**
      * The base the strongest heard evidence picked, per (song, source, sheet).
      *
@@ -1006,6 +1009,7 @@ object LyricsTiming {
     internal fun resetForTest() {
         loggedClocks.clear()
         loggedBaseApply.clear()
+        loggedBaseChoice.clear()
         baseDecisions.clear()
         loggedBaseKept.clear()
         loggedAiOtherLyrics.clear()
@@ -1186,11 +1190,12 @@ object LyricsTiming {
             val detail = choice.scores.joinToString(" ") { (name, score) ->
                 "$name:${score.medianAbsMs}/${(score.withinRatio * 100).roundToInt()}%/${score.matched}"
             }
-            TrackLog.d(
-                TAG,
-                "base-choice: $detail -> ${choice.name}" + (choice.reason?.let { " ($it)" } ?: ""),
-                videoId,
-            )
+            val line = "base-choice: $detail -> ${choice.name}" + (choice.reason?.let { " ($it)" } ?: "")
+            // [KO] G7: every timing pass asks again; log a (song, source) only when its line changes.
+            if (loggedBaseChoice.put("$videoId|${audioSource ?: ""}", line) != line) {
+                if (loggedBaseChoice.size > 3_000) loggedBaseChoice.clear()
+                TrackLog.d(TAG, line, videoId)
+            }
         }
         val chosen = when (choice.name) {
             BaseChoicePolicy.MEASURED -> measured

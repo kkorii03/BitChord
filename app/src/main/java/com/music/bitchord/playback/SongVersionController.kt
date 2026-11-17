@@ -878,15 +878,15 @@ internal class SongVersionController(
             // The skip verdict itself was taken above, before the local-file
             // reason; this is the log for a row that stays.
             if (skipOfficialMv(exoPlayer, lookupSong, audioReleaseMissing = true, userAsked = userAsked)) return
-            TrackLog.i(
-                "BitChord",
-                if (localFile) {
-                    "song version: ${song.videoId} kept (local file, none)"
-                } else {
-                    "song version: ${song.videoId} kept (none)"
-                },
-                about = song.videoId,
-            )
+            val keptLine = if (localFile) {
+                "song version: ${song.videoId} kept (local file, none)"
+            } else {
+                "song version: ${song.videoId} kept (none)"
+            }
+            // [KO] G7: the same verdict is reached again on prepare; say it once.
+            if (com.music.bitchord.ko.KoRepeatLog.shouldLog(song.videoId, keptLine)) {
+                TrackLog.i("BitChord", keptLine, about = song.videoId)
+            }
             releaseVersionHold(exoPlayer)
             return
         }
@@ -1015,12 +1015,10 @@ internal class SongVersionController(
                             YtMusicRepository.isSongVersionMissing(lookupSong.videoId),
                         userAsked = userAsked,
                     )
-                    if (!skipped && localFile) {
-                        TrackLog.i(
-                            "BitChord",
-                            "song version: ${song.videoId} kept (local file, none)",
-                            about = song.videoId,
-                        )
+                    val keptLine = "song version: ${song.videoId} kept (local file, none)"
+                    // [KO] G7: say a repeated verdict once.
+                    if (!skipped && localFile && com.music.bitchord.ko.KoRepeatLog.shouldLog(song.videoId, keptLine)) {
+                        TrackLog.i("BitChord", keptLine, about = song.videoId)
                     }
                 }
             } finally {

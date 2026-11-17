@@ -1,6 +1,9 @@
 package com.music.bitchord.playback
 
+import com.music.bitchord.data.LyricsFacts
+import com.music.bitchord.data.TrackDiagnostics
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.playback.smart.LyricsTiming
 import java.util.Locale
 
 /**
@@ -23,5 +26,33 @@ internal object NextPrepLog {
         applied -> "applied"
         attempted -> "skipped"
         else -> "off"
+    }
+
+    /**
+     * The per-track summary's lyrics fact for a row this bundle prepared, in
+     * the lyrics screen's own words ([LyricsSource.label], [TrackDiagnostics.syncLabel]),
+     * so a track played with no lyrics screen still reports what was found
+     * (LOG-1117 G1). Null when the bundle found no lyrics.
+     */
+    fun summaryFacts(
+        source: LyricsSource?,
+        hasLines: Boolean,
+        timing: LyricsTiming.Timing?,
+    ): LyricsFacts? {
+        if (!hasLines) return null
+        val base = timing?.base
+        val baseLabel = when {
+            base == null -> "none"
+            base.byAi -> "ai"
+            else -> "measured"
+        }
+        val manualMs = timing?.manualMs ?: 0L
+        return LyricsFacts(
+            provider = source?.label ?: "file",
+            sync = TrackDiagnostics.syncLabel(baseLabel, manualMs),
+            shiftMs = null,
+            matchPercent = (base as? LyricsTiming.Adjustment.Mapped)?.matchPercent,
+            manualOffsetMs = manualMs,
+        )
     }
 }

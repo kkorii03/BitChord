@@ -402,7 +402,19 @@ class FeatureHealthCounterStore(
 class FeatureHealthObserver(
     private val bump: (String, Long) -> Unit,
 ) {
-    private var processStartAt = 0L
+    /**
+     * D10 is a launch: the first time this process's window came to the front.
+     * A process the system relaunched after a low-memory kill, or one the widget
+     * or a media button started without a window, is not a launch and is not
+     * counted (LOG-1117 G3). One observer lives per process, so the first
+     * foreground it sees is the process's first.
+     */
+    private var launchCounted = false
+    private var launchOpen = false
+
+    /** Song-version rows already counted, per id and UTC day; see [songVersion]. */
+    private val versionAttempted = boundedSet()
+    private val versionSwapped = boundedSet()
 
     fun observe(tag: String, message: String, atMs: Long) {
         when {
@@ -432,7 +444,7 @@ class FeatureHealthObserver(
                 bump(FeatureHealthCounterKeys.D4_ATTEMPTS, 1L)
                 if (picked > 0L) bump(FeatureHealthCounterKeys.D4_SUCCESS, 1L)
             }
-            message.startsWith("song version: ") -> songVersion(message)
+            message.startsWith("song version: ") -> songVersion(message, atMs)
             message.startsWith("track-summary: ") -> trackSummary(message)
             message.startsWith("crossfade: start ") -> bump(FeatureHealthCounterKeys.D7_START, 1L)
             message.startsWith("crossfade: end ") -> bump(FeatureHealthCounterKeys.D7_END, 1L)
@@ -443,14 +455,24 @@ class FeatureHealthObserver(
                 bump(FeatureHealthCounterKeys.D9_DOWNLOAD, 1L)
             message.startsWith("hq-library: ") && message.contains(" did not land") ->
                 bump(FeatureHealthCounterKeys.D9_HQ_LIBRARY, 1L)
-            message.startsWith("lifecycle: process start") -> {
-                processStartAt = atMs
-                bump(FeatureHealthCounterKeys.D10_ATTEMPTS, 1L)
-            }
             message.startsWith("lifecycle: foreground") -> {
-                if (processStartAt > 0L && atMs - processStartAt <= FOREGROUND_WINDOW_MS) {
+                val first = synchronized(this) {
+                    val isFirst = !launchCounted
+                    if (isFirst) {
+                        launchCounted = true
+                        launchOpen = true
+                    }
+                    isFirst
+                }
+                if (first) bump(FeatureHealthCounterKeys.D10_ATTEMPTS, 1L)
+            }
+            // StartupTrace measures this from the first foreground, so it is the
+            // launch's own cost: a launch that reached Home content in time.
+            message.startsWith(FIRST_HOME_CONTENT) -> {
+                val ms = message.removePrefix(FIRST_HOME_CONTENT).substringBefore(' ').toLongOrNull()
+                val open = synchronized(this) { launchOpen.also { launchOpen = false } }
+                if (open && ms != null && ms <= FOREGROUND_WINDOW_MS) {
                     bump(FeatureHealthCounterKeys.D10_SUCCESS, 1L)
-                    processStartAt = 0L
                 }
             }
         }
@@ -480,17 +502,52 @@ class FeatureHealthObserver(
         }
     }
 
-    private fun songVersion(message: String) {
+    /**
+     * D5 asks "when a row needed its song version, did it get one?", once per
+     * row and day (LOG-1117 G2). A row that already is the song (`kept (none)`,
+     * `-> none via none|cache`, a cover) needed nothing and is not an attempt;
+     * the same row checked again when it becomes next and again on prepare is
+     * one row, not two. A timeout, a retryable miss or a refused late swap is
+     * a wanted swap that did not happen; a line that names a recording and is
+     * not a refusal is the swap.
+     */
+    private fun songVersion(message: String, atMs: Long) {
         val body = message.removePrefix("song version: ")
-        if (body.contains(" kept (")) {
-            bump(FeatureHealthCounterKeys.D5_ATTEMPTS, 1L)
+        val id = body.substringBefore(' ')
+        if (id.isBlank()) return
+        val keptAt = body.indexOf(" kept (")
+        val arrow = body.indexOf(" -> ")
+        val swapped: Boolean
+        if (keptAt >= 0 && (arrow < 0 || keptAt < arrow)) {
+            val reason = body.substring(keptAt + 7).substringBefore(')')
+            if (reason == "none" || reason == "local file, none") return
+            swapped = false
+        } else if (arrow >= 0) {
+            val rest = body.substring(arrow + 4)
+            val destination = rest.substringBefore(' ')
+            val how = rest.substringAfter(' ', "")
+            if (isNone(destination)) {
+                // A definitive "no version" in the non-before-audio shape, or a
+                // cover / a row with no title: nothing to swap to. Only a miss
+                // the lookup could not settle is a wanted swap.
+                if (!how.startsWith("via retry")) return
+                swapped = false
+            } else {
+                swapped = !how.contains("refused") &&
+                    !how.contains("cancelled") &&
+                    !how.startsWith("late swap starting") &&
+                    !how.startsWith("late swap folded")
+            }
+        } else {
             return
         }
-        val arrow = body.indexOf(" -> ")
-        if (arrow < 0) return
-        bump(FeatureHealthCounterKeys.D5_ATTEMPTS, 1L)
-        val destination = body.substring(arrow + 4).substringBefore(' ')
-        if (!isNone(destination)) bump(FeatureHealthCounterKeys.D5_SWAPS, 1L)
+        val key = "$id|${atMs / DAY_MS}"
+        // TrackLog calls the observer from any thread.
+        val (newAttempt, newSwap) = synchronized(this) {
+            versionAttempted.add(key) to (swapped && versionSwapped.add(key))
+        }
+        if (newAttempt) bump(FeatureHealthCounterKeys.D5_ATTEMPTS, 1L)
+        if (newSwap) bump(FeatureHealthCounterKeys.D5_SWAPS, 1L)
     }
 
     private fun trackSummary(message: String) {
@@ -543,6 +600,17 @@ class FeatureHealthObserver(
     private companion object {
         const val FOREGROUND_WINDOW_MS = 10_000L
         const val FIRST_AUDIO_LIMIT_MS = 3_000L
+        const val DAY_MS = 24L * 60L * 60L * 1000L
+        const val FIRST_HOME_CONTENT = "startup first-home-content: "
+        const val MAX_VERSION_KEYS = 1_024
+
+        /** An insertion-ordered set that forgets its oldest key past [MAX_VERSION_KEYS]. */
+        fun boundedSet(): MutableSet<String> = java.util.Collections.newSetFromMap(
+            object : LinkedHashMap<String, Boolean>() {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>) =
+                    size > MAX_VERSION_KEYS
+            },
+        )
     }
 }
 

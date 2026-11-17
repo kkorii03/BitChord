@@ -5408,7 +5408,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun logTrackSummary(previousEnded: Boolean) {
         val song = summarySong ?: return
-        val lyrics = TrackDiagnostics.lyricsFor(song.videoId)
+        val lyrics = TrackDiagnostics.summaryLyricsFor(song.videoId) // [KO] G1: next-prep's fact for a background play
         val ended = summaryEndedOverride ?: if (previousEnded) "natural" else "skipped"
         TrackLog.i(
             "BitChord",

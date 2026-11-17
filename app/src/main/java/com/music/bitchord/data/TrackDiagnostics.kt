@@ -89,6 +89,30 @@ object TrackDiagnostics {
     fun lyricsFor(videoId: String): LyricsFacts? = synchronized(this) { facts[videoId] }
 
     /**
+     * What the service's next-prep found for [videoId], for a track no lyrics
+     * screen ever computed (LOG-1117 G1: 92% of `lyrics=none` summaries were
+     * background plays whose next-prep had found and timed the lyrics). Kept
+     * apart from [facts]: [lyricsFor] still means "the lyrics engine published
+     * this track", and a fact from [noteLyricsSync] always wins in
+     * [summaryLyricsFor]. Logs nothing.
+     */
+    private val prepared = LinkedHashMap<String, LyricsFacts>()
+
+    fun notePreparedLyrics(videoId: String, facts: LyricsFacts) {
+        if (videoId.isBlank() || facts.provider.isBlank()) return
+        synchronized(this) {
+            if (prepared.size >= MAX_TRACKS && !prepared.containsKey(videoId)) {
+                prepared.remove(prepared.keys.first())
+            }
+            prepared[videoId] = facts
+        }
+    }
+
+    /** The facts the per-track summary reports: the engine's, else next-prep's. */
+    fun summaryLyricsFor(videoId: String): LyricsFacts? =
+        synchronized(this) { facts[videoId] ?: prepared[videoId] }
+
+    /**
      * The listener's "report a problem" mark: the playing moment, the lyric
      * line that was under it, and what the engine believed it was playing.
      */

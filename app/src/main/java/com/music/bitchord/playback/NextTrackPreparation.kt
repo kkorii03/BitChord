@@ -738,6 +738,10 @@ internal class NextTrackPreparation(
                 if (deadlineHit) " (deadline)" else "",
             about = song.videoId,
         )
+        // [KO] G1: a track played in the background has no lyrics screen to say what was found.
+        NextPrepLog.summaryFacts(found?.source, lines != null, timing)?.let {
+            com.music.bitchord.data.TrackDiagnostics.notePreparedLyrics(song.videoId, it)
+        }
         // One line for the sync result alone: `answered`, `no-answer` (the
         // engine ran and found nothing to correct), or `failed:<reason>`.
         // The old `sync=` field stays for existing readers; this line is what
