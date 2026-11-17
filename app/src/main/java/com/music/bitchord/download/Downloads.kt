@@ -341,13 +341,14 @@ object Downloads {
                     false
                 } else {
                     running[id] = null
+                    com.music.bitchord.ko.downloads.KoDownloadQueue.rememberPlain(id) // [KO] plain terms
                     true
                 }
             }
         }
         claimed.forEach { song ->
             _active.update { it + (song.videoId to DownloadState.Queued) }
-            DownloadSession.queued(song, from)
+            DownloadSession.queued(song, from, com.music.bitchord.ko.downloads.KoDownloadQueue.plainRetryPlan()) // [KO] plain terms
         }
         val slots = Semaphore(BATCH_WORKERS)
         try {

@@ -460,6 +460,23 @@ internal object KoDownloadRecords {
 
     fun suspectsSnapshot(): Map<String, Long> = _mvSoundSuspects.value
 
+    /**
+     * Where the file now saved for [videoId] came from, or null when nothing is
+     * saved for it; see [KoDownloadPipeline.repairReplacesUpload]. Read it
+     * before a new record is written, while the old aliases still name the file.
+     */
+    fun fileOriginFor(videoId: String): KoDownloadPipeline.FileOrigin? {
+        open()
+        val saved = Downloads.savedValue()
+        val metadata = Downloads.savedMetadataValue()
+        val uri = saved[videoId] ?: metadata[videoId]?.uri ?: return null
+        return KoDownloadPipeline.FileOrigin(
+            soundSourceId = metadata[videoId]?.soundSourceVideoId,
+            fileIds = saved.filterValues { it == uri }.keys + videoId,
+            songIdOfFile = songIdForFile(videoId),
+        )
+    }
+
     /** The song id for the file [videoId] names: the shortest of the ids filed against it. */
     fun songIdForFile(videoId: String): String {
         open()

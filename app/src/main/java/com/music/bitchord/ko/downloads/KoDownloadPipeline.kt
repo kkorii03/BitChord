@@ -195,6 +195,18 @@ internal object KoDownloadPipeline {
     data class PreviousRecordState(
         val uris: Set<String>,
         val suspects: List<String>,
+        /** Per id: where the old file's bytes came from, read before the new record ([repairReplacesUpload]). */
+        val origins: Map<String, FileOrigin> = emptyMap(),
+    )
+
+    /** What the record of one id says about the upload its file was fetched from. */
+    data class FileOrigin(
+        /** The recorded provenance, null on a legacy record. */
+        val soundSourceId: String?,
+        /** Every id filed against the same file, this one included. */
+        val fileIds: Set<String>,
+        /** The song side of the file ([KoDownloadRecords.songIdForFile]). */
+        val songIdOfFile: String,
     )
 
     /** The old files this record named, and the length verdicts that pointed at them. */
@@ -208,7 +220,31 @@ internal object KoDownloadPipeline {
             val old = metadata[id]?.uri ?: saved[id]
             old != null && (old == uri.toString() || old in previousUris)
         }
-        return PreviousRecordState(previousUris, previousSuspects)
+        val origins = ids.mapNotNull { id -> KoDownloadRecords.fileOriginFor(id)?.let { id to it } }.toMap()
+        return PreviousRecordState(previousUris, previousSuspects, origins)
+    }
+
+    /**
+     * Whether fetching [fetchedId] for [askedId] replaces the upload the old
+     * file was made from — what an MV sound repair must do, and what a
+     * finished download must prove before it clears the suspect.
+     *
+     * Compared with the file's own upload, not the asked id (review D5).
+     * Recorded provenance names it. A legacy file filed under a music video
+     * and its song carries none, and the length verdict that made it a suspect
+     * says its bytes are the video's: a repair queued as the song id that
+     * fetches that id's own stream is exactly the fix, yet "fetched == asked"
+     * refused it forever. A file under one id only ([origin] null or no other
+     * id) keeps the old rule: a different id is required.
+     */
+    fun repairReplacesUpload(askedId: String, fetchedId: String, origin: FileOrigin?): Boolean {
+        if (askedId.isBlank() || fetchedId.isBlank()) return false
+        val source = origin?.soundSourceId?.takeIf { it.isNotBlank() }
+        if (source != null) return fetchedId != source
+        if (DownloadedMvPolicy.repairFetchedSongVersion(askedId, fetchedId)) return true
+        return origin != null &&
+            askedId == origin.songIdOfFile &&
+            origin.fileIds.any { it != askedId }
     }
 
     /**
@@ -272,7 +308,7 @@ internal object KoDownloadPipeline {
             // Only a different upload proves the MV sound has been replaced.
             // A same-id re-fetch wrote the same bytes again; clearing here is
             // what made the warning disappear while the file stayed wrong.
-            if (DownloadedMvPolicy.repairFetchedSongVersion(asked.videoId, fetched.videoId)) {
+            if (repairReplacesUpload(asked.videoId, fetched.videoId, previous.origins[asked.videoId])) {
                 KoDownloadRecords.clearMvSoundSuspects(previous.suspects + ids)
             }
             val context = Downloads.applicationContext()
@@ -401,7 +437,9 @@ internal object KoDownloadPipeline {
         // A repair exists to fetch a different upload. Falling back to the same
         // id would save the same MV stream again and then clear the warning, so
         // fail instead and leave the suspect for the next attempt.
-        if (mvSoundRepair && !DownloadedMvPolicy.repairFetchedSongVersion(song.videoId, track.videoId)) {
+        if (mvSoundRepair &&
+            !repairReplacesUpload(song.videoId, track.videoId, KoDownloadRecords.fileOriginFor(song.videoId))
+        ) {
             error("MV sound repair found no different song version")
         }
         return track

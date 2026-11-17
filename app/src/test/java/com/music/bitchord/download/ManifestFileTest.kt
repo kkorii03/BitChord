@@ -3,6 +3,7 @@ package com.music.bitchord.download
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -89,11 +90,18 @@ class ManifestFileTest {
         ManifestFile.assemble(tmp.root, "m4a", init, segments.asSequence(), out)
         val bytes = out.toByteArray()
 
-        val top = Mp4Boxes.boxes(bytes).map { it.type }
-        assertEquals(listOf("ftyp", "moov", "moof", "mdat", "moof", "mdat"), top)
-        val indexed = Mp4Sidx.ensure(bytes)
-        assertNotSame(bytes, indexed)
-        assertEquals(listOf("ftyp", "moov", "sidx", "moof", "mdat", "moof", "mdat"), Mp4Boxes.boxes(indexed).map { it.type })
+        // [KO] D7: indexed while assembling, exactly as Mp4Sidx would index the
+        // plain assembly; the tagger's own pass then has nothing to add.
+        val plain = init + segments.flatMap { segment ->
+            Mp4Boxes.boxes(segment).filter { it.type != "styp" && it.type != "sidx" }
+                .map { segment.copyOfRange(it.offset, it.end) }
+        }.reduce { a, b -> a + b }
+        val indexed = Mp4Sidx.ensure(plain)
+        assertNotSame(plain, indexed)
+        assertEquals(listOf("ftyp", "moov", "sidx", "moof", "mdat", "moof", "mdat"), Mp4Boxes.boxes(bytes).map { it.type })
+        assertArrayEquals(indexed, bytes)
+        assertSame(bytes, Mp4Sidx.ensure(bytes))
+        assertTrue(tmp.root.listFiles().isNullOrEmpty()) // temporary fragments file cleaned up
     }
 
     @Test

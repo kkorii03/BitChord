@@ -94,6 +94,9 @@ internal object ManifestFile {
         when (extension) {
             "flac" -> writeFlac(cacheDir, init, media, sink)
             "m4a" -> {
+                // [KO] m4a-sidx: indexed while assembling, at any size; the tagger's
+                // in-memory index is skipped above its 32 MB cap. See KoManifestIndex.
+                if (com.music.bitchord.ko.downloads.KoManifestIndex.writeIndexed(cacheDir, init, media, sink)) return
                 sink.write(init)
                 media.forEach { segment ->
                     boxes(segment).filter { it.type != "styp" && it.type != "sidx" }.forEach {

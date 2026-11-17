@@ -139,6 +139,43 @@ internal object KoDownloadQueue {
         if (mvSoundRepair) mvSoundRepairIds.add(id) else mvSoundRepairIds.remove(id)
     }
 
+    /**
+     * The terms of a playlist-sync download ([Downloads.downloadNow]), which
+     * claims its songs without going through [Downloads.enqueue]: an ordinary
+     * download. Without it a song whose listener-started replacement failed
+     * (a failure keeps forceReplace/youtubeOnly/minimumTier/quality for the
+     * failure row) was synced with those stale terms. Retry does not read these
+     * maps; it repeats the row's own plan ([plainRetryPlan] for these rows).
+     * Called under [Downloads.lock], as [remember] is from enqueue.
+     */
+    fun rememberPlain(id: String) = remember(
+        id = id,
+        quality = null,
+        hq = null,
+        avoidSourceConfigId = null,
+        forceReplace = false,
+        youtubeOnly = false,
+        minimumTier = null,
+        automatic = false,
+        mvSoundRepair = false,
+    )
+
+    /**
+     * The retry plan of a playlist-sync row. Passing none kept the plan of an
+     * older failure row for the same song, so Retry of a failed sync repeated
+     * that forced replacement instead of the download that actually failed.
+     */
+    fun plainRetryPlan(): DownloadRetryPlan = retryPlanFor(
+        allowMetered = false,
+        quality = null,
+        hq = null,
+        avoidSourceConfigId = null,
+        forceReplace = false,
+        youtubeOnly = false,
+        minimumTier = null,
+        mvSoundRepair = false,
+    )
+
     /** The terms a retry must repeat, built once at enqueue time. */
     fun retryPlanFor(
         allowMetered: Boolean,
