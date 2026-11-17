@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import com.music.bitchord.data.StoredSongDisplay
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.withVideoThumbnailFallback
+import com.music.bitchord.data.net.UnprovenVersions
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -157,6 +158,8 @@ object LastPlayed {
         if (stored.version < SNAPSHOT_VERSION) return null
         if (stored.tracks.isEmpty()) return null
         val songs = stored.tracks.map(StoredTrack::toSong)
+        // [KO] SW8: a row adopted on loose evidence is checked on its first sound again.
+        stored.tracks.forEachIndexed { i, track -> track.unproven?.let { UnprovenVersions.restore(songs[i], it.toSong()) } }
         val index = if (prefs.contains(KEY_INDEX)) {
             prefs.getInt(KEY_INDEX, 0)
         } else {
@@ -244,6 +247,12 @@ object LastPlayed {
         val coverSinger: String? = null,
         val coverOriginalArtist: String? = null,
         val videoRadio: Boolean = false,
+        /**
+         * [KO] SW8: the video row this one replaced on loose evidence, whose
+         * first-sound check has not run yet (see [UnprovenVersions]). Null
+         * for every other row and on older snapshots.
+         */
+        val unproven: StoredTrack? = null,
     ) {
         fun toSong(): Song {
             val resolvedTier = when (tier) {
@@ -285,7 +294,7 @@ object LastPlayed {
         }
 
         companion object {
-            fun from(song: Song) = StoredTrack(
+            fun from(song: Song, carryUnproven: Boolean = true): StoredTrack = StoredTrack(
                 id = song.videoId,
                 title = song.title,
                 artist = song.artist,
@@ -311,6 +320,12 @@ object LastPlayed {
                 coverSinger = song.coverSinger,
                 coverOriginalArtist = song.coverOriginalArtist,
                 videoRadio = song.videoRadio,
+                // [KO] SW8: one level only; the source itself carries nothing.
+                unproven = if (carryUnproven) {
+                    UnprovenVersions.carriedBy(song)?.let { from(it, carryUnproven = false) }
+                } else {
+                    null
+                },
             )
         }
     }

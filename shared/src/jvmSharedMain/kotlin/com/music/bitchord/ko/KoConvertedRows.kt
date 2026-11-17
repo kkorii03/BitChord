@@ -31,6 +31,13 @@ object KoConvertedRows {
         byEntry[entry] = video.videoId
     }
 
+    /** [KO] SW8: a restored row in queue entry [entryId] was converted from [videoId]. */
+    @Synchronized
+    fun noteEntry(entryId: String?, videoId: String) {
+        if (entryId == null) return
+        byEntry[entryId] = videoId
+    }
+
     /** The video the row in queue entry [entryId] was converted from, if known. */
     @Synchronized
     fun videoOf(entryId: String?): String? = entryId?.let { byEntry[it] }
