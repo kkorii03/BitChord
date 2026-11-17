@@ -29,7 +29,7 @@ class GeminiUnusableMemoTest {
     fun clearAfter() = KoLyricsTranslation.forgetUnusableForTest()
 
     @Test
-    fun `a sheet every model answered unusably is not sent again`() = runBlocking {
+    fun `a sheet every model answered unusably is not sent again`() = runBlocking<Unit> {
         var asks = 0
         val unusable: suspend (List<TextSlot>, String, () -> Unit) -> BatchAnswer? = { _, _, allUnusable ->
             asks++
@@ -42,7 +42,7 @@ class GeminiUnusableMemoTest {
     }
 
     @Test
-    fun `a network failure or a quota refusal is asked again`() = runBlocking {
+    fun `a network failure or a quota refusal is asked again`() = runBlocking<Unit> {
         var asks = 0
         val failed: suspend (List<TextSlot>, String, () -> Unit) -> BatchAnswer? = { _, _, _ ->
             asks++
@@ -54,7 +54,7 @@ class GeminiUnusableMemoTest {
     }
 
     @Test
-    fun `another sheet is still asked`() = runBlocking {
+    fun `another sheet is still asked`() = runBlocking<Unit> {
         val unusable: suspend (List<TextSlot>, String, () -> Unit) -> BatchAnswer? = { _, _, allUnusable ->
             allUnusable()
             null
