@@ -371,7 +371,9 @@ internal object SongHearing {
         if (raw != null) {
             // The row's head may be all there is yet (a next row, a blocked
             // stream): the same sound again would pay for the same words.
-            val recording = recordingKey(raw.fromFile, LyricsTiming.clockForSongAudio(song, raw))
+            // [KO] TR7 F1: the clock of the copy as it was opened, not after a minute-long request.
+            val clock = LyricsTiming.clockForSongAudio(song, raw)
+            val recording = recordingKey(raw.fromFile, clock)
             val already = recording?.let { key ->
                 load(app, videoId).filter { it.recording == key && it.language == language && !(exact && it.rough) }
                     .maxByOrNull { it.seconds }
@@ -390,7 +392,7 @@ internal object SongHearing {
                 answer.httpCode != 429 && answer.httpCode != 401 && answer.httpCode != 403
             if (!unread) {
                 keepWavForTest(app, song, untilSeconds)
-                return kept(app, song, raw, answer, untilSeconds, language)
+                return kept(app, song, raw, answer, untilSeconds, language, clock)
             }
             TrackLog.d(TAG, "song-hear: http=${answer.httpCode} for ${raw.mime}, decoding instead", videoId)
         }
@@ -402,10 +404,11 @@ internal object SongHearing {
             videoId,
         )
         if (wav == null) return null
+        val wavClock = LyricsTiming.clockForSongAudio(song, wav) // [KO] TR7 F1
         SyncTestMode.saveWav(app, videoId, wav.bytes)
         val answer = send(wav.bytes, language, wav.mime, untilSeconds, videoId, System.currentTimeMillis() - started2, wav.renditionKey, exact)
         noteOutcome(videoId, answer)
-        return kept(app, song, wav, answer, untilSeconds, language)
+        return kept(app, song, wav, answer, untilSeconds, language, wavClock)
     }
 
     /**
@@ -614,15 +617,21 @@ internal object SongHearing {
         }
     }
 
-    private fun kept(
+    /**
+     * Saves and returns what [answer] heard of [copy]. [clock] is the copy's clock when it
+     * was opened ([LyricsTiming.clockForSongAudio] then): an `#alt` key does not say which
+     * source filled it, and an HQ swap during the request used to label the transcript
+     * with the clock sounding when it came back (TR2 F1), off by the HQ offset for good.
+     */
+    internal fun kept(
         app: Context,
         song: Song,
         copy: VideoAudio.SongAudio,
         answer: Deepgram.Answer,
         untilSeconds: Double,
         language: String,
+        clock: LyricsTiming.Clock, // [KO] TR7 F1
     ): Heard {
-        val clock = LyricsTiming.clockForSongAudio(song, copy)
         val audioMs = answer.audioMs ?: (untilSeconds * 1000).toLong()
         val words = answer.words
         val recording = recordingKey(copy.fromFile, clock)
