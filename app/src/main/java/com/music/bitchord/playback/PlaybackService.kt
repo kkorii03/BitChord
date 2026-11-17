@@ -436,6 +436,14 @@ class PlaybackService : MediaLibraryService() {
     /** How recent a pause headphones connecting may resume — see [headphoneResume]. */
     private val headphoneResumeWindowMs = 30L * 60L * 1000L
 
+    /**
+     * [KO] P1-1: the last stop was the sleep timer's or another app's (audio
+     * focus loss), so headphones arriving must not undo it. Cleared once
+     * playback really starts again.
+     */
+    @Volatile
+    private var headphoneResumeVetoed = false
+
     private val headphoneResume: HeadphoneResume by lazy {
         HeadphoneResume(this) resume@{
             if (!AppSettings.resumeOnHeadphones.value) return@resume
@@ -448,8 +456,16 @@ class PlaybackService : MediaLibraryService() {
             if (!headphoneResume.onHeadphones()) return@resume
             // Only a pause that is still fresh: headphones (or a car) connecting
             // hours after the music stopped is not a request to carry on.
-            val pausedFor = android.os.SystemClock.elapsedRealtime() - stoppedPlayingAt
-            if (stoppedPlayingAt == 0L || pausedFor > headphoneResumeWindowMs) return@resume
+            // [KO] P1-1: nor a pause the sleep timer or another app made.
+            if (!com.music.bitchord.ko.KoHeadphoneResumePolicy.mayResume(
+                    stoppedAtMs = stoppedPlayingAt,
+                    nowMs = android.os.SystemClock.elapsedRealtime(),
+                    vetoed = headphoneResumeVetoed,
+                    windowMs = headphoneResumeWindowMs,
+                )
+            ) {
+                return@resume
+            }
             TrackLog.d("BitChord", "headphones connected: resuming", about = sessionPlayer.currentMediaItem?.mediaId)
             if (sessionPlayer.playbackState == Player.STATE_IDLE) sessionPlayer.prepare()
             sessionPlayer.play()
@@ -1245,6 +1261,8 @@ class PlaybackService : MediaLibraryService() {
      * suggestions" preference only controls the latter. Session de-duplication
      * itself is not optional: without it a top-up can re-offer a favourite that
      * just left the queue and land it immediately after the seed.
+     * [KO] P1-4: with the preference off only the most recent ids are passed
+     * (see [com.music.bitchord.ko.KoAutoplaySessionExclusion]).
      */
     private val autoplaySessionIds = LinkedHashSet<String>()
 
@@ -1336,6 +1354,7 @@ class PlaybackService : MediaLibraryService() {
                 com.music.bitchord.download.HqLibraryUpgrade.onPlaybackStopped(this@PlaybackService)
             }
             stoppedPlayingAt = if (isPlaying) 0L else android.os.SystemClock.elapsedRealtime()
+            if (isPlaying) headphoneResumeVetoed = false // [KO] P1-1
             // Wakes or parks the sampler; see [samplerPlaying].
             samplerPlaying.value = isPlaying
             // The player this fired on, which is by definition the one the
@@ -1471,6 +1490,9 @@ class PlaybackService : MediaLibraryService() {
             // quiet again and the receiver is asked instead.
             player?.let(::updateWakeMode)
             if (!playWhenReady) cancelLateHandover("paused") // [KO] late-swap
+            if (com.music.bitchord.ko.KoHeadphoneResumePolicy.vetoesPause(playWhenReady, reason)) {
+                headphoneResumeVetoed = true // [KO] P1-1
+            }
             if (playWhenReady) player?.let(speakers::onLocalStartedPlaying)
             publishWidgetState(playing = playWhenReady)
             // The only place the *reason* can be read. A party has to tell a
@@ -4758,7 +4780,12 @@ class PlaybackService : MediaLibraryService() {
                         ?.let { activePlayer.getMediaItemAt(it).toSong() } ?: current,
                     limit = remaining,
                     sessionSong = lastCompletedSong,
-                    sessionIds = autoplaySessionIds.toSet(),
+                    // [KO] P1-4: the whole session only with "don't repeat" on.
+                    sessionIds = com.music.bitchord.ko.KoAutoplaySessionExclusion.excludedIds(
+                        dontRepeat = AppSettings.dontRepeatSuggestions.value,
+                        sessionIds = autoplaySessionIds,
+                        currentId = current.videoId,
+                    ),
                 )
                 val resolved = result.getOrElse {
                     TrackLog.w(
@@ -5772,6 +5799,7 @@ class PlaybackService : MediaLibraryService() {
         // moment the track the user meant has finished. REPEAT counts
         // too, or the timer would never fire with repeat-one on.
         if (ended && SleepTimer.afterTrack.value) {
+            headphoneResumeVetoed = true // [KO] P1-1
             exoPlayer.pause()
             SleepTimer.cancel()
         }
@@ -10749,6 +10777,7 @@ class PlaybackService : MediaLibraryService() {
                 if (deadline == null) return@collectLatest
                 val remaining = deadline - SystemClock.elapsedRealtime()
                 if (remaining > 0) delay(remaining)
+                headphoneResumeVetoed = true // [KO] P1-1
                 player?.pause()
                 SleepTimer.cancel()
             }
@@ -13656,7 +13685,10 @@ class PlaybackService : MediaLibraryService() {
         override fun onPlaybackResumption(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
-        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future(Dispatchers.IO) {
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future(Dispatchers.Main.immediate) { // [KO] P1-2
+            // [KO] P1-2: ExoPlayer may only be read on its own (main) thread;
+            // on IO the first getter threw and the future failed. Only the disk
+            // read below goes to IO.
             // 1. If player currently holds items in its queue, resume from it
             val activePlayer = player
             val activeItems = if (activePlayer != null && activePlayer.mediaItemCount > 0) {
@@ -13671,8 +13703,13 @@ class PlaybackService : MediaLibraryService() {
             // downloaded/local/home fallbacks started the first row of an
             // arbitrary list, so just connecting a car could play a track the
             // listener never chose. With no history the car browses instead.
-            val lastPlayed = if (activeItems.isEmpty()) LastPlayed.load() else null
-            val lastPlayedItems = lastPlayed?.songs?.map { it.toMediaItem() }.orEmpty()
+            val lastPlayed = if (activeItems.isEmpty()) withContext(Dispatchers.IO) { LastPlayed.load() } else null // [KO] P1-2
+            // [KO] P1-2: toMediaItem checks download files on disk; kept on IO as before.
+            val lastPlayedItems = if (lastPlayed == null) {
+                emptyList()
+            } else {
+                withContext(Dispatchers.IO) { lastPlayed.songs.map { it.toMediaItem() } }
+            }
 
             val plan = AutoResumptionPolicy.choose(
                 activeItems = activeItems,

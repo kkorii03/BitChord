@@ -51,6 +51,25 @@ internal fun readAheadBytesAllowed(
     !playerHoldsHead
 
 /**
+ * [KO] P1-3: whether a queue change may leave the running read-ahead alone.
+ *
+ * Only rows *behind* the next track changed (AutoPlay appending, a song-version
+ * swap on next+1, an edit further down) while the job is still working on that
+ * same next track. Restarting it cancelled the job, answered the next-song
+ * bundle's waiter with null ("no answer") and ran the substitute lookup and
+ * sound check for the same track a second time.
+ */
+internal fun keepRunningReadAhead(
+    oldQueue: List<String>,
+    newQueue: List<String>,
+    jobTarget: String?,
+    jobActive: Boolean,
+): Boolean {
+    val head = newQueue.firstOrNull() ?: return false
+    return jobActive && head == oldQueue.firstOrNull() && head == jobTarget
+}
+
+/**
  * [KO] prefetch-queue
  *
  * The fork's read-ahead scheduling: verify the next source candidate, honour
@@ -75,6 +94,10 @@ class KoPrefetchQueue(
 
     private val hqHeadReady = ConcurrentHashMap<String, CompletableDeferred<SourceStream?>>()
 
+    /** The track the job last handed to [setJob] works on; see [keepRunningReadAhead]. */
+    @Volatile
+    private var jobTarget: String? = null // [KO] P1-3
+
     suspend fun awaitHqHead(videoId: String, timeoutMs: Long): SourceStream? {
         StreamChoice.of(videoId)?.let { stream ->
             val sourceId = stream.sourceConfigId
@@ -90,6 +113,12 @@ class KoPrefetchQueue(
         val context = appContext() ?: return
         val mediaIds = upcoming.map { it.mediaId }
         if (mediaIds == pendingQueue()) return
+        // [KO] P1-3: same next track, its job still running — only later rows
+        // changed. Keep its lookup and its waiter; just remember the new list.
+        if (keepRunningReadAhead(pendingQueue(), mediaIds, jobTarget, job()?.isActive == true)) {
+            setPendingQueue(mediaIds)
+            return
+        }
         android.util.Log.d("BCFetchDebug", "prefetchQueue: head ${pendingQueue().firstOrNull()} -> ${mediaIds.firstOrNull()}")
         setPendingQueue(mediaIds)
         val headId = mediaIds.firstOrNull()
@@ -151,6 +180,7 @@ class KoPrefetchQueue(
         // whenever the modules are slow, and warming it here is what makes the
         // race worth running at all.
         val substitutable = SourceResolver.canSubstituteForYouTube()
+        jobTarget = heldHead ?: videoIds.firstOrNull() // [KO] P1-3
         setJob((heldHead ?: videoIds.firstOrNull())?.let { next ->
             val target = upcoming.firstOrNull { it.mediaId == next }?.target
             // A track the listener reverted plays from its own `#original`
@@ -339,6 +369,7 @@ class KoPrefetchQueue(
         setPendingQueue(emptyList())
         job()?.cancel()
         setJob(null)
+        jobTarget = null // [KO] P1-3
     }
 
     private companion object {

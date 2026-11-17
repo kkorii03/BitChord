@@ -142,6 +142,13 @@ object PartyPersonalQueueStash {
         val source: String? = null,
         val sourceType: String? = null,
         val sourceId: String? = null,
+        // [KO] P1-5: a cover's original-song fields and the artist channel, as
+        // LastPlayed keeps them. Missing on older stashes, which still decode.
+        val artistId: String? = null,
+        val originalTitle: String? = null,
+        val originalArtist: String? = null,
+        val coverSinger: String? = null,
+        val coverOriginalArtist: String? = null,
     ) {
         fun toSong(): Song {
             val resolvedTier = tier?.let { runCatching { com.music.bitchord.data.model.QueueTier.valueOf(it) }.getOrNull() }
@@ -169,6 +176,11 @@ object PartyPersonalQueueStash {
                     playbackSourceId = sourceId,
                     localUri = local,
                     localPath = path,
+                    artistId = artistId, // [KO] P1-5
+                    originalTitle = originalTitle, // [KO] P1-5
+                    originalArtist = originalArtist, // [KO] P1-5
+                    coverSinger = coverSinger, // [KO] P1-5
+                    coverOriginalArtist = coverOriginalArtist, // [KO] P1-5
                 ),
             )
         }
@@ -195,6 +207,11 @@ object PartyPersonalQueueStash {
                 source = song.playbackSource,
                 sourceType = song.playbackSourceType?.name,
                 sourceId = song.playbackSourceId,
+                artistId = song.artistId, // [KO] P1-5
+                originalTitle = song.originalTitle, // [KO] P1-5
+                originalArtist = song.originalArtist, // [KO] P1-5
+                coverSinger = song.coverSinger, // [KO] P1-5
+                coverOriginalArtist = song.coverOriginalArtist, // [KO] P1-5
             )
         }
     }
