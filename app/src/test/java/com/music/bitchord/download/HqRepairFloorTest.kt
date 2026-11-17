@@ -73,6 +73,32 @@ class HqRepairFloorTest {
         KoDownloadPipeline.requireMinimumTier(route(HqTier.LOSSLESS_16), floor)
     }
 
+    // Review 11-17 (LEFT-6): the verified-copy branches still compared with the
+    // condemned file's own rung, so a wrong FLAC skipped a verified 320 copy of
+    // the right song and was repaired from YouTube at 160 kbps instead.
+    @Test
+    fun `a wrong recording's repair takes a verified copy below the wrong file's rung`() {
+        assertEquals(
+            true,
+            repairEntryUsable(
+                allowEqual = true,
+                fileIsWrongRecording = true,
+                currentTier = HqTier.LOSSLESS_16,
+                entryTier = HqTier.HIGH_LOSSY,
+            ),
+        )
+    }
+
+    @Test
+    fun `a repair of a good file and an upgrade keep their own rungs`() {
+        // Not condemned: a lower verified copy is still a downgrade.
+        assertEquals(false, repairEntryUsable(true, false, HqTier.LOSSLESS_16, HqTier.HIGH_LOSSY))
+        assertEquals(true, repairEntryUsable(true, false, HqTier.LOSSLESS_16, HqTier.LOSSLESS_16))
+        // An upgrade needs a strictly better rung, condemned or not.
+        assertEquals(false, repairEntryUsable(false, true, HqTier.LOSSLESS_16, HqTier.HIGH_LOSSY))
+        assertEquals(false, repairEntryUsable(false, false, HqTier.LOSSLESS_16, HqTier.LOSSLESS_16))
+    }
+
     @Test
     fun `the lowered floor reaches prepare and a manager retry`() {
         val floor = hqRepairFloor(fileIsWrongRecording = true, currentTier = HqTier.HIGH_LOSSY)

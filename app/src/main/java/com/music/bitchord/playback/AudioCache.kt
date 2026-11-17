@@ -1432,6 +1432,8 @@ object AudioCache {
                 stalledAnalysisHeads.remove(id)
                 renditionKeys.remove(id)
             },
+            isRefusedCopy = ::isRefusedCopy, // [KO] LEFT-4
+            playerHoldsKey = ::playerHoldsKey, // [KO] LEFT-4
         )
     }
 
@@ -1753,6 +1755,7 @@ object AudioCache {
             // stay for this play and go on the next one that finds them refused.
             if (playerHoldsKey(key)) {
                 TrackLog.d(TAG, "refused rendition $key is the one playing; kept until it is let go", about = mediaId)
+                koRetention.deferRefusedDrop(key) // [KO] LEFT-4: the next drop pass removes it once let go
                 return@forEach
             }
             runCatching { cache.removeResource(key) }
@@ -2052,6 +2055,9 @@ object AudioCache {
     private suspend fun cacheWholeOnce(videoId: String): Boolean {
         val total = runCatching { StreamResolver.contentLength(videoId) }.getOrNull()
             ?: return false
+        // [KO] LEFT-5: the entry [fetch] writes (`videoId#alt` when a source ranks above
+        // YouTube); checking the bare id stopped every pass after its first chunk.
+        val key = readAheadKey(videoId)
 
         var position = 0L
         while (position < total) {
@@ -2062,7 +2068,7 @@ object AudioCache {
             if (pendingQueue.firstOrNull() != videoId) return false
             if (playerHoldsVideo(videoId)) return true
             val length = minOf(CHUNK_BYTES, total - position)
-            if (cache.getCachedBytes(videoId, position, length) < length) {
+            if (cache.getCachedBytes(key, position, length) < length) {
                 fetch(videoId, position, length)
                 // Written nowhere means the entry is held elsewhere; the rest
                 // of this pass would be just as wasted. See [fetch] for why
@@ -2070,7 +2076,7 @@ object AudioCache {
                 // without error. When the holder is the player, the bytes will
                 // arrive through its own read and there is nothing left for
                 // read-ahead to do.
-                if (cache.getCachedBytes(videoId, position, length) < length) {
+                if (cache.getCachedBytes(key, position, length) < length) {
                     return playerHoldsVideo(videoId)
                 }
             }
@@ -2078,6 +2084,10 @@ object AudioCache {
         }
         return true
     }
+
+    /** [KO] LEFT-5: the entry read-ahead's [fetch] of [videoId] writes; see [keyFactory]. */
+    private fun readAheadKey(videoId: String): String =
+        keyFactory.buildCacheKey(DataSpec(Uri.parse("bitchord://watch?v=$videoId")))
 
     /**
      * What is actually on disk for [uri]'s rendition, as a log line.

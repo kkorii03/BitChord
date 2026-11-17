@@ -216,7 +216,8 @@ object KoLyricsTranslation {
             LyricsTranslation.Result.Translated(
                 lines = LyricsTranslation.rebuild(lines, slots, entry.texts),
                 sourceLanguage = entry.sourceLanguage,
-                fromCache = entry === kept,
+                // Review 11-17 (LEFT-7): a Gemini or Google cache hit is a stored copy, never `kept`.
+                fromCache = entry === kept || entry.fromCache,
                 engine = if (entry.engine == LyricsTranslation.ENGINE_GEMINI) {
                     LyricsTranslation.Engine.GEMINI
                 } else {
@@ -319,7 +320,7 @@ object KoLyricsTranslation {
             ?: LyricsTranslation.readCache(cacheKey)?.also { LyricsTranslation.rememberTranslation(cacheKey, it) }
         if (cached == null || cached.version != LyricsTranslation.CACHE_VERSION || cached.texts.size != slots.size) return null
         // Entries written before engines were recorded carry the default.
-        return cached.copy(engine = LyricsTranslation.ENGINE_GEMINI)
+        return cached.copy(engine = LyricsTranslation.ENGINE_GEMINI, fromCache = true)
     }
 
     private suspend fun askOnce(

@@ -36,10 +36,26 @@ import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+
+/**
+ * [KO] Waits up to [timeoutSeconds] for a worker hand-off and ignores its outcome, as
+ * before, but keeps the caller's interrupt. Media3 cancels a load by interrupting the
+ * loader thread; swallowing it let the reader that followed fetch a whole window for
+ * a track nobody plays any more (review 11-17, LEFT-2).
+ */
+internal fun awaitWorker(done: Future<*>, timeoutSeconds: Long) {
+    try {
+        done.get(timeoutSeconds, TimeUnit.SECONDS)
+    } catch (_: InterruptedException) {
+        Thread.currentThread().interrupt()
+    } catch (_: Throwable) {
+    }
+}
 
 /**
  * Owns the TDLib client for the login stage of the Telegram source.
@@ -224,7 +240,7 @@ object TelegramClientManager {
                 .onSuccess { done.complete(Unit) }
                 .onFailure { done.completeExceptionally(it) }
         }
-        runCatching { done.get(10, TimeUnit.SECONDS) }
+        awaitWorker(done, 10) // [KO]
     }
 
     /** The chats search may look in. */

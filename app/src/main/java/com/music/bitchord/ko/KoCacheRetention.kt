@@ -91,6 +91,19 @@ class KoCacheRetention {
         purgeIndexBuilt = true
     }
 
+    /**
+     * Refused copies that could not be removed because the player was reading
+     * them (AudioCache.dropRefusedRenditions). A copy the queue never lets go of
+     * by origin (a played JioSaavn or YouTube-keyed `#alt` file) is otherwise
+     * never dropped and replays the other recording on every later play.
+     */
+    private val pendingRefusedDrops = ConcurrentHashMap.newKeySet<String>()
+
+    /** Review 11-17 (LEFT-4): drop [key] on a later pass, once nothing holds it. */
+    fun deferRefusedDrop(key: String) {
+        pendingRefusedDrops.add(key)
+    }
+
     fun dropForeignEntries(
         cache: Cache,
         keep: Set<String>,
@@ -98,6 +111,8 @@ class KoCacheRetention {
         keepsAddonCopy: (String) -> Boolean,
         scope: CoroutineScope,
         onDropped: (String) -> Unit,
+        isRefusedCopy: (String) -> Boolean = { false },
+        playerHoldsKey: (String) -> Boolean = { true },
     ) {
         scope.launch {
             if (!purgeIndexBuilt) rebuild(cache)
@@ -140,6 +155,42 @@ class KoCacheRetention {
                     .onFailure { TrackLog.d(tag, "unkept cache entry $key still in use: ${it.message}") }
             }
             if (dropped > 0) TrackLog.d(tag, "dropped $dropped addon / analysis-only cache entries")
+            dropPendingRefused(cache, keep, isRefusedCopy, playerHoldsKey, onDropped)
+        }
+    }
+
+    private fun dropPendingRefused(
+        cache: Cache,
+        keep: Set<String>,
+        isRefusedCopy: (String) -> Boolean,
+        playerHoldsKey: (String) -> Boolean,
+        onDropped: (String) -> Unit,
+    ) {
+        pendingRefusedDrops.toList().forEach { key ->
+            val meta = runCatching { cache.getContentMetadata(key) }.getOrNull()
+            val mediaId = meta?.get(META_MEDIA_ID, null as String?) ?: key.substringBefore('#')
+            val refused = isRefusedCopy(key)
+            // Gone, or its row is no longer refused: nothing left to do for it.
+            if (!refused) {
+                pendingRefusedDrops.remove(key)
+                return@forEach
+            }
+            if (!refusedCopyShouldDrop(
+                    refused = refused,
+                    keptByQueueOrTiming = mediaId in keep || keptForTiming(mediaId),
+                    playerHolds = playerHoldsKey(key),
+                )
+            ) {
+                return@forEach
+            }
+            runCatching { cache.removeResource(key) }
+                .onSuccess {
+                    pendingRefusedDrops.remove(key)
+                    forget(key)
+                    onDropped(mediaId)
+                    TrackLog.w(tag, "dropped refused cached copy $key once the player let go of it", about = mediaId)
+                }
+                .onFailure { TrackLog.d(tag, "refused copy $key still in use: ${it.message}") }
         }
     }
 
@@ -158,6 +209,17 @@ class KoCacheRetention {
         private const val META_PLAYED = "bc_played"
     }
 }
+
+/**
+ * Review 11-17 (LEFT-4): a refused copy goes once the queue window and the
+ * timing keeps have let go of its song and the player no longer reads it.
+ * Deleting it under a reader would corrupt the play that is using it.
+ */
+internal fun refusedCopyShouldDrop(
+    refused: Boolean,
+    keptByQueueOrTiming: Boolean,
+    playerHolds: Boolean,
+): Boolean = refused && !keptByQueueOrTiming && !playerHolds
 
 /**
  * The one purge rule, shared by the index scan and the drop pass.

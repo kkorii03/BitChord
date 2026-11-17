@@ -33,4 +33,21 @@ class TelegramStreamLeaseTest {
         assertTrue(gate.endStreamLease())
         assertFalse(gate.shouldBeOpen)
     }
+
+    // Review 11-17 (LEFT-2): Media3 cancels a Telegram open by interrupting the
+    // loader thread. The wait for the client worker swallowed that interrupt, so
+    // the reader that followed still fetched a 4 MB window for a skipped track.
+    @Test
+    fun waitingForTheWorkerKeepsTheCallersInterrupt() {
+        val stillInterrupted = java.util.concurrent.atomic.AtomicBoolean(false)
+        val waiter = Thread {
+            Thread.currentThread().interrupt()
+            awaitWorker(java.util.concurrent.CompletableFuture<Unit>(), 5)
+            stillInterrupted.set(Thread.currentThread().isInterrupted)
+        }
+        waiter.start()
+        waiter.join(10_000)
+        assertFalse(waiter.isAlive)
+        assertTrue(stillInterrupted.get())
+    }
 }

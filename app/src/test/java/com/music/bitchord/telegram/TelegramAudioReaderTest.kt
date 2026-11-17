@@ -259,6 +259,55 @@ class TelegramAudioReaderTest {
         }
     }
 
+    // Review 11-17 (LEFT-1): another reader completing the same file makes TDLib
+    // move it from temp/ to its final folder. The next read opened the old
+    // cached path and failed the song with FileNotFoundException.
+    @Test
+    fun `a file TDLib moved after completing is read again from its new path`() {
+        val data = ByteArray(4096) { ((it * 7) and 0x7f).toByte() }
+        val dir = java.nio.file.Files.createTempDirectory("telegram-move-").toFile()
+        val temp = File(dir, "temp.part").apply { writeBytes(data) }
+        val moved = File(dir, "final.flac")
+        val transport = object : TelegramFileTransport {
+            val track = TelegramTrack(
+                id = TRACK_ID, chatId = 1L, messageId = 2L, fileId = 7,
+                size = data.size.toLong(), title = "Title", artist = "Artist",
+                durationSec = 1, format = "flac", mimeType = "audio/flac",
+                fileName = "Artist - Title.flac",
+            )
+            override fun resolveTrack(trackId: String) = track
+            override fun fileInfo(fileId: Int) = TelegramFileInfo(data.size.toLong(), localPath(fileId))
+            override fun downloadedPrefixSize(fileId: Int, offset: Long) =
+                (data.size - offset).coerceAtLeast(0L)
+            override fun download(fileId: Int, priority: Int, offset: Long, limit: Long) = Unit
+            override fun localPath(fileId: Int): String =
+                if (temp.exists()) temp.absolutePath else moved.absolutePath
+            override fun isChatSelected(chatId: Long) = true
+            override fun cancelDownload(fileId: Int) = Unit
+            override fun nowMillis(): Long = System.nanoTime() / 1_000_000
+        }
+        try {
+            val reader = TelegramAudioReader.openWithTransport(
+                trackId = TRACK_ID,
+                requestedPosition = 0,
+                requestedLength = -1,
+                reason = TelegramAudioReader.REASON_PLAY,
+                transport = transport,
+            )
+            val first = ByteArray(1024)
+            assertEquals(1024, reader.read(first, 0, first.size))
+            assertArrayEquals(data.copyOfRange(0, 1024), first)
+            assertTrue(temp.renameTo(moved))
+
+            val second = ByteArray(1024)
+            assertEquals(1024, reader.read(second, 0, second.size))
+            assertArrayEquals(data.copyOfRange(1024, 2048), second)
+            reader.close()
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
     private fun open(
         transport: FakeTransport,
         reason: String = TelegramAudioReader.REASON_PLAY,

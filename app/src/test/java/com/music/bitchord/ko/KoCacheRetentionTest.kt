@@ -154,6 +154,92 @@ class KoCacheRetentionTest {
         assertEquals(listOf("id1"), dropPass(keep = emptySet(), keepsAddonCopy = false))
     }
 
+    /** A cache of one played JioSaavn substitute entry "vid#alt": never a purge candidate by origin. */
+    private fun playedSubstituteCache(removed: MutableList<String>): Cache {
+        val values = mapOf(
+            "bc_origin" to "JIOSAAVN",
+            "bc_media_id" to "vid",
+            "bc_playback" to "1",
+            "bc_played" to "1",
+        )
+        val meta = Proxy.newProxyInstance(
+            ContentMetadata::class.java.classLoader,
+            arrayOf(ContentMetadata::class.java),
+        ) { _, method, args ->
+            when {
+                method.name == "get" && method.returnType == String::class.java -> values[args!![0] as String] ?: args[1]
+                method.name == "contains" -> (args!![0] as String) in values
+                else -> args?.getOrNull(1)
+            }
+        } as ContentMetadata
+        return Proxy.newProxyInstance(
+            Cache::class.java.classLoader,
+            arrayOf(Cache::class.java),
+        ) { _, method, args ->
+            when (method.name) {
+                "getKeys" -> TreeSet(listOf("vid#alt"))
+                "getContentMetadata" -> meta
+                "removeResource" -> { removed += args!![0] as String; null }
+                else -> null
+            }
+        } as Cache
+    }
+
+    private fun KoCacheRetention.refusedPass(
+        cache: Cache,
+        keep: Set<String> = emptySet(),
+        refused: Boolean = true,
+        held: Boolean = false,
+    ) = dropForeignEntries(
+        cache = cache,
+        keep = keep,
+        keepAnalysis = false,
+        keepsAddonCopy = { false },
+        scope = CoroutineScope(Dispatchers.Unconfined),
+        onDropped = {},
+        isRefusedCopy = { refused },
+        playerHoldsKey = { held },
+    )
+
+    // Review 11-17 (LEFT-4): the words check refused the row while its #alt copy
+    // played, so the drop was skipped; nothing ever removed it afterwards (only
+    // OTHER-origin entries are purge candidates) and every later play replayed it.
+    @Test
+    fun `a refused copy the player held is dropped by a later pass once let go`() {
+        val removed = mutableListOf<String>()
+        val cache = playedSubstituteCache(removed)
+        val retention = KoCacheRetention()
+        retention.deferRefusedDrop("vid#alt")
+
+        retention.refusedPass(cache, held = true)
+        assertEquals(emptyList<String>(), removed)
+        retention.refusedPass(cache, keep = setOf("vid"))
+        assertEquals(emptyList<String>(), removed)
+        retention.refusedPass(cache)
+        assertEquals(listOf("vid#alt"), removed)
+        retention.refusedPass(cache)
+        assertEquals(listOf("vid#alt"), removed)
+    }
+
+    @Test
+    fun `a pending copy whose row is no longer refused is left alone`() {
+        val removed = mutableListOf<String>()
+        val cache = playedSubstituteCache(removed)
+        val retention = KoCacheRetention()
+        retention.deferRefusedDrop("vid#alt")
+        retention.refusedPass(cache, refused = false)
+        retention.refusedPass(cache, refused = true)
+        assertEquals(emptyList<String>(), removed)
+    }
+
+    @Test
+    fun `the refused-copy rule keeps what the queue or the player still holds`() {
+        assertTrue(refusedCopyShouldDrop(refused = true, keptByQueueOrTiming = false, playerHolds = false))
+        assertFalse(refusedCopyShouldDrop(refused = true, keptByQueueOrTiming = true, playerHolds = false))
+        assertFalse(refusedCopyShouldDrop(refused = true, keptByQueueOrTiming = false, playerHolds = true))
+        assertFalse(refusedCopyShouldDrop(refused = false, keptByQueueOrTiming = false, playerHolds = false))
+    }
+
     @Test
     fun `ordinary played entries are never candidates`() {
         assertFalse(drop(origin = "YOUTUBE"))

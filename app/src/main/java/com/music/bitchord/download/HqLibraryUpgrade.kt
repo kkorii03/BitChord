@@ -107,6 +107,25 @@ internal fun hqRepairFloor(fileIsWrongRecording: Boolean, currentTier: HqTier): 
     if (fileIsWrongRecording) HqTier.NORMAL else currentTier
 
 /**
+ * [KO] Whether a verified copy at [entryTier] may replace the file at [currentTier].
+ * A repair ([allowEqual]) takes an equal or better rung than its floor; for a file
+ * condemned as the wrong recording that floor is [hqRepairFloor]'s, so a verified
+ * 320 copy of the right song beats a wrong FLAC (review 11-17, LEFT-6). An upgrade
+ * still needs a strictly better rung than the file has.
+ */
+internal fun repairEntryUsable(
+    allowEqual: Boolean,
+    fileIsWrongRecording: Boolean,
+    currentTier: HqTier,
+    entryTier: HqTier,
+): Boolean =
+    if (allowEqual) {
+        entryTier.rank <= hqRepairFloor(fileIsWrongRecording, currentTier).rank
+    } else {
+        HqLibraryPolicy.isBetter(currentTier, entryTier)
+    }
+
+/**
  * Whether a download's success is also proof that the pass's replacement
  * landed.
  *
@@ -637,11 +656,7 @@ object HqLibraryUpgrade {
         // a lossless file with a verified 320kbps copy would be a downgrade
         // dressed as a fix.
         val entryUsable = entry != null &&
-            if (allowEqual) {
-                entry.verified.tier.rank <= currentTier.rank
-            } else {
-                HqLibraryPolicy.isBetter(currentTier, entry.verified.tier)
-            }
+            repairEntryUsable(allowEqual, meta?.wrongRecording == true, currentTier, entry.verified.tier) // [KO] LEFT-6
         if (entry != null && entryUsable) {
             enqueueVerified(
                 context,
@@ -687,11 +702,12 @@ object HqLibraryUpgrade {
                 if (!sourceId.isNullOrBlank() && !trackId.isNullOrBlank()) {
                     val verified = HqAudioVerify.verify(context, song.videoId, target, candidate)
                     val acceptable = verified != null &&
-                        if (allowEqual) {
-                            verified.tier.rank <= currentTier.rank
-                        } else {
-                            HqLibraryPolicy.isBetter(currentTier, verified.tier)
-                        }
+                        repairEntryUsable( // [KO] LEFT-6
+                            allowEqual,
+                            Downloads.isWrongRecording(song.videoId),
+                            currentTier,
+                            verified.tier,
+                        )
                     if (verified != null && acceptable) {
                         // The search above can take a while; the connection in
                         // hand may have changed since the entry check.

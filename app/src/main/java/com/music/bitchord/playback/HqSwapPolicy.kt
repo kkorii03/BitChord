@@ -105,7 +105,11 @@ internal object HqSwapPolicy {
         }
         val youtubeMs = toYoutubeMs(positionMs, currentOffsetMs, currentRate)
         val target = targetPositionMs(youtubeMs, offsetMs, rate)
-        if (target < 0L || (durationMs > 0L && target >= durationMs)) {
+        // [KO] target is on the incoming copy's clock and durationMs is the outgoing
+        // copy's length, so they are not compared: a copy with a longer intro holds
+        // audio past the outgoing end. A copy that really is shorter is refused by
+        // standbyUnfitReason ("standby-too-short") once it has its own length.
+        if (target < 0L) {
             return Decision(false, "position-out-of-range", target)
         }
         return Decision(true, "", target)

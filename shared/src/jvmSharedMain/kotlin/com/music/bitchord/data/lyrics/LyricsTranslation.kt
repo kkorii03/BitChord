@@ -170,6 +170,8 @@ object LyricsTranslation {
         val texts: List<String>,
         /** [ENGINE_GEMINI] or [ENGINE_GOOGLE]; entries from before this existed are Google's. */
         val engine: String = ENGINE_GOOGLE,
+        /** [KO] LEFT-7: read back from a cache, for the `cached=` log line; never stored. */
+        @kotlinx.serialization.Transient val fromCache: Boolean = false,
     )
 
     internal data class TextSlot(
@@ -243,7 +245,7 @@ object LyricsTranslation {
             memory.put(cacheKey, it)
         }
         if (cached != null && cached.version == CACHE_VERSION && cached.texts.size == slots.size) {
-            return cached
+            return cached.copy(fromCache = true) // [KO] LEFT-7
         }
 
         val batches = batches(slots)

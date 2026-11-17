@@ -64,4 +64,34 @@ class HqVersionGuardWiringTest {
             .substringBefore("private val koRetention")
         assertTrue(keeps.contains("!isRefusedCopy(key)"))
     }
+
+    // Review 11-17 (LEFT-4): a refused copy the player held at refusal time was
+    // skipped and never removed later; the queue-move pass now finishes it.
+    @Test
+    fun `a refused copy the player held is queued for the next drop pass`() {
+        val cache = source("playback/AudioCache.kt")
+        val refused = cache.substringAfter("fun dropRefusedRenditions(")
+            .substringBefore("fun playedCopyWrittenBy(")
+        val held = refused.substringAfter("if (playerHoldsKey(key)) {").substringBefore("return@forEach")
+        assertTrue(held.contains("koRetention.deferRefusedDrop(key)"))
+        val pass = cache.substringAfter("fun dropForeignEntries(keep: Set<String>")
+            .substringBefore("private fun keepsAddonCopy(")
+        assertTrue(pass.contains("isRefusedCopy = ::isRefusedCopy"))
+        assertTrue(pass.contains("playerHoldsKey = ::playerHoldsKey"))
+    }
+
+    // Review 11-17 (LEFT-5): with a source ranked above YouTube the read-ahead
+    // writes `videoId#alt`, but checked the bare id, so every pass stopped after
+    // its first 2 MB chunk and the next song was never cached whole.
+    @Test
+    fun `read-ahead checks the entry its own fetch writes`() {
+        val cache = source("playback/AudioCache.kt")
+        val whole = cache.substringAfter("private suspend fun cacheWholeOnce(")
+            .substringBefore("private fun readAheadKey(")
+        assertTrue(whole.contains("val key = readAheadKey(videoId)"))
+        assertEquals(2, Regex("""cache\.getCachedBytes\(key, position, length\)""").findAll(whole).count())
+        assertFalse(whole.contains("cache.getCachedBytes(videoId,"))
+        val readAheadKey = cache.substringAfter("private fun readAheadKey(").substringBefore("\n\n")
+        assertTrue(readAheadKey.contains("""keyFactory.buildCacheKey(DataSpec(Uri.parse("bitchord://watch?v=${'$'}videoId")))"""))
+    }
 }

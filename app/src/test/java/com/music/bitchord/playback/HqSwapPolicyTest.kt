@@ -154,8 +154,11 @@ class HqSwapPolicyTest {
         assertEquals("track-changed", decision.reason)
     }
 
+    // Review 11-17 (LEFT-3): durationMs is the OUTGOING copy's length; the target is
+    // on the incoming copy's clock. A replacement with a longer intro still holds
+    // the audio past the outgoing end, so the swap is not refused for that.
     @Test
-    fun `an offset past the end of the replacement is refused`() {
+    fun `an offset past the outgoing end is still inside a replacement with a longer intro`() {
         val decision = HqSwapPolicy.decide(
             positionMs = 150_000L,
             durationMs = 200_000L,
@@ -165,8 +168,23 @@ class HqSwapPolicyTest {
             rate = 1.0,
         )
 
-        assertFalse(decision.allowed)
-        assertEquals("position-out-of-range", decision.reason)
+        assertTrue(decision.allowed)
+        assertEquals(210_000L, decision.targetPositionMs)
+    }
+
+    @Test
+    fun `a late verdict swaps to a replacement whose intro is longer`() {
+        val decision = HqSwapPolicy.decide(
+            positionMs = 175_000L,
+            durationMs = 200_000L,
+            crossfadeActive = false,
+            sameTrack = true,
+            offsetMs = 30_000L,
+            rate = 1.0,
+        )
+
+        assertTrue(decision.allowed)
+        assertEquals(205_000L, decision.targetPositionMs)
     }
 
     @Test

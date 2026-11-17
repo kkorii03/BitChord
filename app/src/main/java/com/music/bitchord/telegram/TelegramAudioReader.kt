@@ -82,7 +82,26 @@ class TelegramAudioReader internal constructor(
         val path = ensureDownloaded(position, length) ?: return -1
         val wanted = minOf(length.toLong(), endPosition - position).toInt()
         if (wanted <= 0) return -1
-        val count = RandomAccessFile(path, "r").use { file ->
+        val count = try {
+            readFrom(path, buffer, offset, wanted)
+        } catch (gone: java.io.FileNotFoundException) {
+            // [KO] Another reader finished this file and TDLib moved it out of temp/.
+            // Ask TDLib for the path again once instead of failing the song.
+            localPath = null
+            downloadedFrom = 0L
+            downloadedEnd = 0L
+            val fresh = ensureDownloaded(position, length) ?: return -1
+            val again = minOf(length.toLong(), endPosition - position).toInt()
+            if (again <= 0) return -1
+            readFrom(fresh, buffer, offset, again)
+        }
+        if (count <= 0) return -1
+        position += count
+        return count
+    }
+
+    private fun readFrom(path: String, buffer: ByteArray, offset: Int, wanted: Int): Int {
+        return RandomAccessFile(path, "r").use { file ->
             file.seek(position)
             val available = (file.length() - position)
                 .coerceAtLeast(0L)
@@ -93,8 +112,6 @@ class TelegramAudioReader internal constructor(
             file.readFully(buffer, offset, read)
             read
         }
-        position += count
-        return count
     }
 
     /**

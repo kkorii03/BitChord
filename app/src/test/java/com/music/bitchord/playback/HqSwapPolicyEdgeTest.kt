@@ -62,7 +62,9 @@ class HqSwapPolicyEdgeTest {
     }
 
     @Test
-    fun `a target exactly at the end is not a position inside the file`() {
+    fun `a target at the outgoing end is not judged against the outgoing length`() {
+        // Review 11-17 (LEFT-3): the replacement's own length decides this later
+        // (standbyUnfitReason "standby-too-short"), not the outgoing copy's.
         val decision = HqSwapPolicy.decide(
             positionMs = 40_000L,
             durationMs = 200_000L,
@@ -72,8 +74,8 @@ class HqSwapPolicyEdgeTest {
             rate = 1.0,
         )
 
-        assertFalse(decision.allowed)
-        assertEquals("position-out-of-range", decision.reason)
+        assertTrue(decision.allowed)
+        assertEquals(200_000L, decision.targetPositionMs)
     }
 
     @Test

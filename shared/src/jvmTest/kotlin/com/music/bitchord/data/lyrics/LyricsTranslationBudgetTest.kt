@@ -1,5 +1,6 @@
 package com.music.bitchord.data.lyrics
 
+import com.music.bitchord.ko.KoLyricsTranslation
 import java.nio.file.Files
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -128,6 +129,68 @@ class LyricsTranslationBudgetTest {
             LyricsTranslation.keepDir = oldKeep
             LyricsTranslation.geminiEnabled = enabled
             directory.deleteRecursively()
+        }
+    }
+
+    // Review 11-17 (LEFT-7): a cache hit returned a stored copy, never the kept
+    // object, so `cached=` logged n for every ordinary hit and the logs said the
+    // translation-ahead pass never helped.
+    @Test
+    fun aSavedGeminiAnswerIsReportedAsCached() = runBlocking {
+        val enabled = LyricsTranslation.geminiEnabled
+        val key = LyricsTranslation.geminiApiKey
+        val oldKeep = LyricsTranslation.keepDir
+        LyricsTranslation.geminiEnabled = true
+        LyricsTranslation.geminiApiKey = "from-cache-test-key"
+        LyricsTranslation.keepDir = null
+        try {
+            val trackId = "left7-gemini-cached"
+            val slots = LyricsTranslation.flatten(lines)
+            LyricsTranslation.rememberTranslation(
+                LyricsTranslation.cacheKey("gemini\u0000$trackId", "ko", slots),
+                answer("saved gemini", "gemini"),
+            )
+            val result = LyricsTranslation.translateWith(
+                trackId = trackId,
+                lines = lines,
+                targetLanguageTag = "ko",
+                keep = false,
+                deadlines = LyricsTranslation.TranslationDeadlines(),
+                gemini = { id, s, t -> KoLyricsTranslation.geminiEntry(id, s, t) { _, _, _ -> null } },
+                google = { _, _, _ -> null },
+            )
+
+            val translated = assertIs<LyricsTranslation.Result.Translated>(result)
+            assertEquals("saved gemini", translated.lines.single().text)
+            assertTrue(translated.fromCache, "a Gemini cache hit must log cached=y")
+        } finally {
+            LyricsTranslation.geminiEnabled = enabled
+            LyricsTranslation.geminiApiKey = key
+            LyricsTranslation.keepDir = oldKeep
+        }
+    }
+
+    @Test
+    fun aSavedGoogleAnswerIsReportedAsCached() = runBlocking {
+        val enabled = LyricsTranslation.geminiEnabled
+        val oldKeep = LyricsTranslation.keepDir
+        LyricsTranslation.geminiEnabled = false
+        LyricsTranslation.keepDir = null
+        try {
+            val trackId = "left7-google-cached"
+            LyricsTranslation.rememberTranslation(
+                LyricsTranslation.cacheKey(trackId, "ko", LyricsTranslation.flatten(lines)),
+                answer("saved google"),
+            )
+            // The public entry point, whose Google step reads the memory cache first.
+            val result = LyricsTranslation.translate(trackId, lines, "ko")
+
+            val translated = assertIs<LyricsTranslation.Result.Translated>(result)
+            assertEquals("saved google", translated.lines.single().text)
+            assertTrue(translated.fromCache, "a Google cache hit must log cached=y")
+        } finally {
+            LyricsTranslation.geminiEnabled = enabled
+            LyricsTranslation.keepDir = oldKeep
         }
     }
 
