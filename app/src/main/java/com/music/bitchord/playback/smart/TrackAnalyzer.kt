@@ -94,6 +94,29 @@ internal fun regionFeatureOffset(requested: Double, actualStart: Double): Double
     if (requested != 0.0) actualStart else 0.0
 
 /**
+ * [KO] How far into the track a head pass decodes. An unknown duration (0: no
+ * `d=` on the queue row and no prepared timeline yet) is not a zero-length
+ * track. Taking `min(window, 0)` made the range empty, so every head attempt
+ * failed and two of them wrote the opening off for the session.
+ */
+internal fun headWindowSeconds(durationSeconds: Double): Double =
+    if (durationSeconds.isFinite() && durationSeconds > 0) {
+        minOf(AutomixWorkPolicy.TRANSITION_WINDOW_SECONDS, durationSeconds)
+    } else {
+        AutomixWorkPolicy.TRANSITION_WINDOW_SECONDS
+    }
+
+/**
+ * [KO] Whether a failed window pass counts toward the write-off after
+ * [TrackAnalyzer]'s MAX_REGION_ATTEMPTS. A pass over a partial download does
+ * not: the cached-prefix growth guard already bounds those attempts, and a
+ * prefix too short to decode says nothing about the copy that finishes
+ * downloading later. Counting them wrote HEAD off before the complete copy
+ * was ever read.
+ */
+internal fun windowFailureCounts(partialRendition: Boolean): Boolean = !partialRendition
+
+/**
  * Stops the analysis a next-prep bundle started for a row that is no longer
  * next. A running pass is aborted at its next decode check; a queued one is
  * dropped when it reaches the front, and the next request for the same track
@@ -638,7 +661,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             }
             if (analysis != null) {
                 publishWindow(trackId, window, analysis, durationSeconds)
-            } else if (!stopped && !analysisCancel.isCancelled(trackId)) {
+            } else if (!stopped && !analysisCancel.isCancelled(trackId) &&
+                windowFailureCounts(partialRendition = headRendition != null)
+            ) {
                 recordRegionFailure(trackId, window, durationSeconds)
             }
         } catch (error: Throwable) {
@@ -646,7 +671,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // or codec-level Error uncaught on a pool thread that is nobody's
             // parent takes the whole app down.
             Log.w(TAG, "Analysis of $trackId ($window) failed", error)
-            if (!stopped && !analysisCancel.isCancelled(trackId)) {
+            if (!stopped && !analysisCancel.isCancelled(trackId) &&
+                windowFailureCounts(partialRendition = headRendition != null)
+            ) {
                 recordRegionFailure(trackId, window, durationSeconds)
             }
         } finally {
@@ -1044,7 +1071,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             }
         }
 
-        val window = minOf(AutomixWorkPolicy.TRANSITION_WINDOW_SECONDS, durationSeconds)
+        val window = headWindowSeconds(durationSeconds)
         val head = region(
             ::openSource,
             0.0,

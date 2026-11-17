@@ -1,6 +1,7 @@
 package com.music.bitchord.playback.smart
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -61,5 +62,21 @@ class HeadAnalysisVocalProbabilityTest {
         )
 
         assertEquals(0.0, analysis.vocalProbability, 0.0)
+    }
+
+    // c2-analyzer-crossfade-1: an unknown duration (0) gave min(45, 0) = 0, an
+    // empty decode range, and two such failures wrote HEAD off for the session.
+    @Test
+    fun `an unknown duration still decodes the full opening window`() {
+        assertEquals(AutomixWorkPolicy.TRANSITION_WINDOW_SECONDS, headWindowSeconds(0.0), 0.0)
+        assertEquals(AutomixWorkPolicy.TRANSITION_WINDOW_SECONDS, headWindowSeconds(Double.NaN), 0.0)
+        assertEquals(30.0, headWindowSeconds(30.0), 0.0)
+        assertEquals(AutomixWorkPolicy.TRANSITION_WINDOW_SECONDS, headWindowSeconds(200.0), 0.0)
+    }
+
+    @Test
+    fun `a failed pass over a partial download does not count toward the write-off`() {
+        assertFalse(windowFailureCounts(partialRendition = true))
+        assertTrue(windowFailureCounts(partialRendition = false))
     }
 }
