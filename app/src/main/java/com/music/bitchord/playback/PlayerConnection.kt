@@ -189,12 +189,19 @@ fun MediaController.revertToOriginal() {
 /**
  * Asks the service to smoothly transition the playing track to another version/rendition.
  */
-fun MediaController.swapToVersion(targetSong: Song, alignVersion: Boolean = true) {
+fun MediaController.swapToVersion(
+    targetSong: Song,
+    alignVersion: Boolean = true,
+    // [KO] review V-4: the row this swap is for; the service drops the command
+    // if it has already moved on. Defaults to the row this controller shows now.
+    fromMediaId: String? = currentMediaItem?.mediaId,
+) {
     sendCustomCommand(
         SessionCommand(ACTION_SWAP_VERSION, Bundle.EMPTY),
         bundleOf(
             EXTRA_SWAP_MEDIA_ITEM to targetSong.toSongBundle(),
             EXTRA_SWAP_SKIP_ALIGNMENT to !alignVersion,
+            EXTRA_SWAP_FROM_ID to fromMediaId, // [KO] review V-4
         ),
     )
 }

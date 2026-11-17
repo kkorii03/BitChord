@@ -1694,7 +1694,7 @@ private fun BitChordApp(
             // that never got this far, where nothing else would release it.
             if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = false
             handedOver = true
-            c.swapToVersion(target, alignVersion = alignVersion)
+            c.swapToVersion(target, alignVersion = alignVersion, fromMediaId = song.videoId) // [KO] review V-4
             return true
         } finally {
             if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = false
@@ -1775,7 +1775,7 @@ private fun BitChordApp(
             // music-only path above: the service owns the flag from here, and
             // the finally only exists for the paths that never send.
             if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = false
-            c.swapToVersion(target)
+            c.swapToVersion(target, fromMediaId = song.videoId) // [KO] review V-4
         } finally {
             if (holdUntilAligned) AppSettings.versionAlignmentInProgress.value = false
             switchingAudioVersion = false
@@ -1896,12 +1896,14 @@ private fun BitChordApp(
         // the automatic music-only pass swapping it straight in again.
         val c = controller
         if (c != null) {
+            // [KO] review V-4: the effect fires only while this swapped audio is playing; read before it is cleared.
+            val swappedAudioId = convertedAudioId
             keepVideoId = original.videoId
             convertedFromVideo = null
             convertedAudioId = null
             musicOnlyTried.add(original.videoId)
             optimisticVersionSong = original
-            c.swapToVersion(original, alignVersion = false)
+            c.swapToVersion(original, alignVersion = false, fromMediaId = swappedAudioId) // [KO] review V-4
         }
     }
 

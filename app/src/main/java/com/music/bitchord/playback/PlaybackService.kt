@@ -2,6 +2,7 @@ package com.music.bitchord.playback
 
 import com.music.bitchord.ko.koTryAutoplayRefillBeforeStopping
 import com.music.bitchord.ko.koCatchUpStandbyQueue // [KO] review V-3
+import com.music.bitchord.ko.koSwapFromStillCurrent // [KO] review V-4
 import com.music.bitchord.ko.koScheduleTranslationAhead
 import com.music.bitchord.ko.koScheduleCurrentTranslationAhead
 import com.music.bitchord.ko.koScheduleDownloadHealthCheck
@@ -299,6 +300,8 @@ const val ACTION_SWAP_VERSION = "com.music.bitchord.action.SWAP_VERSION"
 const val EXTRA_SWAP_MEDIA_ITEM = "bitchord.swap.media_item"
 /** Skip the video/song alignment pass for an automatic, pre-resolved swap. */
 const val EXTRA_SWAP_SKIP_ALIGNMENT = "bitchord.swap.skipAlignment"
+/** [KO] review V-4: the media id the sender swapped from; a command that arrives after a skip is dropped. */
+const val EXTRA_SWAP_FROM_ID = "bitchord.swap.fromId"
 
 /** Session command used by the media notification's and the 4×1 widget's Favorite button. */
 /** How long the service may stay in the foreground, paused, while the watch plays. */
@@ -13398,7 +13401,18 @@ class PlaybackService : MediaLibraryService() {
                 ACTION_UPGRADE_QUALITY -> upgradeQualityNow()
                 ACTION_SWAP_VERSION -> {
                     val bundle = args.getBundle(EXTRA_SWAP_MEDIA_ITEM)
-                    if (bundle != null) {
+                    // [KO] review V-4: a skip or track end can land between the
+                    // sender's "still current" check and this command; swapping
+                    // then would replace the next row with the previous song.
+                    val swapFromId = args.getString(EXTRA_SWAP_FROM_ID)
+                    val nowId = this@PlaybackService.player?.currentMediaItem?.mediaId
+                    if (bundle != null && !koSwapFromStillCurrent(swapFromId, nowId)) {
+                        TrackLog.d(
+                            "BitChord",
+                            "version swap dropped: row moved from $swapFromId to $nowId before the command arrived",
+                            about = swapFromId,
+                        ) // [KO] review V-4
+                    } else if (bundle != null) {
                         val targetSong = songFromBundle(bundle)
                         // The listener's own choice outranks the music-only setting.
                         if (targetSong.isVideo) {
