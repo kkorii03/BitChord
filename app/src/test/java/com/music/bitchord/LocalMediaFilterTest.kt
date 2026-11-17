@@ -204,6 +204,31 @@ class LocalMediaFilterTest {
         )
     }
 
+    // Review 11-18: the filter-off gate lacked m4b/amr/awb/oga/mka, which
+    // Media3 plays, so audiobooks and voice files vanished with the filter off.
+    @Test
+    fun `filter off keeps audiobooks and other containers Media3 plays`() {
+        for (ext in listOf("m4b", "amr", "awb", "oga", "mka")) {
+            assertTrue(
+                ext,
+                LocalMediaRepository.acceptsLocalRow(
+                    filterNonMusic = false,
+                    durationMs = 3_600_000,
+                    displayName = "book.$ext",
+                    path = "/storage/emulated/0/Audiobooks/book.$ext",
+                ),
+            )
+            // The music filter stays as it was: these are not music rows.
+            assertFalse(
+                ext,
+                LocalMediaRepository.hasLocalMusicExtension(
+                    displayName = "book.$ext",
+                    path = "/storage/emulated/0/Music/book.$ext",
+                ),
+            )
+        }
+    }
+
     @Test
     fun `filter off still refuses containers the app cannot play`() {
         assertFalse(

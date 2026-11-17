@@ -48,8 +48,14 @@ object LocalMediaRepository {
      * WAV and 3GP are playable audio but the music filter hides them as
      * recordings/clips; turning the filter off has to bring them back or the
      * switch keeps hiding a whole format the subtitle says it hides.
+     *
+     * m4b (MP4 audiobooks), amr/awb (AMR-NB/WB voice), oga (Ogg) and mka
+     * (Matroska audio) are not music, so the filter-on set leaves them out,
+     * but Media3's Mp4/Amr/Ogg/Matroska extractors play them; with the filter
+     * off they have to be listed.
      */
-    private val localPlayableAudioExtensions = localMusicExtensions + setOf("wav", "3gp")
+    private val localPlayableAudioExtensions =
+        localMusicExtensions + setOf("wav", "3gp", "m4b", "amr", "awb", "oga", "mka")
 
     private val nonMusicPathSegments = listOf(
         "/alarms/",
