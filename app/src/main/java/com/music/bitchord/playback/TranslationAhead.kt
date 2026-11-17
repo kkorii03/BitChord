@@ -210,6 +210,7 @@ internal object TranslationAhead {
         currentJob?.cancel()
         currentId = song.videoId
         val app = context.applicationContext
+        com.music.bitchord.ko.KoDeferredDownloadTranslation.onPlayed(app, song.videoId) // [KO] RG3-5
         currentJob = scope.launch {
             prepare(app, song, allowHeavy = AppSettings.heavyWorkAllowed)
         }
@@ -420,12 +421,22 @@ internal object TranslationAhead {
      * and the ahead pass translate the song with keep=true when it is played.
      */
     fun downloaded(context: Context, song: Song, uri: String) {
-        if (!shouldTranslateDownload(AppSettings.keepDownloadTranslation.value, AppSettings.heavyWorkAllowed)) return
-        val app = context.applicationContext
-        scope.launch {
-            val lines = EmbeddedLyrics.forUri(app, uri) ?: return@launch
-            translate(song.videoId, lines, targetLanguage(app), keep = true)
+        if (!shouldTranslateDownload(AppSettings.keepDownloadTranslation.value, AppSettings.heavyWorkAllowed)) {
+            // [KO] RG3-5: remembered, translated when power saving ends or the song is played.
+            if (AppSettings.keepDownloadTranslation.value) com.music.bitchord.ko.KoDeferredDownloadTranslation.defer(context, song.videoId)
+            return
         }
+        val app = context.applicationContext
+        scope.launch { keepFromFile(app, song.videoId, uri) }
+    }
+
+    /**
+     * [uri]'s own lyrics translated and kept beside the download. False when
+     * the request got no answer, so a deferred catch-up tries it again later.
+     */
+    internal suspend fun keepFromFile(app: Context, videoId: String, uri: String): Boolean {
+        val lines = EmbeddedLyrics.forUri(app, uri) ?: return true
+        return translate(videoId, lines, targetLanguage(app), keep = true)
     }
 
     private suspend fun lookUp(song: Song, transcribe: Boolean): LyricsRepository.Result? {
@@ -462,8 +473,9 @@ internal object TranslationAhead {
         }
     }
 
-    private suspend fun translate(trackId: String, lines: List<LyricLine>, target: String, keep: Boolean) {
-        try {
+    /** Returns whether the request was answered (translated, or already that language). */
+    private suspend fun translate(trackId: String, lines: List<LyricLine>, target: String, keep: Boolean): Boolean {
+        return try {
             val result = gate.withLock {
                 withTimeoutOrNull(LOOKUP_TIMEOUT_MS) {
                     LyricsTranslation.translate(trackId, lines, target, keep = keep)
@@ -475,10 +487,12 @@ internal object TranslationAhead {
             // on release builds, which left the listener's own diagnostic log
             // unable to say whether this pass ever ran.
             TrackLog.d(TAG, "translation-ahead: $trackId target=$target result=${outcome(result)}", about = trackId)
+            result is LyricsTranslation.Result.Translated || result is LyricsTranslation.Result.SameLanguage
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
             TrackLog.d(TAG, "translation-ahead: $trackId result=failed ${e.javaClass.simpleName}", about = trackId)
+            false
         }
     }
 

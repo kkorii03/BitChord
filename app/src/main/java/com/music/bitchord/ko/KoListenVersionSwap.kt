@@ -31,6 +31,12 @@ internal object KoListenVersionSwap {
         playedMs: Long,
         countedPlay: Boolean,
         atMs: Long,
+        /**
+         * RG5-2: the old row's `last` before this playthrough first filed on it,
+         * null when it had no row yet. A row with earlier listening goes back
+         * to it, or Recents keeps it on top beside the new row.
+         */
+        fromLastBefore: Long? = null,
     ): Boolean {
         if (to.videoId.isBlank() || fromId == to.videoId) return false
         val from = tracks[fromId] ?: return false
@@ -81,7 +87,11 @@ internal object KoListenVersionSwap {
         }
 
         target.last = maxOf(target.last, atMs)
-        if (from.ms <= 0L && from.plays <= 0) tracks.remove(fromId)
+        if (from.ms <= 0L && from.plays <= 0) {
+            tracks.remove(fromId)
+        } else if (fromLastBefore != null && fromLastBefore in 1 until from.last) {
+            from.last = fromLastBefore
+        }
         return true
     }
 }

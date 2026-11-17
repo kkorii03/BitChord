@@ -145,6 +145,10 @@ object PlaybackTracker {
     @Volatile
     private var opening: String? = null
 
+    /** [KO] RG5-1: the id an open still in flight started for, when a version swap renamed [opening]. */
+    @Volatile
+    private var openingRenamedFrom: String? = null
+
     /**
      * A playthrough that must never open a session.
      *
@@ -188,14 +192,32 @@ object PlaybackTracker {
         // whichever surface reads local listening history.
         if (AppSettings.meteredConnection.value == null) return
         if (session?.videoId == videoId || opening == videoId) return
+        openingRenamedFrom = null // [KO] RG5-1
         opening = videoId
         scope.launch(TrackLog.about(videoId)) {
             try {
                 openWithRetries(videoId)
             } finally {
-                if (opening == videoId) opening = null
+                finishOpening(videoId) // [KO] RG5-1
             }
         }
+    }
+
+    /**
+     * [KO] RG5-1: the id a session opened for [videoId] belongs to now — itself,
+     * or the version a swap renamed the claim to while the open was out — or
+     * null when another track took over.
+     */
+    internal fun openTargetFor(videoId: String): String? {
+        val now = opening ?: return null
+        return now.takeIf { it == videoId || openingRenamedFrom == videoId }
+    }
+
+    /** [KO] RG5-1: an open for [videoId] ended; its claim (renamed or not) is released. */
+    internal fun finishOpening(videoId: String) {
+        if (openTargetFor(videoId) == null) return
+        opening = null
+        openingRenamedFrom = null
     }
 
     /**
@@ -205,7 +227,11 @@ object PlaybackTracker {
      */
     fun onVersionSwapped(fromVideoId: String, toVideoId: String) {
         session?.takeIf { it.videoId == fromVideoId }?.videoId = toVideoId
-        if (opening == fromVideoId) opening = toVideoId
+        if (opening == fromVideoId) {
+            // [KO] RG5-1: the open in flight was started for the first id of the chain.
+            openingRenamedFrom = openingRenamedFrom ?: fromVideoId
+            opening = toVideoId
+        }
         // [KO] F1: a playthrough private mode interrupted stays suppressed on its other version.
         if (suppressedVideoId == fromVideoId) suppressedVideoId = toVideoId
     }
@@ -315,7 +341,7 @@ object PlaybackTracker {
      */
     private suspend fun openWithRetries(videoId: String) {
         repeat(OPEN_ATTEMPTS) { attempt ->
-            if (opening != videoId) return
+            if (openTargetFor(videoId) == null) return // [KO] RG5-1: a version swap keeps the claim
             val settled = try {
                 open(videoId)
             } catch (e: CancellationException) {
@@ -369,10 +395,14 @@ object PlaybackTracker {
         // is no longer the one being listened to — and leave the *new* track
         // with no session at all, because its own transition already cleared
         // `opening`. `opening` is the claim on being the current track.
-        if (opening != videoId) {
+        // [KO] RG5-1: a version swap while this was out is the same listen; the
+        // session carries over to the version now playing, as an open one does.
+        val target = openTargetFor(videoId)
+        if (target == null) {
             TrackLog.d(TAG, "history entry for $videoId was superseded while opening")
             return@withLock true
         }
+        fresh.videoId = target
         session = fresh
         _registeredPlays.value++
         TrackLog.d(TAG, "history entry created for $videoId (HTTP $status)")

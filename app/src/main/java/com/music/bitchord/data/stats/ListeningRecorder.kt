@@ -83,6 +83,9 @@ object ListeningRecorder {
      */
     private var startReportedId: String? = null
 
+    /** [KO] RG5-2: see [onVersionSwapped]; null when the track had no row in the open month. */
+    private var lastBeforePlaythrough: Long? = null
+
     private fun recordingAllowed(): Boolean {
         // Cheap time comparison, not a timer: the first sample after a session
         // has run its six hours is what ends it. Every other sink then sees the
@@ -143,6 +146,8 @@ object ListeningRecorder {
                 playedThisTrack = 0L
                 playCounted = false
                 completionCounted = false
+                // [KO] RG5-2: the row's `last` before this playthrough files on it.
+                lastBeforePlaythrough = if (ListeningStats.isReady) ListeningStats.koLastOf(song.videoId) else null
             }
             return
         }
@@ -260,8 +265,12 @@ object ListeningRecorder {
         if (!live && !paused) return
         if (live) currentId = toVideoId
         if (paused) pausedId = toVideoId
+        // [KO] RG5-2: the old row goes back to its own last listen; the new
+        // row's earlier value is what a swap back would restore.
+        val fromLastBefore = lastBeforePlaythrough
+        lastBeforePlaythrough = if (ListeningStats.isReady) ListeningStats.koLastOf(toVideoId) else null
         if ((playedThisTrack > 0L || playCounted) &&
-            ListeningStats.koMoveListen(fromVideoId, to, playedThisTrack, playCounted)
+            ListeningStats.koMoveListen(fromVideoId, to, playedThisTrack, playCounted, fromLastBefore)
         ) {
             Debug.i(TAG, "recents: version swap $fromVideoId -> $toVideoId carried ${playedThisTrack}ms")
         }

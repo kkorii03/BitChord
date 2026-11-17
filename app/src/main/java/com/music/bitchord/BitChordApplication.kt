@@ -375,6 +375,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory, Configu
                     com.music.bitchord.download.HqLibraryUpgrade.onPowerSaveEnded(
                         this@BitChordApplication,
                     )
+                    com.music.bitchord.ko.KoDeferredDownloadTranslation.onPowerSaveEnded(this@BitChordApplication) // [KO] RG3-5
                 }
                 hqLowPower = lowPower
             }

@@ -207,6 +207,12 @@ internal object KoDownloadPipeline {
         val fileIds: Set<String>,
         /** The song side of the file ([KoDownloadRecords.songIdForFile]). */
         val songIdOfFile: String,
+        /**
+         * RG5-3: [songIdOfFile] is itself recorded as the music video (the song
+         * row had no length, so the video won the shortest-length pick). Its
+         * own stream is then the MV sound, not the fix.
+         */
+        val songSideIsVideo: Boolean = false,
     )
 
     /** The old files this record named, and the length verdicts that pointed at them. */
@@ -244,6 +250,7 @@ internal object KoDownloadPipeline {
         if (DownloadedMvPolicy.repairFetchedSongVersion(askedId, fetchedId)) return true
         return origin != null &&
             askedId == origin.songIdOfFile &&
+            !origin.songSideIsVideo &&
             origin.fileIds.any { it != askedId }
     }
 

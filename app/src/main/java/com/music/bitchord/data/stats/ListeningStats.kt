@@ -339,12 +339,22 @@ object ListeningStats {
     }
 
     /** [KO] F1: a version swap's playthrough moves to the new id's row — see [com.music.bitchord.ko.KoListenVersionSwap]. */
-    internal fun koMoveListen(fromId: String, to: Song, playedMs: Long, countedPlay: Boolean): Boolean =
+    internal fun koMoveListen(
+        fromId: String,
+        to: Song,
+        playedMs: Long,
+        countedPlay: Boolean,
+        fromLastBefore: Long? = null, // [KO] RG5-2
+    ): Boolean =
         synchronized(lock) {
             val bucket = open ?: return@synchronized false
-            com.music.bitchord.ko.KoListenVersionSwap.move(bucket.tracks, fromId, to, playedMs, countedPlay, System.currentTimeMillis())
-                .also { if (it) dirty = true }
+            com.music.bitchord.ko.KoListenVersionSwap.move(
+                bucket.tracks, fromId, to, playedMs, countedPlay, System.currentTimeMillis(), fromLastBefore,
+            ).also { if (it) dirty = true }
         }.also { if (it) com.music.bitchord.ko.KoListeningStatsChanges.emit() }
+
+    /** [KO] RG5-2: [id]'s `last` in the open month, null when it has no row there. */
+    internal fun koLastOf(id: String): Long? = synchronized(lock) { open?.tracks?.get(id)?.last }
 
     internal suspend fun seedHistorical(plays: List<SeedPlay>): Int =
         com.music.bitchord.ko.KoListeningStatsSeed.seedHistorical(plays) // [KO] listening-seed

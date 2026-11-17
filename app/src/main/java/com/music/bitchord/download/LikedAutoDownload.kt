@@ -60,6 +60,16 @@ internal object LikedAutoDownload {
         scope.launch {
             Downloads.saved.collect { saved -> unparkSaved(saved.keys) }
         }
+        // [KO] RG3-4: a parked like whose download failed leaves the list too,
+        // or every process start queued it again and posted another failure
+        // row, for ever. Event driven: only when the queue's states change.
+        scope.launch {
+            var before: Map<String, DownloadState> = emptyMap()
+            Downloads.active.collect { now ->
+                unparkFailed(newlyFailed(before, now))
+                before = now
+            }
+        }
     }
 
     private val ready: Boolean get() = this::app.isInitialized
@@ -143,6 +153,31 @@ internal object LikedAutoDownload {
             val ids = parked()
             val left = withoutSaved(ids, saved)
             if (left.size != ids.size) {
+                prefs.edit().putString(KEY_PENDING, left.joinToString("\n")).apply()
+            }
+        }
+    }
+
+    /**
+     * [KO] RG3-4: ids whose download failed in this emission. Compared by
+     * identity, so a failure is acted on once, not again whenever another
+     * id's state changes. A refusal that never tried (Wi-Fi only, the service
+     * not allowed to start) is not a failure of the song and keeps it parked.
+     */
+    internal fun newlyFailed(before: Map<String, DownloadState>, now: Map<String, DownloadState>): Set<String> =
+        now.filter { (id, state) ->
+            state is DownloadState.Failed &&
+                state !== before[id] &&
+                !com.music.bitchord.ko.downloads.KoDownloadQueue.keepsVerifiedPairAfterRefusal(state.reason)
+        }.keys
+
+    private fun unparkFailed(failed: Set<String>) {
+        if (failed.isEmpty() || !this::prefs.isInitialized) return
+        synchronized(lock) {
+            val ids = parked()
+            val left = ids.filterNot { it in failed }
+            if (left.size != ids.size) {
+                Log.d(TAG, "liked download: failed, no longer parked: ${(ids - left.toSet()).joinToString()}")
                 prefs.edit().putString(KEY_PENDING, left.joinToString("\n")).apply()
             }
         }

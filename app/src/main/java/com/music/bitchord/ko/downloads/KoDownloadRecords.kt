@@ -470,10 +470,17 @@ internal object KoDownloadRecords {
         val saved = Downloads.savedValue()
         val metadata = Downloads.savedMetadataValue()
         val uri = saved[videoId] ?: metadata[videoId]?.uri ?: return null
+        val songId = songIdForFile(videoId)
+        val songMeta = metadata[songId]
         return KoDownloadPipeline.FileOrigin(
             soundSourceId = metadata[videoId]?.soundSourceVideoId,
             fileIds = saved.filterValues { it == uri }.keys + videoId,
-            songIdOfFile = songIdForFile(videoId),
+            songIdOfFile = songId,
+            // [KO] RG5-3: the "song side" the length pick chose is the video row.
+            songSideIsVideo = songMeta != null && (
+                songMeta.isVideo == true ||
+                    (songMeta.isVideo == null && DownloadedMvPolicy.hasMvTitleMarker(songMeta.title))
+                ),
         )
     }
 
