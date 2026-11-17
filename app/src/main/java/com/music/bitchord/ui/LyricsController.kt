@@ -157,6 +157,13 @@ class LyricsController(
     /** The sheet on screen is one the listener saved for this song. */
     private var sheetByHand = false
 
+    /**
+     * [KO] U2: the sheet on screen came from the per-song override store or the
+     * downloaded file. Those branches never set [rawLyricsResult], so a
+     * repository upgrade would replace them outright, unjudged; it is skipped.
+     */
+    private var sheetFromStore = false
+
     /** The lines on screen stay until the next timing replaces them: no frame without their correction. */
     private var holdShown = false
 
@@ -250,7 +257,9 @@ class LyricsController(
         // source was picked by hand.
         scope.launch {
             LyricsRepository.upgrades.collect { (videoId, result) ->
-                if (currentLyricsRequest?.videoId == videoId && selectedLyricsSource == null) {
+                if (currentLyricsRequest?.videoId == videoId && selectedLyricsSource == null &&
+                    !sheetFromStore // [KO] U2
+                ) {
                     publishLyrics(result)
                 }
             }
@@ -319,7 +328,14 @@ class LyricsController(
             prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
         )
         val action = requestGate.begin(key, durationMs, hasLocalFile = localUri != null)
-        if (action == LyricsRequestAction.ALREADY_LOADED || action == LyricsRequestAction.WAIT_FOR_DURATION) return
+        if (action == LyricsRequestAction.ALREADY_LOADED) return
+        if (action == LyricsRequestAction.WAIT_FOR_DURATION) {
+            // [KO] U4: another track waiting for its length must not keep the last
+            // track's lyrics, jobs and upgrades; the gate is left alone, so the
+            // duration event still starts the one lookup (a59AuyMjb68).
+            if (currentLyricsRequest?.videoId != videoId) dropPreviousTrack()
+            return
+        }
         // The duration lands a beat after the track, and a network lookup waits
         // for it before claiming the key. Claiming first and giving it up inside
         // the job meant the re-trigger carrying the duration could arrive while
@@ -354,6 +370,7 @@ class LyricsController(
             artistAliases, localUri,
         )
         selectedLyricsSource = null
+        sheetFromStore = false // [KO] U2
         fileLyricsLabel = null
         manualLyricsJobs.values.forEach(Job::cancel)
         manualLyricsJobs.clear()
@@ -445,6 +462,7 @@ class LyricsController(
             sheetByHand = override?.kind == LyricsOverrideFile.Kind.USER
             if (override != null) {
                 // Chosen already, by the listener or by these same words.
+                sheetFromStore = true // [KO] U2
                 sheetCandidates.clear()
                 val lines = override.lines
                 val timed = lines.any { it.timeMs > 0 }
@@ -499,6 +517,7 @@ class LyricsController(
                     mismatchReloadedFor == "$videoId|${it.lines.hashCode()}"
                 }?.let { file ->
                     val embedded = file.lines
+                    sheetFromStore = true // [KO] U2
                     _lyrics.value = embedded
                     // No source to name: what the file records is the lyrics,
                     // not which of the eight services they came from months ago.
@@ -591,6 +610,41 @@ class LyricsController(
             // instead of being dropped as a duplicate for the whole session.
             if (selected == null) requestGate.release()
         }
+    }
+
+    /**
+     * [KO] U4: forgets the track that was showing without claiming the next one.
+     * The same resets the track-change path of [loadLyrics] makes, so nothing of
+     * the old track keeps running, or lands on the new one, while its length is
+     * unknown. The bumped generation turns away every answer still in flight.
+     */
+    private fun dropPreviousTrack() {
+        lyricsGeneration += 1
+        currentLyricsRequest = null
+        selectedLyricsSource = null
+        sheetFromStore = false
+        sheetByHand = false
+        holdShown = false
+        fileLyricsLabel = null
+        lyricsJob?.cancel()
+        lyricsTimingJob?.cancel()
+        aiTimingJob?.cancel()
+        refineHeardJob?.cancel()
+        earlyMeasureJob?.cancel()
+        earlyHearingJob?.cancel()
+        manualLyricsJobs.values.forEach(Job::cancel)
+        manualLyricsJobs.clear()
+        lyricsProviderResults.clear()
+        sheetCandidates.clear()
+        _lyricsProviderStates.value =
+            LyricsSource.entries.associateWith { LyricsProviderState.NOT_FETCHED }
+        lyricsRaceOrder = emptyList()
+        rawLyricsResult = null
+        timingLines = null
+        _lyrics.value = null
+        _lyricsSource.value = null
+        _lyricsChecked.value = false
+        _lyricsTiming.value = LyricsTimingUi()
     }
 
     /**
@@ -824,6 +878,8 @@ class LyricsController(
             return
         }
         rawLyricsResult = result
+        // [KO] U2: a sheet with a result behind it (SheetChoice's pick) is judged as any other.
+        if (result != null) sheetFromStore = false
         if (!holdShown) _lyrics.value = result?.lines
         _lyricsSource.value = result?.source
         result?.let { sheetCandidates[it.source] = it }
@@ -1491,13 +1547,13 @@ class LyricsController(
         // the lines are only rebuilt when what applies actually changed.
         var shown = _lyrics.value
         if (timing != appliedTiming || _lyrics.value == null || holdShown) {
+            // [KO] U1: the rebuild suspends; a skip or a new sheet meanwhile must
+            // not get these lines (the refit and offset callers are bare launches).
+            shown = rebuildTimedLines(lines, timing, { given, applied -> LyricsTiming.apply(given, applied) }) {
+                generation == lyricsGeneration && timingLines === lines
+            } ?: return
             holdShown = false
             appliedTiming = timing
-            shown = if (timing == null) {
-                lines
-            } else {
-                withContext(Dispatchers.Default) { LyricsTiming.apply(lines, timing) }
-            }
             _lyrics.value = shown
         }
         val base = timing?.base
@@ -1992,6 +2048,26 @@ internal class LyricsRequestGate {
     fun release() {
         claimed = null
     }
+}
+
+/**
+ * [KO] U1: [lines] moved by [timing] (unchanged when there is none), or null
+ * when [stillCurrent] says the track or sheet changed while they were rebuilt.
+ * The word alignment in [apply] runs off the main thread and can take hundreds
+ * of ms; its answer is only for the lines it was asked about.
+ */
+internal suspend fun <T : Any> rebuildTimedLines(
+    lines: List<LyricLine>,
+    timing: T?,
+    apply: (List<LyricLine>, T) -> List<LyricLine>,
+    stillCurrent: () -> Boolean,
+): List<LyricLine>? {
+    val shown = if (timing == null) {
+        lines
+    } else {
+        withContext(Dispatchers.Default) { apply(lines, timing) }
+    }
+    return shown.takeIf { stillCurrent() }
 }
 
 /**
