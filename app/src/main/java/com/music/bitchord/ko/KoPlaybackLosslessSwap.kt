@@ -20,7 +20,6 @@ import com.music.bitchord.playback.toSong
 import com.music.bitchord.playback.toMediaItem
 import com.music.bitchord.playback.LoudnessProcessor
 import com.music.bitchord.playback.HqSwapPolicy
-import com.music.bitchord.playback.handoffKey
 import com.music.bitchord.playback.OriginalVersion
 import com.music.bitchord.playback.EXTRA_QUALITY_UPGRADED
 import com.music.bitchord.playback.autoplaySupplierId
@@ -791,22 +790,10 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
         // The session player has owned the queue and its modes since the copy
         // was taken, so the standby catches up here, the way a crossfade does
         // at its handoff. The current row stays out of it, so nothing is cut.
-        standbyPlayer.repeatMode = activePlayer.repeatMode
-        standbyPlayer.shuffleModeEnabled = activePlayer.shuffleModeEnabled
-        val queueEdits = HqSwapPolicy.queueEdits(
-            activeKeys = (0 until activePlayer.mediaItemCount).map { activePlayer.getMediaItemAt(it).swapQueueKey() },
-            standbyKeys = (0 until standbyPlayer.mediaItemCount).map { standbyPlayer.getMediaItemAt(it).swapQueueKey() },
-            currentIndex = index,
-        )
-        if (queueEdits.tail) {
-            standbyPlayer.replaceMediaItems(
-                index + 1,
-                standbyPlayer.mediaItemCount,
-                (index + 1 until activePlayer.mediaItemCount).map { activePlayer.getMediaItemAt(it) },
-            )
-        }
-        if (queueEdits.head) {
-            standbyPlayer.replaceMediaItems(0, index, (0 until index).map { activePlayer.getMediaItemAt(it) })
+        // [KO] review V-3: shared with the version swap; the last blend pass's
+        // unfitReason() already holds the standby on this row, so null never happens here.
+        if (koCatchUpStandbyQueue(activePlayer, standbyPlayer, index) == null) {
+            return@withContext refuse("standby-left-row")
         }
         // Recorded only once the swap is certain: every abort above leaves
         // the YouTube stream playing, and the badge, the stream choice and
@@ -865,13 +852,6 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
         if (!adopted) releaseStandby()
     }
 }
-
-/**
- * A queue row's identity for catching edits made during a swap. The URI is part
- * of it because a row can be replaced in place under the same entry id.
- */
-private fun MediaItem.swapQueueKey(): String =
-    "${handoffKey()}|$mediaId|${localConfiguration?.uri}"
 
 /** Whether the session still belongs to the track and player a swap started on. */
 internal fun PlaybackService.koIsStillSwapping(

@@ -334,7 +334,8 @@ class HqSwapPolicyEdgeTest {
         assertTrue("the blend must read the standby every tick", "unfitReason()" in loop)
         assertTrue("the paused path must notice the listener moving", "pausedStandbyStale(" in swap)
         val adopt = swap.indexOf("adoptPlayerForVersionSwap(")
-        assertTrue("the queue is reconciled before the handover", swap.indexOf("queueEdits(") in 0 until adopt)
+        // [KO] review V-3: the reconcile moved into the helper shared with the version swap.
+        assertTrue("the queue is reconciled before the handover", swap.indexOf("koCatchUpStandbyQueue(") in 0 until adopt)
         assertTrue("the position is read before the handover", swap.indexOf("standbyOffTarget(") in 0 until adopt)
     }
 

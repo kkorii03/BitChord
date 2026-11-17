@@ -1,6 +1,7 @@
 package com.music.bitchord.playback
 
 import com.music.bitchord.ko.koTryAutoplayRefillBeforeStopping
+import com.music.bitchord.ko.koCatchUpStandbyQueue // [KO] review V-3
 import com.music.bitchord.ko.koScheduleTranslationAhead
 import com.music.bitchord.ko.koScheduleCurrentTranslationAhead
 import com.music.bitchord.ko.koScheduleDownloadHealthCheck
@@ -3490,6 +3491,30 @@ class PlaybackService : MediaLibraryService() {
 
                     if (progress >= 1f) break
                     delay(16)
+                }
+
+                // [KO] review V-3: the standby holds the queue as it was before the
+                // wait; "play next", autoplay or a next row's MV->song made since went
+                // to the active player. Catch up now, nothing suspends before the adopt.
+                val queueEdits = koCatchUpStandbyQueue(activePlayer, standbyPlayer, currentIndex)
+                if (queueEdits == null) {
+                    // [KO] review V-3: the standby ran off the swapped row; adopting it
+                    // would put another row on air. Keep the current version playing.
+                    standbyPlayer.stop()
+                    standbyPlayer.clearMediaItems()
+                    standbyPlayer.volume = 1f
+                    activePlayer.volume = 1f
+                    swappingMediaId = null
+                    TrackLog.w("BitChord", "version swap dropped: standby left row $currentIndex", about = mediaId)
+                    lateHandover?.let { logLateHandoverRefused(it, "standby left the row") }
+                    return@launch
+                }
+                if (queueEdits.head || queueEdits.tail) {
+                    TrackLog.d(
+                        "BitChord",
+                        "version swap: queue edited during swap, caught up head=${queueEdits.head} tail=${queueEdits.tail}",
+                        about = mediaId,
+                    ) // [KO] review V-3
                 }
 
                 // Adopt incoming player cleanly
