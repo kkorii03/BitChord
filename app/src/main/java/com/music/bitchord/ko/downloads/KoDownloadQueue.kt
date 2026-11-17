@@ -123,15 +123,20 @@ internal object KoDownloadQueue {
         automatic: Boolean,
         mvSoundRepair: Boolean,
     ) {
+        // States the full terms of THIS enqueue. Only adding left a failed
+        // replacement's forceReplace/youtubeOnly/minimumTier behind (a failure
+        // does not clear them), and the next plain download of the song
+        // inherited them. An in-flight row never gets here: Downloads.enqueue
+        // returns first while the id is pending or running.
         enqueueGenerations[id] = ++generationCounter
-        if (quality != null) qualityOverrides[id] = quality
-        if (hq != null) hqOverrides[id] = hq
-        if (avoidSourceConfigId != null) avoidSources[id] = avoidSourceConfigId
-        if (forceReplace) forceReplaceIds.add(id)
-        if (youtubeOnly) youtubeOnlyIds.add(id)
-        if (minimumTier != null) minimumTiers[id] = minimumTier
-        if (automatic) automaticIds.add(id)
-        if (mvSoundRepair) mvSoundRepairIds.add(id)
+        if (quality != null) qualityOverrides[id] = quality else qualityOverrides.remove(id)
+        if (hq != null) hqOverrides[id] = hq else hqOverrides.remove(id)
+        if (avoidSourceConfigId != null) avoidSources[id] = avoidSourceConfigId else avoidSources.remove(id)
+        if (forceReplace) forceReplaceIds.add(id) else forceReplaceIds.remove(id)
+        if (youtubeOnly) youtubeOnlyIds.add(id) else youtubeOnlyIds.remove(id)
+        if (minimumTier != null) minimumTiers[id] = minimumTier else minimumTiers.remove(id)
+        if (automatic) automaticIds.add(id) else automaticIds.remove(id)
+        if (mvSoundRepair) mvSoundRepairIds.add(id) else mvSoundRepairIds.remove(id)
     }
 
     /** The terms a retry must repeat, built once at enqueue time. */

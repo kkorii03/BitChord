@@ -212,6 +212,24 @@ internal object KoDownloadPipeline {
     }
 
     /**
+     * Whether what was measured against the old file (AI line timing, heard
+     * words, the automatic recheck sheet, the "already checked" mark, version
+     * alignments) must be dropped for the new one.
+     *
+     * A new path proves new bytes. So does a deliberate replacement ([replacing]:
+     * a verified hq pair or forceReplace) even when it was written back over the
+     * same path — app-private and legacy downloads rename the staged part over
+     * the old file, so the uri does not change. A plain adopt of the file that
+     * is already there rewrote nothing and keeps its answers.
+     */
+    fun dropsOldTiming(
+        previousUris: Set<String>,
+        newUri: String,
+        replacing: Boolean,
+        suspects: List<String>,
+    ): Boolean = previousUris.any { it != newUri } || replacing || suspects.isNotEmpty()
+
+    /**
      * [videoId]'s file now holds other bytes (or is gone): version alignments
      * measured against the old recording must not be reused for it — see
      * [com.music.bitchord.playback.smart.VersionAudioAligner.forget].
@@ -235,6 +253,8 @@ internal object KoDownloadPipeline {
         coverSaved: Boolean,
         finalName: String? = null,
         stagedName: String? = null,
+        /** These bytes were written as a deliberate replacement; see [dropsOldTiming]. */
+        replacing: Boolean = false,
     ) {
         val ids = setOf(asked.videoId, fetched.videoId)
         // The cover file has landed with the track. Tell any row already
@@ -256,8 +276,8 @@ internal object KoDownloadPipeline {
                 KoDownloadRecords.clearMvSoundSuspects(previous.suspects + ids)
             }
             val context = Downloads.applicationContext()
-            val fileReplaced = previous.uris.any { it != uri.toString() }
-            if (context != null && (fileReplaced || previous.suspects.isNotEmpty())) {
+            val dropTiming = dropsOldTiming(previous.uris, uri.toString(), replacing, previous.suspects)
+            if (context != null && dropTiming) {
                 // A song's file was replaced. Any AI timing answer was measured
                 // against the old bytes, so drop it (and the spent engine
                 // record) and let the song check run against the new

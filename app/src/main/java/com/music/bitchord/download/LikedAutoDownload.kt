@@ -6,6 +6,7 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.startup.AppForeground
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +54,12 @@ internal object LikedAutoDownload {
                 .distinctUntilChanged()
                 .collect { ready -> if (ready) drain() }
         }
+        // A like handed to the queue while the app had no window stays parked
+        // (see [settle]); it leaves the list once its file is saved. Event
+        // driven: runs only when the saved records change.
+        scope.launch {
+            Downloads.saved.collect { saved -> unparkSaved(saved.keys) }
+        }
     }
 
     private val ready: Boolean get() = this::app.isInitialized
@@ -92,7 +99,7 @@ internal object LikedAutoDownload {
      */
     private suspend fun download(videoId: String, known: Song?, parkOnFailure: Boolean) {
         if (alreadyHandled(videoId)) {
-            unpark(videoId)
+            settle(videoId)
             return
         }
         val song = known?.takeIf { it.videoId == videoId && it.title.isNotBlank() }
@@ -109,7 +116,36 @@ internal object LikedAutoDownload {
             return
         }
         withContext(Dispatchers.Main) { Downloads.enqueue(app, song) }
-        unpark(videoId)
+        settle(videoId)
+    }
+
+    /**
+     * After [videoId] was handed to the queue: off the on-disk list only when
+     * this process will really download it. Without a window the queue does
+     * not start (KoDownloadQueue.startAfterEnqueue), the id lives only in
+     * memory, and process death would lose the like for good.
+     */
+    private fun settle(videoId: String) {
+        val saved = Downloads.saved.value.containsKey(videoId)
+        if (keepParked(saved = saved, foreground = AppForeground.isForeground)) park(videoId) else unpark(videoId)
+    }
+
+    /** Whether a like handed to the queue must stay on the on-disk list. */
+    internal fun keepParked(saved: Boolean, foreground: Boolean): Boolean = !saved && !foreground
+
+    /** [parked] without the ids whose file is now saved. */
+    internal fun withoutSaved(parked: List<String>, saved: Set<String>): List<String> =
+        parked.filterNot { it in saved }
+
+    private fun unparkSaved(saved: Set<String>) {
+        if (!this::prefs.isInitialized) return
+        synchronized(lock) {
+            val ids = parked()
+            val left = withoutSaved(ids, saved)
+            if (left.size != ids.size) {
+                prefs.edit().putString(KEY_PENDING, left.joinToString("\n")).apply()
+            }
+        }
     }
 
     private suspend fun drain() = drainLock.withLock {

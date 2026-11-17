@@ -1126,6 +1126,7 @@ object Downloads {
         finalName: String? = null,
         /** The name the staged row was written under before the rename. */
         stagedName: String? = null,
+        replacing: Boolean = false, // [KO] in-place replace drops old timing
     ) {
         open()
         val ids = setOf(asked.videoId, fetched.videoId)
@@ -1213,6 +1214,7 @@ object Downloads {
             savedArtwork != null || artworkUri != null,
             finalName,
             stagedName,
+            replacing,
         ) // [KO] pipeline
     }
 
@@ -1231,13 +1233,16 @@ object Downloads {
         meta: (Map<String, SavedSongMetadata>) -> Map<String, SavedSongMetadata>,
     ) {
         open()
-        val savedMap = _saved.updateAndGet(saved)
-        val metaMap = _savedMetadata.updateAndGet(meta)
+        _saved.updateAndGet(saved)
+        _savedMetadata.updateAndGet(meta)
         if (!::prefs.isInitialized) return
         synchronized(recordLock) {
+            // [KO] persist-current: encode the values as they are now, inside the
+            // lock. The maps this call produced can already be older than one
+            // another worker wrote, and apply() keeps whichever came last.
             prefs.edit()
-                .putString(KEY_SAVED, json.encodeToString(serializer, savedMap))
-                .putString(KEY_SAVED_METADATA, json.encodeToString(metadataSerializer, metaMap))
+                .putString(KEY_SAVED, json.encodeToString(serializer, _saved.value))
+                .putString(KEY_SAVED_METADATA, json.encodeToString(metadataSerializer, _savedMetadata.value))
                 .apply()
         }
     }
@@ -1712,26 +1717,6 @@ object Downloads {
         var artwork: Deferred<MediaTagger.Artwork?>? = null
         return try {
             coroutineScope {
-                // Started before the transfer rather than after it, so four lyric
-                // services are being raced while the bytes are already moving. Done
-                // after the commit instead, every download would pay the slowest of
-                // them in dead time — and it is a *suspending* wait, so it would sit
-                // in the one stretch of this function that has no way back: past the
-                // commit, [pending] is null and a cancellation there would abandon a
-                // finished file that nothing has recorded yet. Awaited below while
-                // there is still a pending destination to abort.
-                //
-                // [LyricsTag.forTrack] is contracted not to throw for anything but
-                // cancellation, and that contract is load-bearing here: this is a
-                // plain child of the scope, so a failure inside it would cancel the
-                // download it was only meant to decorate.
-                // HLS has no tag container, but its private offline package has
-                // sidecars for exactly the same lyrics and full-resolution cover.
-                if (route.taggable && (route.offlineHls != null || MediaTagger.carriesTags(route.extension))) {
-                    lyrics = async { LyricsTag.forTrack(track) }
-                    artwork = async { MediaTagger.artworkFor(context, track) }
-                }
-
                 val baseName = DownloadStore.fileNameFor(track, route.extension)
                 // A media-store replacement cannot reserve the final name while
                 // the old row still owns it: the store would rename the new row
@@ -1756,6 +1741,30 @@ object Downloads {
                     DownloadSession.done(id)
                     clear(id)
                     return@coroutineScope false
+                }
+                // [KO] adopt-before-lookups: started only once the file is known not
+                // to be adopted. coroutineScope waits for its children, and
+                // [MediaTagger.artworkFor] blocks (cancel cannot stop it), so an
+                // adopted track used to pay a full lyrics search + cover fetch.
+                //
+                // Started before the transfer rather than after it, so four lyric
+                // services are being raced while the bytes are already moving. Done
+                // after the commit instead, every download would pay the slowest of
+                // them in dead time — and it is a *suspending* wait, so it would sit
+                // in the one stretch of this function that has no way back: past the
+                // commit, [pending] is null and a cancellation there would abandon a
+                // finished file that nothing has recorded yet. Awaited below while
+                // there is still a pending destination to abort.
+                //
+                // [LyricsTag.forTrack] is contracted not to throw for anything but
+                // cancellation, and that contract is load-bearing here: this is a
+                // plain child of the scope, so a failure inside it would cancel the
+                // download it was only meant to decorate.
+                // HLS has no tag container, but its private offline package has
+                // sidecars for exactly the same lyrics and full-resolution cover.
+                if (route.taggable && (route.offlineHls != null || MediaTagger.carriesTags(route.extension))) {
+                    lyrics = async { LyricsTag.forTrack(track) }
+                    artwork = async { MediaTagger.artworkFor(context, track) }
                 }
                 val name = com.music.bitchord.ko.downloads.KoDownloadPipeline.reserveFileName(
                     track = track,
@@ -1804,6 +1813,7 @@ object Downloads {
                         sourceTitle = route.sourceTitle,
                         sourceArtist = route.sourceArtist,
                         recordingVerified = plan.hq != null || route.recordingVerified,
+                        replacing = plan.hq != null || plan.forceReplace, // [KO] in-place replace
                     )
                     TranslationAhead.downloaded(context, track, savedUri.toString())
                     DownloadSession.done(id)
@@ -1841,6 +1851,7 @@ object Downloads {
                     recordingVerified = plan.hq != null || route.recordingVerified,
                     finalName = finalName,
                     stagedName = name,
+                    replacing = plan.hq != null || plan.forceReplace, // [KO] in-place replace
                 )
                 TranslationAhead.downloaded(context, track, savedUri.toString())
                 DownloadSession.done(id)
