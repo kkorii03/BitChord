@@ -94,6 +94,15 @@ internal object SongHearing {
     private val inFlight = ConcurrentHashMap<String, Flight>()
     private val fileLocks = ConcurrentHashMap<String, Any>()
 
+    /**
+     * [KO] TR7 F2: bumped by [forgetFile] under the video's file lock. A listen notes it
+     * when it starts: its flight is not joined by an ask for the new file, and words it
+     * heard off the replaced file are not saved for the new one.
+     */
+    private val fileGenerations = ConcurrentHashMap<String, Long>()
+
+    internal fun fileGenerationOf(videoId: String): Long = fileGenerations[videoId] ?: 0L
+
     private val json = Json { ignoreUnknownKeys = true }
 
     /** What was heard, and of how much sound. Null [words] means no usable answer ([httpCode] says why). */
@@ -246,7 +255,8 @@ internal object SongHearing {
             // One request per recording, language and window kind (opening or longer) at a time.
             // Each window flying on its own paid for the same opening
             // twice over (11-06: 4.25 requests a song against the 2 this design needs).
-            val base = "${song.videoId}|$recording|$language|$wantExact"
+            val fileGeneration = fileGenerationOf(song.videoId) // [KO] TR7 F2
+            val base = "${song.videoId}|$recording|$language|$wantExact|$fileGeneration"
             // A whole-song ask that may settle for the opening reads it rather than buying the song beside it.
             if (!waitedOpening && readsOpening(untilSeconds, reuseFrom)) {
                 val opening = inFlight[flightSlot(base, reuseFrom)]
@@ -260,7 +270,7 @@ internal object SongHearing {
             val flight = flightSlot(base, untilSeconds)
             val fresh = Flight(
                 untilSeconds,
-                scope.async(start = CoroutineStart.LAZY) { listen(app, song, untilSeconds, minSeconds, language, wantExact) },
+                scope.async(start = CoroutineStart.LAZY) { listen(app, song, untilSeconds, minSeconds, language, wantExact, fileGeneration) },
             )
             val running = inFlight.putIfAbsent(flight, fresh) ?: fresh
             if (running === fresh) {
@@ -345,6 +355,7 @@ internal object SongHearing {
         minSeconds: Double,
         language: String,
         exact: Boolean,
+        fileGeneration: Long, // [KO] TR7 F2
     ): Heard? {
         val videoId = song.videoId
         val started = System.currentTimeMillis()
@@ -392,7 +403,7 @@ internal object SongHearing {
                 answer.httpCode != 429 && answer.httpCode != 401 && answer.httpCode != 403
             if (!unread) {
                 keepWavForTest(app, song, untilSeconds)
-                return kept(app, song, raw, answer, untilSeconds, language, clock)
+                return kept(app, song, raw, answer, untilSeconds, language, clock, fileGeneration)
             }
             TrackLog.d(TAG, "song-hear: http=${answer.httpCode} for ${raw.mime}, decoding instead", videoId)
         }
@@ -408,7 +419,7 @@ internal object SongHearing {
         SyncTestMode.saveWav(app, videoId, wav.bytes)
         val answer = send(wav.bytes, language, wav.mime, untilSeconds, videoId, System.currentTimeMillis() - started2, wav.renditionKey, exact)
         noteOutcome(videoId, answer)
-        return kept(app, song, wav, answer, untilSeconds, language, wavClock)
+        return kept(app, song, wav, answer, untilSeconds, language, wavClock, fileGeneration)
     }
 
     /**
@@ -631,6 +642,8 @@ internal object SongHearing {
         untilSeconds: Double,
         language: String,
         clock: LyricsTiming.Clock, // [KO] TR7 F1
+        /** [KO] TR7 F2: [fileGenerationOf] when the listen started. */
+        fileGeneration: Long = fileGenerationOf(song.videoId),
     ): Heard {
         val audioMs = answer.audioMs ?: (untilSeconds * 1000).toLong()
         val words = answer.words
@@ -650,6 +663,7 @@ internal object SongHearing {
                     words = words.map { LyricsTiming.SavedWord(it.text, it.startMs, it.endMs) },
                     rough = answer.rough,
                 ),
+                fileGeneration,
             )
         }
         return Heard(words, audioMs, clock, answer.httpCode, answer.retryAfterMs, rough = answer.rough)
@@ -708,14 +722,24 @@ internal object SongHearing {
     private fun recordingKey(fromFile: Boolean, clock: LyricsTiming.Clock): String? =
         LyricsTiming.clockToKey(clock)?.let { (if (fromFile) FILE_PREFIX else STREAM_PREFIX) + it }
 
-    /** The file was replaced, so what was heard off it is no longer what plays. */
-    fun forgetFile(context: Context, videoId: String) {
+    /**
+     * The file was replaced, so what was heard off it is no longer what plays.
+     *
+     * [KO] TR7 F2: done before it returns (still off the caller's thread), so the reset that
+     * calls it cannot let an ask for the new file read the old file's words in the gap, and
+     * the generation moves under the same lock a save takes: a listen of the old file that
+     * lands after this keeps nothing ([save]).
+     */
+    suspend fun forgetFile(context: Context, videoId: String) {
         val app = context.applicationContext
-        scope.launch {
+        withContext(Dispatchers.IO) {
             synchronized(lockOf(videoId)) {
-                val kept = readFile(app, videoId)
-                val left = kept.filterNot { it.recording.startsWith(FILE_PREFIX) }
-                if (left.size != kept.size) writeFile(app, videoId, left)
+                fileGenerations.merge(videoId, 1L, Long::plus)
+                runCatching {
+                    val kept = readFile(app, videoId)
+                    val left = kept.filterNot { it.recording.startsWith(FILE_PREFIX) }
+                    if (left.size != kept.size) writeFile(app, videoId, left)
+                }.onFailure { TrackLog.w(TAG, "song-hear: replaced file's words not dropped: ${it.message}", videoId) }
             }
         }
     }
@@ -725,9 +749,14 @@ internal object SongHearing {
     private fun load(app: Context, videoId: String): List<Saved> =
         synchronized(lockOf(videoId)) { readFile(app, videoId) }
 
-    private fun save(app: Context, videoId: String, new: Saved) {
+    private fun save(app: Context, videoId: String, new: Saved, fileGeneration: Long? = null) {
         runCatching {
             val changed = synchronized(lockOf(videoId)) {
+                // [KO] TR7 F2: words heard off a file [forgetFile] has since dropped are not the new file's.
+                if (fileGeneration != null && new.recording.startsWith(FILE_PREFIX) && fileGenerationOf(videoId) != fileGeneration) {
+                    TrackLog.i(TAG, "song-hear: words of a replaced file not kept", videoId)
+                    return@synchronized false
+                }
                 val kept = readFile(app, videoId)
                 val next = merged(kept, new)
                 writeFile(app, videoId, next)
