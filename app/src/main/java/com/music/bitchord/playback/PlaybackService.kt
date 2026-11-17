@@ -22,6 +22,7 @@ import com.music.bitchord.ko.koLogQualityLabel
 import com.music.bitchord.ko.koHqSwapDecision
 import com.music.bitchord.ko.koCurrentIsSubstitute
 import com.music.bitchord.ko.koCurrentPlayingVerification
+import com.music.bitchord.ko.koExpectedSwapLengthMs
 import com.music.bitchord.ko.koAwaitPlayerCondition
 import com.music.bitchord.ko.koLosslessAheadItem
 import com.music.bitchord.ko.koLogHqAhead
@@ -8238,6 +8239,7 @@ class PlaybackService : MediaLibraryService() {
             // captured here rather than looked up again on revert.
             val previousFormat = NerdStats.declaredFormat(mediaId)
             val previousSource = NerdStats.sourceFor(mediaId)
+            val expectedLength = koExpectedSwapLengthMs(mediaId, stream, now.duration) // [KO] NR2b-2: before StreamChoice names the new copy
             swappingMediaId = mediaId
             swapCutAt = SystemClock.elapsedRealtime()
             TrackLog.d(
@@ -8272,7 +8274,7 @@ class PlaybackService : MediaLibraryService() {
             StreamChoice.remember(mediaId, stream, substituted = stream.sourceConfigId != null)
             QualityUpgrade.unshelve(mediaId)
             TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${startAt}ms ($upgradedSourceName)")
-            watchUpgrade(mediaId, now.uri, upgradedUri, now.position, now.duration, previousFormat, previousSource)
+            watchUpgrade(mediaId, now.uri, upgradedUri, now.position, now.duration, previousFormat, previousSource, expectedDuration = expectedLength) // [KO] NR2b-2
             if (QualityUpgrade.continueAfterLossySwap(mediaId)) {
                 // The immediate JioSaavn improvement stays audible while a
                 // slower lossless source is checked against its higher-quality
@@ -8475,6 +8477,7 @@ class PlaybackService : MediaLibraryService() {
                 AudioCache.warmRange(Uri.parse(upgradedUri), 0, UPGRADE_HEADER_BYTES, probeLock = false)
             }
         }
+        val expectedLength = withContext(Dispatchers.Main) { koExpectedSwapLengthMs(mediaId, stream, at.duration) } // [KO] NR2b-2
         val audition = withContext(Dispatchers.Main) {
             buildAuditionPlayer(meter).apply {
                 setMediaItem(
@@ -8493,7 +8496,7 @@ class PlaybackService : MediaLibraryService() {
             warmedThrough = withTimeoutOrNull(UPGRADE_AUDITION_MS) {
                 while (true) {
                     val verdict = withContext(Dispatchers.Main) {
-                        auditionVerdict(audition, at.duration, stream, meter.bytes.get(), at.position)
+                        auditionVerdict(audition, expectedLength, stream, meter.bytes.get(), at.position) // [KO] NR2b-2
                     }
                     when (verdict) {
                         is Audition.Ready -> return@withTimeoutOrNull verdict.bufferedTo

@@ -8,6 +8,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.download.HqLibraryUpgrade
+import com.music.bitchord.ko.KoHqWarp
 import com.music.bitchord.ko.KoOpeningClip
 import com.music.bitchord.ko.KoVersionGuard
 import com.music.bitchord.data.lyrics.ChromaAlignment
@@ -720,6 +721,19 @@ object HqAudioVerify {
                     val offset = result.map.map(0L)
                     val rate = result.rate
                     val verdict = HqMatchPolicy.verdict(match, offset, rate)
+                    // [KO] NR2b-1: a bent match is another edit that one offset cannot carry. Left
+                    // unmeasured for this run (no swap, nothing stored, no words asked), never refused.
+                    if (KoHqWarp.bent(verdict.accepted, result)) {
+                        logVerdict(
+                            target.title, sourceName, match, offset, accepted = false, about = youtubeId,
+                            reference = "wav", candidate = "file", bytes = candidate.bytes, measured = false,
+                        )
+                        logTiming(youtubeId, candidate, alignMs)
+                        TrackLog.i(TAG, "hq-verify: '${target.title}' $sourceName bent match (${ChromaAlignment.lastVerdict}); not stored", youtubeId)
+                        sourceId?.let(SourceResolver.SourceCooldown::measured)
+                        UnmeasuredMemory.note(sourceId, trackId, "bent match", restSource = false)
+                        return@coroutineScope Outcome.Unavailable()
+                    }
                     // [KO] Only a chroma match is worth hearing; a refusal stands without it.
                     val words = if (youtubeWords != null && verdict.accepted) {
                         heardWords(youtubeId, youtubeWords, candidate.opening, offset, rate)
@@ -1034,6 +1048,7 @@ object HqAudioVerify {
         if (sourceConfigId != null && HqVerificationStore.isRejected(context, youtubeId, sourceConfigId, trackId)) {
             return@withContext DownloadedSound.Rejected
         }
+        if (KoHqWarp.fileNoted(youtubeId, uri)) return@withContext DownloadedSound.Unavailable // [KO] NR2b-1: measured bent this run
         val key = "download\u0001$youtubeId\u0001${sourceConfigId.orEmpty()}\u0001${trackId.orEmpty()}"
         val lock = locks.getOrPut(key) { Mutex() }
         try {
@@ -1085,6 +1100,14 @@ object HqAudioVerify {
                     val offset = result.map?.map(0L) ?: 0L
                     val rate = result.rate ?: 1.0
                     val verdict = HqMatchPolicy.verdict(match, offset, rate)
+                    // [KO] NR2b-1: bent — no verdict to store and nothing to condemn; the file's
+                    // length and names still face the health check as for any unheard file.
+                    if (KoHqWarp.bent(verdict.accepted, result)) {
+                        logVerdict("downloaded file", "download", match, offset, accepted = false, about = youtubeId, measured = false)
+                        TrackLog.i(TAG, "hq-verify: downloaded file bent match (${ChromaAlignment.lastVerdict}); not stored", youtubeId)
+                        KoHqWarp.noteFile(youtubeId, uri)
+                        return@coroutineScope DownloadedSound.Unavailable
+                    }
                     logVerdict(
                         title = "downloaded file",
                         sourceName = "download",
@@ -2565,12 +2588,13 @@ object HqAudioVerify {
             return source + '\u0001' + track
         }
 
-        fun note(sourceId: String?, trackId: String?, reason: String) {
+        /** [restSource] false ([KO] NR2b-1): a property of this row's audio, not of the source. */
+        fun note(sourceId: String?, trackId: String?, reason: String, restSource: Boolean = true) {
             val key = key(sourceId, trackId) ?: return
             if (rows.size >= MAX_UNMEASURED_ROWS) rows.keys.firstOrNull()?.let(rows::remove)
             rows[key] = reason
             // Several different tracks in a row means the source, not the row.
-            SourceResolver.SourceCooldown.unmeasured(sourceId!!, trackId!!, reason)
+            if (restSource) SourceResolver.SourceCooldown.unmeasured(sourceId!!, trackId!!, reason)
         }
 
         fun reason(sourceId: String?, trackId: String?): String? =

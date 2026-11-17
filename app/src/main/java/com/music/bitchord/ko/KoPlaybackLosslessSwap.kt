@@ -630,15 +630,7 @@ internal suspend fun PlaybackService.koSmoothSwapToLossless(
     val previousDuration = activePlayer.duration
     val previousFormat = NerdStats.declaredFormat(mediaId)
     val previousSource = NerdStats.sourceFor(mediaId)
-    val expectedDuration = if (previousDuration > 0L) {
-        HqSwapPolicy.targetPositionMs(
-            HqSwapPolicy.toYoutubeMs(previousDuration, currentOffsetMs, currentRate),
-            verified.offsetMs,
-            verified.rate,
-        )
-    } else {
-        previousDuration
-    }
+    val expectedDuration = KoSwapLength.expectedMs(previousDuration, currentOffsetMs, currentRate, verified)
     // The standby is the session's player only once this swap adopts it;
     // every other ending owes it a release, cancellation included.
     var adopted = false
