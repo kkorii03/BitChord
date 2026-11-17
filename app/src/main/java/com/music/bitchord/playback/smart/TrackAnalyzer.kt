@@ -83,6 +83,17 @@ internal fun TrackFeatures.Features.shiftedBy(offset: Double): TrackFeatures.Fea
 }
 
 /**
+ * [KO] Where a region's derived features go on the track's timeline. Their
+ * times are local to the first decoded sample, which SEEK_TO_CLOSEST_SYNC can
+ * put before the [requested] start (WebM), and the region's grid, vocal and
+ * level windows are already stated against [actualStart]. Shifting by the
+ * requested start read the tail's content end, outro and mix-out late against
+ * that beat grid. Zero (the head) stays unshifted.
+ */
+internal fun regionFeatureOffset(requested: Double, actualStart: Double): Double =
+    if (requested != 0.0) actualStart else 0.0
+
+/**
  * Stops the analysis a next-prep bundle started for a row that is no longer
  * next. A running pass is aborted at its next decode check; a queued one is
  * dropped when it reaches the front, and the next request for the same track
@@ -1703,7 +1714,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // `vocalMask` below, which is where the analysis allocates most heavily and where the
         // process was dying. Same reasoning [derived] already had, one level further out.
         val inputs = regionInputs(stereo, seconds, deriveFeatures)
-        val derived = inputs.derived?.shiftedBy(featureOffsetSeconds)
+        val derived = inputs.derived?.shiftedBy(regionFeatureOffset(featureOffsetSeconds, actualStart))
 
         val vocalValues = if (features != null) vocalValues(stereo) else null
         return Region(
