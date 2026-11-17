@@ -5651,16 +5651,21 @@ private fun BitChordApp(
                         privacy,
                         songs.map { it.videoId },
                         songs,
-                    ) { browseId, pTitle, savedLocally ->
+                    ) { browseId, pTitle, savedLocally, missing ->
                         showQueueNotice(
-                            context.getString(
-                                if (savedLocally && signedIn) R.string.spotify_import_local_fallback
-                                else R.string.spotify_import_done,
-                                pTitle,
-                            ),
+                            if (missing > 0) {
+                                // [KO] review F2b-4: say how many songs YouTube refused.
+                                context.getString(R.string.spotify_import_partial, pTitle, missing)
+                            } else {
+                                context.getString(
+                                    if (savedLocally && signedIn) R.string.spotify_import_local_fallback
+                                    else R.string.spotify_import_done,
+                                    pTitle,
+                                )
+                            },
                         )
                         browseId?.let { id ->
-                            viewModel.openDetail(id, pTitle, "${songs.size} songs", songs.firstOrNull()?.thumbnailUrl)
+                            viewModel.openDetail(id, pTitle, "${songs.size - missing} songs", songs.firstOrNull()?.thumbnailUrl)
                         }
                     }
                 },

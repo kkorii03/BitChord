@@ -245,6 +245,32 @@ class SimilarCandidatesTest {
         assertFalse(SimilarCandidates.shouldFetchSimilar(now + 1_000, "aha", "wham", now))
     }
 
+    /**
+     * Review F2b-3: inside the window another artist's answer is reused for
+     * one top-up, but it used to be cached under the new seed for a week, so
+     * that seed never got its own similar songs.
+     */
+    @Test
+    fun `a reused answer is kept for a week only for the artist it was fetched for`() {
+        assertFalse(SimilarCandidates.shouldStoreReusedAnswer("rickastley", "aha"))
+        assertTrue(SimilarCandidates.shouldStoreReusedAnswer("aha", "aha"))
+        assertFalse(SimilarCandidates.shouldStoreReusedAnswer("", ""))
+        assertFalse(SimilarCandidates.shouldStoreReusedAnswer("aha", ""))
+    }
+
+    @Test
+    fun `the reuse path stores only through the same-artist check`() {
+        val root = java.io.File(".").canonicalFile
+        val base = if (java.io.File(root, "app/src/main").exists()) "app/src/main" else "src/main"
+        val source = java.io.File(root, "$base/java/com/music/bitchord/data/taste/SimilarCandidates.kt").readText()
+        val reuse = source.substringAfter("val reused = reuseLastFetch(seed)").substringBefore("return reused")
+        assertTrue(
+            "the reused answer must be stored only when shouldStoreReusedAnswer allows it",
+            reuse.contains("shouldStoreReusedAnswer(lastArtistKey, artistKey)") &&
+                reuse.contains("if (ownAnswer) store("),
+        )
+    }
+
     @Test
     fun `one fetch searches for at most four similar recordings`() {
         assertEquals(4, SimilarCandidates.MAX_SEARCHES_PER_FETCH)

@@ -187,7 +187,10 @@ object SimilarCandidates {
             // the answer. Only its kept tail may cost a few searches, and only
             // when the first batch barely matched.
             val reused = reuseLastFetch(seed) ?: return emptyList()
-            store(SimilarCacheEntry(key, nowMs, reused.map { it.asCached() }))
+            // [KO] review F2b-3: a borrowed answer is the seed's own only for the
+            // artist it was fetched for; otherwise it is used, not kept for a week.
+            val ownAnswer = synchronized(lock) { shouldStoreReusedAnswer(lastArtistKey, artistKey) }
+            if (ownAnswer) store(SimilarCacheEntry(key, nowMs, reused.map { it.asCached() }))
             return reused
         }
 
@@ -263,6 +266,19 @@ object SimilarCandidates {
      */
     internal fun shouldCacheSimilarAnswer(found: Int, failedSearches: Int): Boolean =
         found > 0 || failedSearches == 0
+
+    /**
+     * Whether an answer reused inside the throttle window may be cached under
+     * the new seed for a week.
+     *
+     * Only when it was fetched for the same original artist. Another artist's
+     * similar songs are fine for one top-up, but pinned under this seed's key
+     * they answered every top-up from it for seven days, so the seed never got
+     * its own answer and the station drifted into the other artist's genre
+     * (review F2b-3). A blank artist cannot be compared, so it is not kept.
+     */
+    internal fun shouldStoreReusedAnswer(lastArtistKey: String, seedArtistKey: String): Boolean =
+        seedArtistKey.isNotBlank() && seedArtistKey == lastArtistKey
 
     /**
      * The last fetch's answer for a seed inside the throttle window.

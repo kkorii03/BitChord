@@ -132,6 +132,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 import com.music.bitchord.ko.ui.KoTypeaheadCache
 import com.music.bitchord.ko.ui.StartupDeferredWork
+import com.music.bitchord.ko.ui.addInChunks
 import com.music.bitchord.ko.ui.historyPageState
 import com.music.bitchord.ko.ui.koAfterHomeFeed
 import com.music.bitchord.ko.ui.koAwaitDetailListing
@@ -1064,8 +1065,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         privacy: PlaylistPrivacy,
         videoIds: List<String>,
         songs: List<Song> = emptyList(),
-        /** [savedLocally] is true when the playlist went to this device, not YouTube Music. */
-        onResult: ((browseId: String?, title: String, savedLocally: Boolean) -> Unit)? = null,
+        /**
+         * [savedLocally] is true when the playlist went to this device, not YouTube Music.
+         * [missing] is how many songs YouTube refused to add (review F2b-4).
+         */
+        onResult: ((browseId: String?, title: String, savedLocally: Boolean, missing: Int) -> Unit)? = null,
     ) {
         val name = title.trim().ifBlank { text(R.string.new_playlist) }
         viewModelScope.launch {
@@ -1077,17 +1081,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     videoIds = initialBatch,
                 ).fold(
                     onSuccess = { playlistId ->
-                        if (videoIds.size > 50) {
-                            videoIds.drop(50).chunked(50).forEach { chunk ->
-                                YtMusicRepository.addToPlaylist(playlistId, chunk)
-                            }
+                        // [KO] review F2b-4: a refused chunk is counted, not dropped unseen.
+                        val missing = addInChunks(videoIds.drop(50)) { chunk ->
+                            YtMusicRepository.addToPlaylist(playlistId, chunk)
                         }
                         setPlaylistOwned("VL$playlistId", true)
                         libraryStale = true
                         val created = UserPlaylist(
                             playlistId = playlistId,
                             title = name,
-                            subtitle = quantity(R.plurals.song_count_plural, videoIds.size),
+                            subtitle = quantity(R.plurals.song_count_plural, videoIds.size - missing),
                             thumbnailUrl = null,
                         )
                         _playlists.value = listOf(created) +
@@ -1103,16 +1106,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 ),
                             ) + items.filterNot { it.browseId == created.browseId }
                         }
-                        onResult?.invoke(created.browseId, created.title, false)
+                        onResult?.invoke(created.browseId, created.title, false, missing)
                     },
                     onFailure = {
                         val local = com.music.bitchord.data.spotify.LocalPlaylistStore.savePlaylist(name, songs)
-                        onResult?.invoke(local.browseId, local.title, true)
+                        onResult?.invoke(local.browseId, local.title, true, 0)
                     },
                 )
             } else {
                 val local = com.music.bitchord.data.spotify.LocalPlaylistStore.savePlaylist(name, songs)
-                onResult?.invoke(local.browseId, local.title, true)
+                onResult?.invoke(local.browseId, local.title, true, 0)
             }
         }
     }
@@ -1458,6 +1461,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             for (work in startupDeferredWork(_signedIn.value)) {
                 when (work) {
                     StartupDeferredWork.ACCOUNT -> loadAccount()
+                    StartupDeferredWork.LIKED_IDS -> koLoadLikedIds() // [KO] liked-ids-at-launch
                     StartupDeferredWork.UPDATE_CHECK -> {
                         // A leftover APK only means "Install Now" for the session
                         // that downloaded it — see AppUpdateChecker.clearCache.
@@ -2063,8 +2067,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         likedSyncJob?.cancel()
         likedSyncJob = viewModelScope.launch {
             YtMusicRepository.syncLikedMusic(token) { next ->
-                if (identity != listenerKey()) null else YtMusicRepository.moreSongs(next).getOrNull()
+                if (identity != listenerKey()) null else YtMusicRepository.moreLikedIds(next).getOrNull()
             }
+        }
+    }
+
+    /**
+     * [KO] Seeds the account's liked ids into [LikeState] at launch, without
+     * the Library feed (review F2b-1). The Library tab used to be the only
+     * thing that did it, so before it was opened every heart read as empty and
+     * the first tap on a liked song sent LIKE again instead of unliking it.
+     * Nothing is published to a tab here; a Library load that already ran or
+     * is running seeds the same ids itself, so this one steps aside.
+     */
+    private fun koLoadLikedIds() {
+        if (!_signedIn.value) return
+        val identity = listenerKey()
+        viewModelScope.launch {
+            if (_library.value !is UiState.Loading || libraryLoadJob?.isActive == true) return@launch
+            val page = YtMusicRepository.browseSongs(YtMusicRepository.LIKED_MUSIC).getOrNull()
+                ?: return@launch
+            if (identity != listenerKey()) return@launch
+            LikeState.seedLiked((page.songs + page.hiddenSongs).mapTo(HashSet()) { it.videoId })
+            if (_library.value !is UiState.Loading || libraryLoadJob?.isActive == true) return@launch
+            page.continuation?.let { token -> syncLikedMusic(identity, token) }
         }
     }
 

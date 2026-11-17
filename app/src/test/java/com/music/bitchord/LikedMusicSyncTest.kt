@@ -189,6 +189,35 @@ class LikedMusicSyncTest {
         assertEquals(setOf("v0", "v1", "v2"), LikeState.overrides.value.keys)
     }
 
+    // ---- Review F2b-2: the id sync reads pages without the music/video split --
+
+    /**
+     * The sync seeds shown and hidden rows alike, so the classifier's player
+     * lookups that [YtMusicRepository.moreSongs] runs on a liked page were
+     * spent on every page of the whole collection for nothing. Innertube's
+     * browse cannot be injected here, so the wiring is checked in the source.
+     */
+    @Test
+    fun `the liked id sync never reads its pages through the classifying moreSongs`() {
+        val root = java.io.File(".").canonicalFile
+        val repoRoot = if (java.io.File(root, "app/src/main").exists()) root else root.parentFile
+        val vm = java.io.File(repoRoot, "app/src/main/java/com/music/bitchord/ui/MainViewModel.kt").readText()
+        val vmSync = vm.substringAfter("private fun syncLikedMusic(").substringBefore("\n    }")
+        assertTrue("the app's sync must read pages with moreLikedIds", vmSync.contains("YtMusicRepository.moreLikedIds(next)"))
+        assertTrue("the app's sync must not classify each page", !vmSync.contains("moreSongs("))
+
+        val repo = java.io.File(
+            repoRoot,
+            "shared/src/jvmSharedMain/kotlin/com/music/bitchord/data/YtMusicRepository.kt",
+        ).readText()
+        val defaultLoader = repo.substringAfter("suspend fun syncLikedMusic(").substringBefore(") {")
+        assertTrue("syncLikedMusic's default loader must be moreLikedIds", defaultLoader.contains("moreLikedIds(it)"))
+        assertTrue("syncLikedMusic's default loader must not classify", !defaultLoader.contains("moreSongs("))
+        val reader = repo.substringAfter("suspend fun moreLikedIds(").substringBefore("/**")
+        assertTrue("moreLikedIds must read the continuation directly", reader.contains("Innertube.browseContinuation(token)"))
+        assertTrue("moreLikedIds must not run the liked music/video split", !reader.contains("musicOnlyLikedPage"))
+    }
+
     // ---- B. Missing like button means no stated rating ----------------------
 
     @Test

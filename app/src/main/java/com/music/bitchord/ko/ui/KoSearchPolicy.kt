@@ -6,15 +6,21 @@ import com.music.bitchord.data.model.UiState
 import com.music.bitchord.ui.SearchSource
 
 /** Work that may run after the first screen has had time to settle. */
-internal enum class StartupDeferredWork { ACCOUNT, UPDATE_CHECK }
+internal enum class StartupDeferredWork { ACCOUNT, LIKED_IDS, UPDATE_CHECK }
 
 /**
  * The only launch work allowed behind the start-up delay. Feeds are absent on
  * purpose: Explore and Library are fetched by the tab that shows them, never
  * by a timer racing Home's first request.
+ *
+ * LIKED_IDS is not a feed: it reads Liked Music only to seed which ids are
+ * liked, nothing is published to a tab. Without it every heart read as empty
+ * until the Library tab was opened, and the first tap on a liked song sent
+ * LIKE again instead of unliking it (review F2b-1).
  */
 internal fun startupDeferredWork(signedIn: Boolean): List<StartupDeferredWork> = buildList {
     if (signedIn) add(StartupDeferredWork.ACCOUNT)
+    if (signedIn) add(StartupDeferredWork.LIKED_IDS)
     add(StartupDeferredWork.UPDATE_CHECK)
 }
 

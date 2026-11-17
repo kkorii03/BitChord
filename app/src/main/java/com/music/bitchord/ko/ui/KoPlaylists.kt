@@ -24,6 +24,28 @@ internal fun MainViewModel.koRenameLocalPlaylist(browseId: String, title: String
     }
 }
 
+/**
+ * Adds [ids] to a playlist [chunkSize] at a time and returns how many of them
+ * were refused (review F2b-4). Every chunk is tried once; a failed one no
+ * longer vanishes while the card and the notice still claim every song.
+ *
+ * Only a failed request counts as missing. A successful add whose answer names
+ * fewer rows is not: YouTube leaves rows out of that answer while still adding
+ * them (see Innertube.addToPlaylist), so counting those would report songs as
+ * lost that are in the playlist.
+ */
+internal suspend fun addInChunks(
+    ids: List<String>,
+    chunkSize: Int = 50,
+    add: suspend (List<String>) -> Result<Map<String, String>>,
+): Int {
+    var missing = 0
+    for (chunk in ids.chunked(chunkSize)) {
+        if (add(chunk).isFailure) missing += chunk.size
+    }
+    return missing
+}
+
 /** Deletes a device-only playlist, closing its page when it is the one open. */
 internal fun MainViewModel.koDeleteLocalPlaylist(browseId: String) {
     LocalPlaylistStore.deletePlaylist(browseId)

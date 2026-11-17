@@ -3,6 +3,9 @@ package com.music.bitchord
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.data.spotify.SpotifyImporter
+import com.music.bitchord.ko.ui.addInChunks
+import java.io.File
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -52,5 +55,45 @@ class SpotifyImportMatchTest {
         val match = SpotifyImporter.bestMatch(emptyList(), target)
         assertNull(match.song)
         assertFalse(match.loose)
+    }
+
+    // ---- Review F2b-4: a refused 50-song chunk is counted, not lost unseen ----
+
+    @Test
+    fun aRefusedChunkIsCountedAndEveryChunkIsStillTried() = runBlocking {
+        val ids = List(150) { "v$it" }
+        val asked = mutableListOf<List<String>>()
+        val missing = addInChunks(ids) { chunk ->
+            asked += chunk
+            when (asked.size) {
+                2 -> Result.failure(IllegalStateException("refused"))
+                // YouTube's answer may name fewer rows than it added; that is
+                // not a refusal (see Innertube.addToPlaylist).
+                3 -> Result.success(chunk.drop(1).associateWith { "set-$it" })
+                else -> Result.success(chunk.associateWith { "set-$it" })
+            }
+        }
+        assertEquals(listOf(50, 50, 50), asked.map { it.size })
+        assertEquals(50, missing)
+    }
+
+    @Test
+    fun nothingLeftToAddIsNothingMissing() = runBlocking {
+        val missing = addInChunks(emptyList()) { error("no request for an empty tail") }
+        assertEquals(0, missing)
+    }
+
+    @Test
+    fun theImportReportsTheRefusedCountInsteadOfDroppingIt() {
+        val root = File(".").canonicalFile
+        val base = if (File(root, "app/src/main").exists()) "app/src/main" else "src/main"
+        val vm = File(root, "$base/java/com/music/bitchord/ui/MainViewModel.kt").readText()
+        val create = vm.substringAfter("fun createPlaylistWithVideoIds(").substringBefore("\n    fun ")
+        assertTrue("the chunks after the first 50 must go through addInChunks", create.contains("addInChunks("))
+        assertFalse("a chunk's Result must not be thrown away", create.contains(".chunked(50).forEach"))
+        assertTrue("the card counts only the songs that were added", create.contains("videoIds.size - missing"))
+        assertTrue("the caller is told how many were refused", create.contains("created.title, false, missing)"))
+        val activity = File(root, "$base/java/com/music/bitchord/MainActivity.kt").readText()
+        assertTrue("the import notice says how many were refused", activity.contains("R.string.spotify_import_partial"))
     }
 }

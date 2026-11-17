@@ -1016,7 +1016,7 @@ object YtMusicRepository {
      * #219 reported.
      *
      * [loadNext] is injectable so the pagination loop is unit-testable; the
-     * default reads through [moreSongs] and stops on a failed page rather
+     * default reads through [moreLikedIds] and stops on a failed page rather
      * than surfacing an error for a background sync. Cancellation is
      * cooperative and the caller (a ViewModel scope in the app) decides when
      * this outlives its usefulness.
@@ -1028,7 +1028,7 @@ object YtMusicRepository {
      */
     suspend fun syncLikedMusic(
         firstToken: String?,
-        loadNext: suspend (String) -> SongPage? = { moreSongs(it).getOrNull() },
+        loadNext: suspend (String) -> SongPage? = { moreLikedIds(it).getOrNull() },
     ) {
         if (firstToken == null) return
         val seen = HashSet<String>()
@@ -1351,6 +1351,21 @@ object YtMusicRepository {
             if (token in likedContinuations) musicOnlyLikedPage(page) else page
         }
     }
+
+    /**
+     * [KO] A Liked Music continuation read for [syncLikedMusic] only: the ids,
+     * without the music/video split [moreSongs] runs on a liked page. The sync
+     * seeds shown and hidden rows alike, so the split's player lookups (up to
+     * one per album-less row) were spent on every page for nothing (review
+     * F2b-2). A gate-fallback token still goes through [moreSongs], which owns
+     * that route. Display paging keeps [moreSongs].
+     */
+    suspend fun moreLikedIds(token: String): Result<SongPage> =
+        if (YouTubeFallback.isContinuation(token)) {
+            moreSongs(token)
+        } else {
+            call("browse:more") { pageOf(Innertube.browseContinuation(token)) }
+        }
 
     /**
      * The podcast each continuation token pages through — see

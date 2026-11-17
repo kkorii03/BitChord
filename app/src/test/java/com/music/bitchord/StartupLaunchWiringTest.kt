@@ -38,6 +38,29 @@ class StartupLaunchWiringTest {
         )
     }
 
+    /**
+     * Review F2b-1: the launch seeds the liked ids itself, so a heart is right
+     * before the Library tab is ever opened.
+     */
+    @Test
+    fun `launch seeds the liked ids without loading the library feed`() {
+        val source = mainViewModelSource()
+
+        assertTrue(
+            "the deferred LIKED_IDS work must be wired in the launch",
+            source.contains("StartupDeferredWork.LIKED_IDS -> koLoadLikedIds()"),
+        )
+        val body = source.substringAfter("private fun koLoadLikedIds()").substringBefore("\n    }")
+        assertTrue(
+            "LIKED_IDS reads Liked Music only",
+            body.contains("YtMusicRepository.browseSongs(YtMusicRepository.LIKED_MUSIC)"),
+        )
+        assertTrue("LIKED_IDS seeds LikeState", body.contains("LikeState.seedLiked("))
+        assertTrue("LIKED_IDS follows the rest of the collection", body.contains("syncLikedMusic(identity, token)"))
+        assertTrue("LIKED_IDS stops for another listener", body.contains("identity != listenerKey()"))
+        assertTrue("LIKED_IDS must not publish the Library feed", !body.contains("loadLibrary()") && !body.contains("_library.value ="))
+    }
+
     @Test
     fun `library and playlists are still fetched, just when the tab is shown`() {
         val source = mainViewModelSource()
