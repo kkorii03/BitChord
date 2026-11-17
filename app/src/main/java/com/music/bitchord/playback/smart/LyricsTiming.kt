@@ -3136,7 +3136,7 @@ object LyricsTiming {
     }
 
     private val aiScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val aiInFlight =ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Adjustment.Mapped?>>()
+    private val aiInFlight = ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Adjustment.Mapped?>>()
 
     /**
      * Videos whose automatic request was turned away because
