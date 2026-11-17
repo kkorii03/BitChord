@@ -1,5 +1,6 @@
 package com.music.bitchord.data.lyrics
 
+import com.music.bitchord.data.Http
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -13,6 +14,10 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.longOrNull
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 
@@ -89,22 +94,83 @@ object PaxSenix {
             .addQueryParameter("limit", "10")
             .addQueryParameter("l", "en-US")
             .build()
-        val root = lyricsGetAuthorized(url.toString(), token)
+        // [KO] token note: the status is read (lyricsGetAuthorized folded it into null), so a
+        // token Apple has stopped taking is dropped and scraped again instead of kept for good.
+        val answer = appleSearch(url.toString(), token) ?: return null
+        if (answer.first == 401 || answer.first == 403) {
+            cachedAppleToken.compareAndSet(token, null)
+            // A freshly scraped token refused too: the page's token is dead, stop scraping.
+            if (unauthorizedSearches.incrementAndGet() >= 2) {
+                unauthorizedSearches.set(0)
+                noTokenUntilMs.set(now() + NO_TOKEN_WINDOW_MS)
+            }
+            return null
+        }
+        if (answer.first in 200..299) unauthorizedSearches.set(0)
+        val root = answer.second
             ?.let { runCatching { lyricsJson.parseToJsonElement(it) }.getOrNull() }
             ?: return null
         return bestCandidate(root, title, artist, durationMs)?.id
     }
 
     private suspend fun appleToken(): String? = cachedAppleToken.get() ?: tokenMutex.withLock {
-        cachedAppleToken.get() ?: scrapeAppleToken()?.also(cachedAppleToken::set)
+        cachedAppleToken.get()
+            ?: if (now() < noTokenUntilMs.get()) null // [KO] no token found a moment ago
+            else scrapeAppleToken()?.also(cachedAppleToken::set)
     }
 
     private fun scrapeAppleToken(): String? {
-        val page = lyricsGet("https://music.apple.com/us/new") ?: return null
-        val scriptPath = APPLE_INDEX_SCRIPT.find(page)?.value ?: return null
-        val script = lyricsGet("https://music.apple.com$scriptPath") ?: return null
-        return APPLE_TOKEN.find(script)?.value
+        // [KO] token note: a page that answered without the script or the token is a
+        // verdict for [NO_TOKEN_WINDOW_MS]; a download that failed is not.
+        val page = pageGet("https://music.apple.com/us/new") ?: return null
+        val scriptPath = APPLE_INDEX_SCRIPT.find(page)?.value ?: return noToken()
+        val script = pageGet("https://music.apple.com$scriptPath") ?: return null
+        return APPLE_TOKEN.find(script)?.value ?: noToken()
     }
+
+    // [KO] token note: until when no scrape is tried, and refused searches in a row.
+    // Wall-clock stamps compared on the next call; nothing is scheduled.
+    private val noTokenUntilMs = AtomicLong(0L)
+    private val unauthorizedSearches = AtomicInteger(0)
+    private const val NO_TOKEN_WINDOW_MS = 30 * 60_000L
+
+    /** [KO] Test seams: the clock, the two page downloads, and the Apple search (status, body). */
+    internal var now: () -> Long = System::currentTimeMillis
+    internal var pageGet: (url: String) -> String? = ::lyricsGet
+    internal var appleSearch: (url: String, bearer: String) -> Pair<Int, String?>? = ::appleSearchExchange
+
+    /** [KO] Test seam: forget the token and any window. */
+    internal fun resetForTest() {
+        cachedAppleToken.set(null)
+        noTokenUntilMs.set(0L)
+        unauthorizedSearches.set(0)
+    }
+
+    private fun noToken(): String? {
+        noTokenUntilMs.set(now() + NO_TOKEN_WINDOW_MS)
+        return null
+    }
+
+    // [KO] [lyricsGetAuthorized]'s request and deadlines, with the status kept; null = no reply.
+    private val appleClient by lazy {
+        Http.client.newBuilder()
+            .callTimeout(6, TimeUnit.SECONDS)
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private fun appleSearchExchange(url: String, bearer: String): Pair<Int, String?>? = runCatching {
+        val request = Request.Builder().url(url)
+            .header("User-Agent", LYRICS_AGENT)
+            .header("Accept", "application/json")
+            .header("Authorization", "Bearer $bearer")
+            .header("Origin", "https://music.apple.com")
+            .header("Referer", "https://music.apple.com/")
+            .build()
+        appleClient.newCall(request).execute().use { response ->
+            response.code to (if (response.isSuccessful) response.body?.string() else null)
+        }
+    }.getOrNull()
 
     private fun searchTrackId(
         path: String,

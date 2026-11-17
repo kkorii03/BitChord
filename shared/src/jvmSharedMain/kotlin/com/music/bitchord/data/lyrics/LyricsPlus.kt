@@ -1,10 +1,15 @@
 package com.music.bitchord.data.lyrics
 
+import com.music.bitchord.data.Http
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -39,7 +44,37 @@ object LyricsPlus {
         "https://lyrics-plus-backend.vercel.app",
     )
 
-    private val lastGood = AtomicReference<String?>(null)
+    internal val lastGood = AtomicReference<String?>(null) // [KO] internal: tests reset it
+
+    /** [KO] L14: how long the last good mirror is asked alone before the others start. */
+    internal var aloneMs = 2_500L
+
+    /** [KO] L14: the GET every mirror request goes through; a test counts calls here. */
+    internal var httpGet: suspend (url: String) -> String? = ::cancellableGet
+
+    // [KO] L14: [lyricsGet]'s request and deadlines, but the call is aborted when the
+    // race is decided — a blocking execute() ignores coroutine cancellation, so the
+    // losing mirrors used to download their whole answers anyway.
+    private val client by lazy {
+        Http.client.newBuilder()
+            .callTimeout(6, TimeUnit.SECONDS)
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private suspend fun cancellableGet(url: String): String? = try {
+        val call = client.newCall(
+            Request.Builder().url(url)
+                .header("User-Agent", LYRICS_AGENT)
+                .header("Accept", "application/json")
+                .build(),
+        )
+        with(Deepgram) { call.runCancellable { response -> if (response.isSuccessful) response.body?.string() else null } }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
 
     suspend fun lyrics(
         title: String,
@@ -48,13 +83,24 @@ object LyricsPlus {
         album: String? = null,
         isrc: String? = null,
     ): List<LyricLine>? = coroutineScope {
-        val hosts = lastGood.get()
-            ?.let { listOf(it) + MIRRORS.filterNot { mirror -> mirror == it } }
-            ?: MIRRORS
-
-        val pending = hosts.map { host ->
+        // [KO] L14: the mirror that answered last time is asked alone first. Only
+        // when it answers nothing, fails, or is still busy after [aloneMs] are the
+        // others started; a slow answer from it still counts in the race.
+        val known = lastGood.get()
+        val first = known?.let { host ->
             host to async(Dispatchers.IO) { fetch(host, title, artist, durationMs, album, isrc) }
-        }.toMutableList()
+        }
+        if (first != null) {
+            val early = withTimeoutOrNull(aloneMs) { first.second.await() }
+                ?: if (first.second.isCompleted) first.second.await() else null
+            if (!early.isNullOrEmpty()) return@coroutineScope early
+        }
+        val hosts = MIRRORS.filterNot { it == known }
+
+        // A finished empty answer leaves the race at once; a late good one still wins it.
+        val pending = (listOfNotNull(first) + hosts.map { host ->
+            host to async(Dispatchers.IO) { fetch(host, title, artist, durationMs, album, isrc) }
+        }).toMutableList()
 
         // Take the first mirror to answer with something usable rather than
         // the first to answer at all — a mirror that 404s this track shouldn't
@@ -98,7 +144,7 @@ object LyricsPlus {
             }
             .build()
 
-        val body = lyricsGet(url.toString()) ?: return@withContext null
+        val body = httpGet(url.toString()) ?: return@withContext null // [KO] L14: was lyricsGet
         val response = runCatching { lyricsJson.decodeFromString<Response>(body) }.getOrNull()
             ?: return@withContext null
         parse(response).takeIf { it.isNotEmpty() }

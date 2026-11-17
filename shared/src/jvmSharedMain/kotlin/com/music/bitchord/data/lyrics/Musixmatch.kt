@@ -16,6 +16,8 @@ import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -38,6 +40,24 @@ object Musixmatch {
     private val cachedSecret = AtomicReference<String?>(null)
     private val cachedToken = AtomicReference<String?>(null)
     private val processGuid = UUID.randomUUID().toString()
+
+    // [KO] L16: Musixmatch's refusals in a row, and until when to stop asking after
+    // two of them. A wall-clock stamp read on the next call; nothing is scheduled.
+    private val refusals = AtomicInteger(0)
+    private val refusedUntilMs = AtomicLong(0L)
+    private const val REFUSAL_WINDOW_MS = 10 * 60_000L
+
+    /** [KO] Test seams: the clock, and the HTTP exchange (status, body when 2xx; null = no reply). */
+    internal var now: () -> Long = System::currentTimeMillis
+    internal var transport: ((url: String, accept: String, cookie: String?) -> Pair<Int, String?>?)? = null
+
+    /** [KO] Test seam: forget the cached credentials and any refusal. */
+    internal fun resetForTest() {
+        cachedSecret.set(null)
+        cachedToken.set(null)
+        refusals.set(0)
+        refusedUntilMs.set(0L)
+    }
 
     private val client by lazy {
         Http.client.newBuilder()
@@ -221,16 +241,54 @@ object Musixmatch {
 
     /** Signs and issues [buildUrl]; an auth failure refreshes both moving credentials once. */
     private suspend fun signedGet(buildUrl: (token: String) -> okhttp3.HttpUrl): String? {
+        // [KO] L16: refused twice in a row a moment ago -> no request until the window ends.
+        if (now() < refusedUntilMs.get()) return null
         val secret = getSecret()
         val token = getToken(secret) ?: return null
-        val first = apiGet(sign(buildUrl(token).toString(), secret))
-        if (first != null && !looksUnauthorized(first)) return first
+        // [KO] L16: no reply at all (offline, timeout) says nothing about the credentials.
+        val first = apiExchange(sign(buildUrl(token).toString(), secret)) ?: return null
+        if (!refused(first)) return answered(first)
 
+        // [KO] L16: a fresh token first; the secret (about a megabyte of script to
+        // re-derive) is dropped only when the fresh token is refused as well.
+        cachedToken.set(null)
+        if (noteRefusal()) return null
+        val freshToken = getToken(secret) ?: return null
+        val second = apiExchange(sign(buildUrl(freshToken).toString(), secret)) ?: return null
+        if (!refused(second)) return answered(second)
+        cachedToken.set(null)
+        noteRefusal()
+        return null
+    }
+
+    /**
+     * [KO] L16: an answer about the credentials — HTTP 401/402/403/429, or the
+     * 401/402 Musixmatch puts inside a successful response. A 404 or a server
+     * error is not one: it is returned as nothing and changes nothing.
+     */
+    private fun refused(answer: Pair<Int, String?>): Boolean =
+        answer.first in REFUSED_CODES || answer.second?.let(::looksUnauthorized) == true
+
+    private val REFUSED_CODES = setOf(401, 402, 403, 429)
+
+    /** [KO] L16: the body of a non-refused answer when it was a 2xx; a reply clears the refusal count. */
+    private fun answered(answer: Pair<Int, String?>): String? {
+        refusals.set(0)
+        return answer.second.takeIf { answer.first in 200..299 }
+    }
+
+    /**
+     * [KO] L16: counts a refusal; at the second in a row both credentials are
+     * dropped (the next attempt re-derives them) and no request is made for
+     * [REFUSAL_WINDOW_MS]. True when that window has just started.
+     */
+    private fun noteRefusal(): Boolean {
+        if (refusals.incrementAndGet() < 2) return false
+        refusals.set(0)
         cachedToken.set(null)
         cachedSecret.set(null)
-        val freshSecret = getSecret()
-        val freshToken = getToken(freshSecret) ?: return null
-        return apiGet(sign(buildUrl(freshToken).toString(), freshSecret))
+        refusedUntilMs.set(now() + REFUSAL_WINDOW_MS)
+        return true
     }
 
     /** Musixmatch reports an expired token inside a successful HTTP response. */
@@ -248,10 +306,16 @@ object Musixmatch {
             .addQueryParameter("guid", processGuid)
             .addQueryParameter("format", "json")
             .build()
-        val body = apiGet(sign(url.toString(), secret)) ?: return null
-        return runCatching {
-            lyricsJson.decodeFromString<Envelope<TokenBody>>(body)
-        }.getOrNull()?.message?.body?.userToken
+        // [KO] L16: a reply that holds no token is a refusal (a stale secret signs it
+        // wrong, a throttled app gets a captcha); no reply at all is not.
+        val answer = apiExchange(sign(url.toString(), secret)) ?: return null
+        val token = answer.second?.let { body ->
+            runCatching {
+                lyricsJson.decodeFromString<Envelope<TokenBody>>(body)
+            }.getOrNull()?.message?.body?.userToken
+        }
+        if (token == null && (refused(answer) || answer.first in 200..299)) noteRefusal()
+        return token
     }
 
     /** Reads the rotating signing key from the JavaScript linked by the current web client. */
@@ -284,22 +348,27 @@ object Musixmatch {
             "&signature_protocol=sha256"
     }
 
-    private fun apiGet(url: String): String? = request(url, "application/json, text/plain, */*")
+    // [KO] L16: was apiGet (body or null); the status is kept so a refusal can be told from no reply.
+    private fun apiExchange(url: String): Pair<Int, String?>? = exchange(url, "application/json, text/plain, */*")
 
     private fun browserGet(url: String, accept: String): String? =
-        request(url, accept, cookie = "mxm_bab=AB")
+        exchange(url, accept, cookie = "mxm_bab=AB")?.second
 
-    private fun request(url: String, accept: String, cookie: String? = null): String? = runCatching {
-        val request = Request.Builder().url(url)
-            .header("User-Agent", BROWSER_AGENT)
-            .header("Accept", accept)
-            .header("Accept-Language", "en-US,en;q=0.9")
-            .apply { if (cookie != null) header("Cookie", cookie) }
-            .build()
-        client.newCall(request).execute().use { response ->
-            if (response.isSuccessful) response.body?.string() else null
-        }
-    }.getOrNull()
+    /** [KO] L16: status and body (2xx only) of one GET; null when no reply came back. Was `request`. */
+    private fun exchange(url: String, accept: String, cookie: String? = null): Pair<Int, String?>? {
+        transport?.let { return it(url, accept, cookie) }
+        return runCatching {
+            val request = Request.Builder().url(url)
+                .header("User-Agent", BROWSER_AGENT)
+                .header("Accept", accept)
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .apply { if (cookie != null) header("Cookie", cookie) }
+                .build()
+            client.newCall(request).execute().use { response ->
+                response.code to (if (response.isSuccessful) response.body?.string() else null)
+            }
+        }.getOrNull()
+    }
 
     @Serializable
     private data class Envelope<T>(val message: Message<T>)
