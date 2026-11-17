@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -451,9 +452,38 @@ class LyricsController(
         }
         lyricsJob = scope.launch {
             if (takenOver != null) {
-                keepSheet(videoId, takenOver)
+                keepSheet(videoId, takenOver, reason = "online-refresh") // [KO] LYR6
                 showLyricsResult(takenOver)
                 return@launch
+            }
+            suspend fun lookUp(): LyricsRepository.Result? {
+                var finished = false
+                val transcribe = localUri == null
+                val backstopMs = lookupTimeoutMs + if (transcribe) transcribeTimeoutMs else 0L
+                val answer = withTimeoutOrNull(backstopMs) {
+                    lyricsLookup(
+                        videoId, title, artist, durationMs, album, sources,
+                        AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
+                        null,
+                        { source -> providerStarted(generation, source) },
+                        { source, result, failure -> providerFinished(generation, source, result, failure) },
+                        { source -> providerCancelled(generation, source) },
+                        isVideo,
+                        alternatives,
+                        artistKnown,
+                        artistAliases,
+                        transcribe,
+                    ).also { finished = true }
+                }
+                // The repository ends its own lookup at LOOKUP_DEADLINE_MS with
+                // whatever it already found. This is only the backstop if that
+                // answer never comes; a provider nobody can cancel must not leave
+                // the panel spinning (MA9BrvtKvhM).
+                val found = if (finished) answer else bestSoFar()
+                if (!finished) {
+                    TrackLog.i("BitChord", "lyrics: deadline after ${backstopMs}ms", about = videoId)
+                }
+                return selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
             }
             // A per-song override is the last word: it comes before the
             // downloaded file's tags or `lyrics.lrc`, and before any provider
@@ -461,6 +491,9 @@ class LyricsController(
             // which may be the one playing — see LyricsOverrideFile.
             val override = LyricsOverrideStore.read(app, videoId)
             sheetByHand = override?.kind == LyricsOverrideFile.Kind.USER
+            // [KO] LYR6: online, a downloaded song's saved sheet is only the fallback when every provider misses.
+            val providersFirst = com.music.bitchord.ko.KoSavedLyrics.providersFirst(localUri != null, com.music.bitchord.ko.KoNetworkPolicy.isOffline(app), previewOnly)
+            if (providersFirst && showProvidersFirst(videoId, localUri!!, isVideo, override) { lookUp() }) return@launch
             if (override != null) {
                 // Chosen already, by the listener or by these same words.
                 sheetFromStore = true // [KO] U2
@@ -490,9 +523,11 @@ class LyricsController(
                     val downloadRecheck = !isVideo && timed &&
                         override.kind == LyricsOverrideFile.Kind.RECHECK &&
                         !LyricsTiming.timedToVideo(override.source)
+                    // [KO] LYR6: the listener's pick keeps the correction its sheet earned online.
+                    val ownPick = com.music.bitchord.ko.KoSavedLyrics.ownPickTimeable(isVideo, timed, sheetByHand, LyricsTiming.timedToVideo(override.source))
                     startTiming(
                         lines,
-                        adjustable = onVideo || downloadRecheck,
+                        adjustable = onVideo || downloadRecheck || ownPick,
                         searchedAs = null,
                         measure = recordTimed,
                         measureNow = true,
@@ -586,33 +621,8 @@ class LyricsController(
                 }
             }
             if (previewOnly) return@launch
-            var finished = false
-            val transcribe = localUri == null
-            val backstopMs = lookupTimeoutMs + if (transcribe) transcribeTimeoutMs else 0L
-            val answer = withTimeoutOrNull(backstopMs) {
-                lyricsLookup(
-                    videoId, title, artist, durationMs, album, sources,
-                    AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
-                    null,
-                    { source -> providerStarted(generation, source) },
-                    { source, result, failure -> providerFinished(generation, source, result, failure) },
-                    { source -> providerCancelled(generation, source) },
-                    isVideo,
-                    alternatives,
-                    artistKnown,
-                    artistAliases,
-                    transcribe,
-                ).also { finished = true }
-            }
-            // The repository ends its own lookup at LOOKUP_DEADLINE_MS with
-            // whatever it already found. This is only the backstop if that
-            // answer never comes; a provider nobody can cancel must not leave
-            // the panel spinning (MA9BrvtKvhM).
-            val found = if (finished) answer else bestSoFar()
-            if (!finished) {
-                TrackLog.i("BitChord", "lyrics: deadline after ${backstopMs}ms", about = videoId)
-            }
-            val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
+            // [KO] LYR6: the providers were asked first and all missed; asking again would only miss again.
+            val selected = if (providersFirst) null else lookUp()
             publishLyrics(selected, force = selectedLyricsSource != null)
             _lyricsChecked.value = true
             // A miss is not a final answer: a source may have been down or the
@@ -702,7 +712,10 @@ class LyricsController(
         when (_lyricsProviderStates.value[source]) {
             LyricsProviderState.FOUND -> {
                 selectedLyricsSource = source
-                lyricsProviderResults[source]?.let(::showLyricsResult)
+                lyricsProviderResults[source]?.let {
+                    showLyricsResult(it)
+                    keepPicked(it) // [KO] LYR6
+                }
             }
             LyricsProviderState.FETCHING -> {
                 // Apply it as soon as the already-running automatic attempt completes.
@@ -784,7 +797,12 @@ class LyricsController(
         // can't interleave with the lookup's own result.
         scope.launch(Dispatchers.Main.immediate) {
             if (generation != lyricsGeneration) return@launch
-            if (selectedLyricsSource == source) showLyricsResult(result) else showFirstUsable(generation)
+            if (selectedLyricsSource == source) {
+                showLyricsResult(result)
+                keepPicked(result) // [KO] LYR6
+            } else {
+                showFirstUsable(generation)
+            }
         }
     }
 
@@ -1726,9 +1744,84 @@ class LyricsController(
      * Kept like a re-check's sheet: the file and the next playback would otherwise open
      * with another sheet than the one the one AI slot holds an answer for.
      */
-    private suspend fun keepSheet(videoId: String, sheet: LyricsRepository.Result) {
-        com.music.bitchord.download.LyricsTag.embeddable(sheet.source, videoId, sheet.lines)?.let {
-            LyricsOverrideStore.write(app, videoId, sheet.lines, sheet.source)
+    private suspend fun keepSheet(
+        videoId: String,
+        sheet: LyricsRepository.Result,
+        /** [KO] LYR6: picked in the chooser; an automatic pick never replaces it. */
+        byHand: Boolean = false,
+        reason: String = "bad-align",
+        /** The file's own sheet when the caller has read it already; read here otherwise. */
+        file: EmbeddedLyrics.Embedded? = null,
+    ) {
+        if (com.music.bitchord.download.LyricsTag.embeddable(sheet.source, videoId, sheet.lines) == null) return
+        // [KO] LYR6: the saved copy follows the latest sheet seen or picked, written only when it changed.
+        // One at a time: an automatic save reading before a pick lands must not write over the pick.
+        val localUri = currentLyricsRequest?.takeIf { it.videoId == videoId }?.localUri
+        keepSheetLock.withLock { keepSheetLocked(videoId, sheet, byHand, reason, file, localUri) }
+    }
+
+    private val keepSheetLock = kotlinx.coroutines.sync.Mutex()
+
+    private suspend fun keepSheetLocked(
+        videoId: String,
+        sheet: LyricsRepository.Result,
+        byHand: Boolean,
+        reason: String,
+        file: EmbeddedLyrics.Embedded?,
+        localUri: String?,
+    ) {
+        val override = LyricsOverrideStore.read(app, videoId)
+        val own = if (override == null && localUri != null) file ?: EmbeddedLyrics.withSource(app, localUri) else null
+        val kind = com.music.bitchord.ko.KoSavedLyrics.kindToSave(
+            savedLines = override?.lines ?: own?.lines,
+            savedSource = override?.source ?: own?.source,
+            savedKind = override?.kind,
+            newLines = sheet.lines,
+            newSource = sheet.source,
+            byHand = byHand,
+            localFile = localUri != null,
+        ) ?: return
+        if (LyricsOverrideStore.write(app, videoId, sheet.lines, sheet.source, kind)) {
+            val was = override?.source?.label ?: own?.source?.label ?: if (override != null || own != null) "unknown" else "none"
+            TrackLog.i("BitChord", "lyrics-fix: $videoId saved=$was -> ${sheet.source.label} reason=$reason kind=${kind.value}", about = videoId)
+        }
+    }
+
+    /**
+     * [KO] LYR6: a downloaded song online. The providers are asked before its saved sheet; the
+     * listener's own pick is asked for by name. The check the saved sheet bought is forgotten so
+     * it cannot land on the provider's sheet, and what settles on screen becomes the saved copy.
+     * False when every provider missed: the caller then shows the saved sheet as the last fallback.
+     */
+    private suspend fun showProvidersFirst(
+        videoId: String,
+        localUri: String,
+        isVideo: Boolean,
+        override: LyricsOverrideFile.Stored?,
+        lookUp: suspend () -> LyricsRepository.Result?,
+    ): Boolean {
+        com.music.bitchord.ko.KoSavedLyrics.preselected(override?.kind, override?.source)?.let { selectedLyricsSource = it }
+        val file = if (override == null) EmbeddedLyrics.withSource(app, localUri) else null
+        (override?.lines ?: file?.lines)?.let { saved -> LyricsTiming.forgetSavedSheetCheck(app, videoId, saved, isVideo) }
+        val selected = lookUp() ?: run {
+            TrackLog.i("BitChord", "lyrics: providers missed, saved sheet is the fallback saved=${override != null || file != null}", about = videoId)
+            return false
+        }
+        publishLyrics(selected, force = selectedLyricsSource != null)
+        _lyricsChecked.value = true
+        // What settled on screen: a late answer may have stayed a candidate (publishLyrics).
+        val shown = rawLyricsResult ?: return true
+        keepSheet(videoId, shown, byHand = shown.source == selectedLyricsSource, reason = "online-refresh", file = file)
+        return true
+    }
+
+    /** [KO] LYR6: a sheet picked in the chooser becomes the song's saved copy. */
+    private fun keepPicked(result: LyricsRepository.Result) {
+        val videoId = currentLyricsRequest?.videoId ?: return
+        val generation = lyricsGeneration
+        scope.launch {
+            if (generation != lyricsGeneration) return@launch
+            keepSheet(videoId, result, byHand = true, reason = "user-choice")
         }
     }
 
@@ -1801,7 +1894,9 @@ class LyricsController(
             )
             // A file's or a re-check's sheet came through no lookup, so nothing judged it and it
             // stayed wrong on every play. The reload passes a file's sheet over (mismatchReloadedFor).
-            if (result == null) LyricsOverrideStore.removeRecheck(app, request.videoId)
+            if (result == null && LyricsOverrideStore.removeRecheck(app, request.videoId)) {
+                TrackLog.i("BitChord", "lyrics-fix: ${request.videoId} saved=recheck -> none reason=bad-align", about = request.videoId) // [KO] LYR6
+            }
             // [KO] U3: the lock screen drops the rejected sheet too, until the reload shows the next.
             com.music.bitchord.ko.KoLockSheet.rejected(request.videoId, lines)
             requestGate.release()

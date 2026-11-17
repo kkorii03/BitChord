@@ -4935,6 +4935,55 @@ object LyricsTiming {
         _changes.tryEmit(videoId)
     }
 
+    /**
+     * [KO] LYR6: a provider's sheet takes over a downloaded song online, and the check its saved
+     * sheet bought ([recheckDownloaded]) must not carry over: the answer keyed by the saved lines
+     * on the file's clock would land on the same lines from the provider and keep a wrong shift
+     * for ever. That answer and the engines it spent go, so the provider sheet's own song check
+     * derives a new one; heard words and measurements describe the recording and stay. No gate:
+     * a check holding it can listen for a minute, and this runs before the lookup.
+     */
+    suspend fun forgetSavedSheetCheck(
+        context: Context,
+        videoId: String,
+        savedLines: List<LyricLine>,
+        isVideo: Boolean,
+    ): com.music.bitchord.ko.KoSavedLyrics.SavedCheck = withContext(Dispatchers.IO) {
+        val keep = com.music.bitchord.ko.KoSavedLyrics.SavedCheck.KEEP
+        val timingStore = store(context)
+        val entry = timingStore.get(videoId) ?: return@withContext keep
+        val key = textKey(savedLines, if (isVideo) null else audioSourceKey(videoId, localFile = true))
+        val verdict = com.music.bitchord.ko.KoSavedLyrics.savedCheck(entry.syncCheckVersion, entry.aiTextKey == key)
+        if (verdict == keep) return@withContext keep
+        val written = timingStore.updateIfUnchanged(videoId, entry) {
+            if (verdict == com.music.bitchord.ko.KoSavedLyrics.SavedCheck.FORGET_ANSWER) {
+                it.copy(
+                    aiTextKey = null,
+                    ai = null,
+                    aiShiftMs = null,
+                    aiStarts = null,
+                    aiClock = null,
+                    aiFailedKey = null,
+                    aiPreferred = false,
+                    aiEngine = null,
+                    aiRough = false,
+                    aiAttemptedKey = null,
+                    aiAttemptedEngines = emptyList(),
+                    songRetryKey = null,
+                    songRetryAtMs = null,
+                    syncCheckVersion = 0,
+                )
+            } else {
+                it.copy(syncCheckVersion = 0)
+            }
+        }
+        if (!written) return@withContext keep
+        recheckTokens.remove(videoId)
+        TrackLog.i(TAG, "lyrics-fix: $videoId saved-check forgotten what=${verdict.name.lowercase()}", videoId)
+        _changes.tryEmit(videoId)
+        verdict
+    }
+
     // ---- Downloaded files' stored sync ------------------------------------------------
 
     /** The last re-check state per video, for the `lyrics-sync:` line only. */

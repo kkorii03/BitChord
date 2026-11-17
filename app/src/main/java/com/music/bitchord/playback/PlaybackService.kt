@@ -12377,21 +12377,27 @@ class PlaybackService : MediaLibraryService() {
             // every provider, and is what a re-check writes instead of touching
             // the audio file. See LyricsOverrideFile.
             val override = LyricsOverrideStore.read(this@PlaybackService, currentSong.videoId)
-            if (override != null) {
-                lines = override.lines
-                foundSource = override.source
-                fromFile = localUri != null
-                recheckOverride = override.kind ==
-                    com.music.bitchord.data.lyrics.LyricsOverrideFile.Kind.RECHECK
-            } else if (localUri != null) {
-                EmbeddedLyrics.withSource(this@PlaybackService, localUri)?.let { file ->
-                    lines = file.lines
-                    foundSource = file.source
-                    fromFile = true
-                    // The lyrics screen re-checks a file's own sheet whatever its header says.
-                    recheckOverride = true
+            suspend fun readSaved() {
+                if (override != null) {
+                    lines = override.lines
+                    foundSource = override.source
+                    fromFile = localUri != null
+                    recheckOverride = override.kind ==
+                        com.music.bitchord.data.lyrics.LyricsOverrideFile.Kind.RECHECK
+                } else if (localUri != null) {
+                    EmbeddedLyrics.withSource(this@PlaybackService, localUri)?.let { file ->
+                        lines = file.lines
+                        foundSource = file.source
+                        fromFile = true
+                        // The lyrics screen re-checks a file's own sheet whatever its header says.
+                        recheckOverride = true
+                    }
                 }
             }
+            // [KO] LYR6: online a downloaded song asks the providers first, as the lyrics screen does; the listener's own pick stays first.
+            val savedLast = override?.kind != com.music.bitchord.data.lyrics.LyricsOverrideFile.Kind.USER &&
+                com.music.bitchord.ko.KoSavedLyrics.providersFirst(localUri != null, com.music.bitchord.ko.KoNetworkPolicy.isOffline(this@PlaybackService), previewOnly = false)
+            if (!savedLast) readSaved()
             if (lines == null) {
                 val found = LyricsRepository.lyrics(
                     videoId = currentSong.videoId,
@@ -12411,6 +12417,7 @@ class PlaybackService : MediaLibraryService() {
                 lines = found?.lines
                 foundSource = found?.source
             }
+            if (lines == null && savedLast) readSaved() // [KO] LYR6: every provider missed
             // The same timing the lyrics screen applies — see LyricsTiming —
             // and again whenever it changes for this video (a measurement
             // landing, the AI button), for as long as this track is current.
