@@ -1629,6 +1629,7 @@ private fun BitChordApp(
                 SongVersionPolicy.wantsSongVersion(song.isVideo, song.typeUnknown)
             ) {
                 TrackLog.w("Player", "audio switch lookup unsettled for '${song.title}'", song.videoId)
+                if (stillCurrent && !beforeAudioOnly) showQueueNotice(versionContext.getString(R.string.audio_version_try_again)) // [KO] review V-2-A: a tap gets an answer, the auto swap stays silent
                 if (stillCurrent && resumeAfterResolution) c.play()
                 return false
             }
