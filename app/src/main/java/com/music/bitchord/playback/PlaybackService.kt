@@ -3,6 +3,7 @@ package com.music.bitchord.playback
 import com.music.bitchord.ko.koTryAutoplayRefillBeforeStopping
 import com.music.bitchord.ko.koCatchUpStandbyQueue // [KO] review V-3
 import com.music.bitchord.ko.koSwapFromStillCurrent // [KO] review V-4
+import com.music.bitchord.ko.KoSilenceReresolve // [KO] SW7ps-1
 import com.music.bitchord.ko.koScheduleTranslationAhead
 import com.music.bitchord.ko.koScheduleCurrentTranslationAhead
 import com.music.bitchord.ko.koScheduleDownloadHealthCheck
@@ -10788,6 +10789,17 @@ class PlaybackService : MediaLibraryService() {
             live.prepare()
             return
         }
+        // [KO] SW7ps-1: a substitute or an upgraded copy is the sound; a
+        // YouTube URL pinned over it moves the lyric clock and corrupts the
+        // cache entry. Re-preparing is all this rung may do for it.
+        val upgraded = QualityUpgrade.isUpgradedRendition(uri?.toString())
+        if (!KoSilenceReresolve.asks(StreamChoice.soundsSubstitute(mediaId), upgraded)) {
+            TrackLog.w("AUDIO_OUT", "silence recover: $mediaId step=reresolve kept substitute", about = mediaId)
+            retryingMediaId = mediaId
+            live.seekTo(index, live.currentPosition.coerceAtLeast(0L))
+            live.prepare()
+            return
+        }
         val previous = StreamChoice.of(mediaId)?.url ?: StreamContainer.servedUrl(mediaId)
         scope.launch(TrackLog.about(mediaId)) {
             val recovered = withContext(Dispatchers.IO) {
@@ -10813,7 +10825,14 @@ class PlaybackService : MediaLibraryService() {
                 // playback (or a seek) moved on during those seconds, and
                 // re-seeking to the captured value would undo it.
                 val at = current.currentPosition.coerceAtLeast(0L)
-                if (recovered != null) {
+                if (recovered != null &&
+                    KoSilenceReresolve.mayPin(
+                        previous,
+                        recovered.url,
+                        StreamChoice.soundsSubstitute(mediaId),
+                        upgraded,
+                    )
+                ) {
                     StreamChoice.remember(
                         mediaId,
                         SourceStream(recovered.url, headers = recovered.headers),
