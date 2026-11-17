@@ -104,8 +104,24 @@ internal object RecordingMatch {
         if (wanted.isEmpty()) return true
         if (row.isEmpty()) return false
         if (row.contains(wanted, ignoreCase = true) || wanted.contains(row, ignoreCase = true)) return true
+        // [KO] RG2-2: the same name written differently ("Don’t" / "Don't", "Café" / "Cafe",
+        // "&" / "and", "좋은날" / "좋은 날") is still the song: compare letters and digits only.
+        val wantedLetters = squashed(wanted)
+        val rowLetters = squashed(row)
+        if (wantedLetters.isNotEmpty() && rowLetters.isNotEmpty() &&
+            (rowLetters.contains(wantedLetters) || wantedLetters.contains(rowLetters))
+        ) {
+            return true
+        }
         return CoverTitles.hasCjk(row) != CoverTitles.hasCjk(wanted)
     }
+
+    /**
+     * [normalized] with "&" read as "and" and no spaces, for [namesTheSong]. Recomposed (NFC):
+     * [normalized] splits Hangul into jamo, and "봄" must not run inside "보미".
+     */
+    private fun squashed(value: String): String =
+        Normalizer.normalize(normalized(value.replace("&", " and ")), Normalizer.Form.NFC).replace(" ", "")
 
     /** The tests as one set of wanted values, so [best] and [missReason] cannot drift. */
     private class Rules(title: String, artist: String, durationMs: Long) {

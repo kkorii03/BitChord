@@ -631,6 +631,10 @@ class LyricsController(
      */
     private fun dropPreviousTrack() {
         lyricsGeneration += 1
+        // [KO] RG2-4: the old track's claim goes with it, or coming back to that track
+        // before the next one's length arrives is "already loaded" and stays empty. The
+        // waiting track never claimed, so its length event still starts its one lookup.
+        requestGate.release()
         currentLyricsRequest = null
         selectedLyricsSource = null
         sheetFromStore = false

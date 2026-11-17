@@ -835,7 +835,8 @@ object LyricsRepository {
             if (!isVideo || durationMs <= 0L || deadline.expired()) return null
             val names = (listOf(title to artist) + alternatives).distinct()
             val originals = try {
-                beforeLookupDeadline(deadline) { RecordingPick.find(names, durationMs, max = 2) }
+                // [KO] RG2-3: a cover that never named its original asks under its channel.
+                beforeLookupDeadline(deadline) { RecordingPick.find(names, durationMs, max = 2, actKnown = artistKnown) }
                     ?: emptyList()
             } catch (cancelled: CancellationException) {
                 throw cancelled

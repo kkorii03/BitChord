@@ -143,6 +143,38 @@ class LyricsControllerTrackChangeTest {
         assertEquals(1, callsForB.get())
     }
 
+    /**
+     * RG2-4: skip to a track whose length never comes, then back. The gate still
+     * held the first track's key, so its return was "already loaded" and the
+     * panel stayed empty until the track changed again.
+     */
+    @Test
+    fun `going back before the next track's length arrives loads the first track again`() = runBlocking {
+        val sheetA = sheet("back")
+        val callsForA = AtomicInteger(0)
+        controller.lyricsLookup = { videoId, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ ->
+            when (videoId) {
+                "rg24-track-a" -> {
+                    callsForA.incrementAndGet()
+                    LyricsRepository.Result(source = LyricsSource.LRCLIB, lines = sheetA)
+                }
+                else -> null
+            }
+        }
+
+        onMain { controller.loadLyrics("rg24-track-a", "First Song RG24", "Nobody", durationMs = 200_000L) }
+        withTimeout(10_000L) { controller.lyricsChecked.first { it } }
+        assertEquals(1, callsForA.get())
+
+        onMain { controller.loadLyrics("rg24-track-b", "Second Song RG24", "Nobody", durationMs = 0L) }
+        assertNull(controller.lyrics.value)
+
+        onMain { controller.loadLyrics("rg24-track-a", "First Song RG24", "Nobody", durationMs = 200_000L) }
+        // Before the fix this timed out: the return was "already loaded", nothing asked.
+        withTimeout(10_000L) { controller.lyrics.first { it != null && it.first().text == sheetA.first().text } }
+        assertEquals(2, callsForA.get())
+    }
+
     // ---- U2 ----------------------------------------------------------------
 
     /**

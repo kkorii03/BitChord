@@ -55,6 +55,8 @@ object RecordingPick {
         max: Int = 2,
         /** The row playing: never offered to itself as the reference (see [rank]). */
         excludeVideoId: String? = null,
+        /** [KO] RG2-3: false when [names] carry the cover's channel, not the act; see [rank]. */
+        actKnown: Boolean = true,
     ): List<Song> = withContext(Dispatchers.IO) {
         val clean = names
             .map { (t, a) -> t.forLyricsSearch() to a.artistForLyricsSearch() }
@@ -108,7 +110,7 @@ object RecordingPick {
         val merged = buildList {
             for (i in 0 until 5) rows.forEach { list -> list.getOrNull(i)?.let(::add) }
         }
-        rank(names.map { it.first } + clean.map { it.first }, names.map { it.second } + clean.map { it.second }, merged, videoMs, max, excludeVideoId)
+        rank(names.map { it.first } + clean.map { it.first }, names.map { it.second } + clean.map { it.second }, merged, videoMs, max, excludeVideoId, actKnown)
     }
 
     /**
@@ -145,7 +147,16 @@ object RecordingPick {
          * — see the self check in [rank].
          */
         excludeVideoId: String? = null,
+        /**
+         * [KO] RG2-3: whether [artists] name the act that recorded the song. A cover
+         * that never names its original is searched under its own channel (or a blank
+         * credit, the name lists' "title to \"\""); that channel is never the record's
+         * artist, so its not matching the row says nothing and must not refuse the
+         * original's translated listing ("좋은 날" by a Latin-named channel -> "Good Day").
+         */
+        actKnown: Boolean = true,
     ): List<Song> {
+        val knownAct = actKnown && artists.none { it.isBlank() }
         val available = rows.filter { it.videoId != excludeVideoId }
         // The catalogue's own tracks first. Only when it named none — the Music
         // Songs page came back empty and the youtube.com fallback answered with
@@ -162,13 +173,14 @@ object RecordingPick {
         // measureFresh reads that id and returns before any download. An
         // upload row never enters this pass, so exclusion still holds for
         // every row that is only ever a reference.
-        val catalogue = pickFrom(rows.filter { !it.isVideo }, titles, artists, videoMs).take(max)
+        val catalogue = pickFrom(rows.filter { !it.isVideo }, titles, artists, videoMs, knownAct).take(max)
         if (catalogue.isNotEmpty()) return catalogue
         return pickFrom(
             available.filter { it.isVideo && uploadIsTheRecord(it, titles, artists, videoMs) },
             titles,
             artists,
             videoMs,
+            knownAct,
         ).take(max)
     }
 
@@ -244,6 +256,7 @@ object RecordingPick {
         titles: List<String>,
         artists: List<String>,
         videoMs: Long,
+        knownAct: Boolean,
     ): List<Song> {
         val wantedTitles = titles.flatMap(::readings).toSet()
         val wantedArtists = artists.flatMap(::artistReadings).toSet()
@@ -293,7 +306,8 @@ object RecordingPick {
             // so a stranger there is "some English song of that length", not this one.
             // Across scripts (아이유 / IU, 다비치 / Davichi) it cannot, and stays allowed.
             val comparable = artists.filter { it.isNotBlank() }
-            if (row.artist.isNotBlank() && comparable.isNotEmpty() && !artistMatchesAny(row) &&
+            // [KO] RG2-3: only when the asked artist is the act; a cover's channel never is.
+            if (knownAct && row.artist.isNotBlank() && comparable.isNotEmpty() && !artistMatchesAny(row) &&
                 comparable.all { TrackMatcher.hasOtherScript(it) == TrackMatcher.hasOtherScript(row.artist) }
             ) return false
             val ms = row.durationMillis()

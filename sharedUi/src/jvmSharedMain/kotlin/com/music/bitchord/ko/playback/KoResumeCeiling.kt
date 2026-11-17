@@ -107,18 +107,18 @@ class KoResumeCeiling(private val log: (String) -> Unit = {}) {
         val rate = if (speed.isFinite() && speed > 0f) speed.toDouble().coerceIn(MIN_SPEED, MAX_SPEED) else lastSpeed
         lastSpeed = rate
         val out = if (armed) held(rawUs, nowNanos, rate) else rawUs
-        // The line follows the sink's own readings, not what this class reported: a hold belongs
-        // to one resume. Started from the held value instead, the next resume met a reading that
-        // still carried the old lead, re-applied the whole hold at once and added any new step to
-        // it (phone 11-12 22:31-22:32: -3.9, -7.7, -11.4, -15.2 s over five pauses in 30 s). Media3
-        // caps the reading at the frames written, at most one AudioTrack buffer (~4 s here) ahead
-        // of the sound, so a 15 s hold was at least 11 s behind what was heard.
+        // [KO] RG4-1: the line follows what is reported, so a reading held back here is where the
+        // next resume starts from: on the route this was built for the reading stays ahead until a
+        // seek (11-09), and a second pause must not let it through. What stopped the pile-up of
+        // 11-12 (-3.9, -7.7, -11.4, -15.2 s over five pauses in 30 s) is [MAX_HOLD_US] in [held]:
+        // Media3 caps the reading at the frames written, one AudioTrack buffer (~4 s) ahead of the
+        // sound at most, so no hold may be larger.
         // It is not carried while the song stands still.
         val moving = !stopped && !(armed && waitingForMove)
         lineUs = when {
-            lineUs == UNSET -> rawUs
-            moving -> maxOf(rawUs, minOf(lineUs + scaled(nowNanos - lineNanos, rate), rawUs + MAX_LINE_LEAD_US))
-            else -> maxOf(rawUs, minOf(lineUs, rawUs + MAX_LINE_LEAD_US))
+            lineUs == UNSET -> out
+            moving -> maxOf(out, minOf(lineUs + scaled(nowNanos - lineNanos, rate), out + MAX_LINE_LEAD_US))
+            else -> maxOf(out, minOf(lineUs, out + MAX_LINE_LEAD_US))
         }
         lineNanos = nowNanos
         return out
@@ -139,7 +139,8 @@ class KoResumeCeiling(private val log: (String) -> Unit = {}) {
             ceilingNanos = nowNanos
         }
 
-        val limit = ceilingUs + SLACK_US
+        // [KO] RG4-1: never further back than one AudioTrack buffer behind the reading.
+        val limit = maxOf(ceilingUs + SLACK_US, rawUs - MAX_HOLD_US)
         val out = if (rawUs > limit) limit else rawUs
         holdUs = rawUs - out
         val ahead = rawUs - ceilingUs
@@ -183,6 +184,13 @@ class KoResumeCeiling(private val log: (String) -> Unit = {}) {
 
         /** How far the top line may stay above the readings: the 0.93 s sags, and no further. */
         const val MAX_LINE_LEAD_US = 1_200_000L
+
+        /**
+         * [KO] RG4-1: the largest hold. Media3 1.11 reports min(output position, frames written),
+         * so the reading is at most one AudioTrack buffer ahead of the sound: 8 x 500 ms on the
+         * playback-params route (G4-fix.md 4). A hold beyond it is behind anything playable.
+         */
+        const val MAX_HOLD_US = 4_000_000L
 
         /** A hold this large is a re-anchor worth a log line. */
         const val STEP_REPORT_US = 300_000L

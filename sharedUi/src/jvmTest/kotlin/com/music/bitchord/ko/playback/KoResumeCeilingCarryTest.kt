@@ -5,8 +5,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * A [KoResumeCeiling] hold belongs to one resume (G4, phone log 11-12..11-16): it must not carry
- * into the next pause/resume, and steps on later resumes must not add up.
+ * [KoResumeCeiling] across pauses: steps on later resumes must not add up (G4, phone log
+ * 11-12..11-16), and a reading that is still ahead stays held on the next resume (RG4-1, 11-09).
  */
 class KoResumeCeilingCarryTest {
     /** A sink polled every 10 ms, the way the audio renderer polls it. */
@@ -57,32 +57,43 @@ class KoResumeCeilingCarryTest {
     }
 
     @Test
-    fun `a hold does not carry into the next pause and resume`() {
+    fun `a reading still ahead after the next pause stays held on the next resume`() {
+        // RG4-1, the 11-09 LDAC case paused twice: the reading jumped 3.47 s on the first
+        // resume and stays that far ahead (until a seek). The second resume continues from
+        // there in real time with no new step; letting it through put the lyrics ~3.4 s early.
         val sink = Sink()
         sink.clock.play(sink.nowNanos)
-        val stoppedAt = sink.playLinear(fromMs = 0.0, ms = 60_000)
-        sink.pauseFor(5_000)
+        val stoppedAt = sink.playLinear(fromMs = 118_600.0, ms = 60_000)
+        sink.pauseFor(72_000)
+        val rawAtPause = sink.resume(fromMs = stoppedAt, ms = 11_000, jumpMs = 3_470.0)
+        assertTrue("first hold ${sink.clock.heldBackUs}", sink.clock.heldBackUs > 3_300_000)
 
-        // First resume: the reading jumps 3.9 s ahead and is held, for the whole run.
-        val rawAtPause = sink.resume(fromMs = stoppedAt, ms = 2_000, jumpMs = 3_900.0)
-        val firstHold = sink.clock.heldBackUs
-        assertTrue("first hold $firstHold", firstHold in 3_500_000L..4_000_000L)
-
-        // The hold ends with its run.
-        sink.pauseFor(3_000)
-        assertEquals(0L, sink.clock.heldBackUs)
-
-        // Second resume, the reading carries on in real time with no new step: nothing to hold.
+        sink.pauseFor(20_000)
+        assertEquals(0L, sink.clock.heldBackUs) // nothing is reported while paused
         sink.clock.play(sink.nowNanos)
-        for (i in 1..300) {
+        for (i in 1..1100) {
             val rawMs = rawAtPause + (i * 10.0 - 30).coerceAtLeast(0.0)
-            val out = sink.poll(rawMs)
-            val behind = (rawMs * 1000).toLong() - out
-            // The old code started this run from the held position: ~3.8 s behind the reading.
-            assertTrue("at ${i * 10}ms: $behind us behind the reading", behind < KoResumeCeiling.STEP_REPORT_US)
+            val behind = (rawMs * 1000).toLong() - sink.poll(rawMs)
+            // One slack (0.1 s) is given up per resume; the G4 code gave up all of it (0 behind).
+            assertTrue("at ${i * 10}ms: $behind us behind the reading", behind >= 3_200_000)
         }
-        assertEquals(0L, sink.clock.heldBackUs)
-        assertEquals(sink.lines.toString(), 1, sink.reAnchoredSteps().size)
+    }
+
+    @Test
+    fun `no hold is ever larger than one AudioTrack buffer`() {
+        // The reading is capped at the frames written, at most one buffer ahead of the sound.
+        val sink = Sink()
+        sink.clock.play(sink.nowNanos)
+        var raw = sink.playLinear(fromMs = 0.0, ms = 60_000)
+        repeat(6) {
+            sink.pauseFor(2_000)
+            sink.clock.play(sink.nowNanos)
+            repeat(300) { i ->
+                raw += if (i == 3) 3_900.0 else 10.0
+                sink.poll(raw)
+                assertTrue("hold ${sink.clock.heldBackUs}", sink.clock.heldBackUs <= KoResumeCeiling.MAX_HOLD_US)
+            }
+        }
     }
 
     @Test
