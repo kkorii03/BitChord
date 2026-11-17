@@ -122,6 +122,7 @@ internal object YouTubeFallback {
     internal fun resetHomeCachesForTest() {
         homeCache = null
         likedCache = null
+        channelCache = null
     }
 
     /**
@@ -942,7 +943,15 @@ internal object YouTubeFallback {
     }
 
     /** The Music channel's shelves, shared by Home, Explore and the charts card. */
-    suspend fun channelShelves(): List<HomeShelf> {
+    suspend fun channelShelves(): List<HomeShelf> = channelShelvesWith {
+        YouTubeWebParser.parseHome(
+            Innertube.browseYouTube(MUSIC_CHANNEL),
+            musicOnly = false,
+        ).shelves
+    }
+
+    /** [channelShelves] with the channel browse passed in, so its cache rule is testable. */
+    internal suspend fun channelShelvesWith(fetch: suspend () -> List<HomeShelf>): List<HomeShelf> {
         val now = System.currentTimeMillis()
         channelCache?.let { (at, shelves) ->
             if (now - at < CHANNEL_CACHE_MS) return shelves
@@ -952,15 +961,14 @@ internal object YouTubeFallback {
                 if (now - at < CHANNEL_CACHE_MS) return@withLock shelves
             }
             val shelves = runCatching {
-                YouTubeWebParser.parseHome(
-                    Innertube.browseYouTube(MUSIC_CHANNEL),
-                    musicOnly = false,
-                ).shelves
+                fetch()
             }.onFailure {
                 if (it is CancellationException) throw it
                 Log.w(TAG, "YouTube Music channel failed: ${it.message}")
             }.getOrDefault(emptyList())
-            channelCache = System.currentTimeMillis() to shelves
+            // Review F2a-4: a failed browse is not "no channel shelves" for the
+            // next ten minutes; only a real answer is kept.
+            if (shelves.isNotEmpty()) channelCache = System.currentTimeMillis() to shelves
             shelves
         }
     }

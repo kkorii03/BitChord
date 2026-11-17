@@ -3,7 +3,9 @@ package com.music.bitchord.data.charts
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * The chart response shape was measured only at the list level, so the parser
@@ -55,6 +57,29 @@ class ChartsParserTest {
         assertEquals("가수 X", entries[1].title)
         assertEquals("UCartistX", entries[1].browseId)
         assertNull(entries[1].videoId)
+    }
+
+    @Test
+    fun `music video ids reach the shelf as video rows`() {
+        // Review F2a-5: these rows play the MV, so they must ask for the song
+        // version; a row typed as a song never does.
+        val root = json(
+            """
+            {
+              "videoViews": [{"name": "뮤직비디오", "encryptedVideoId": "mv-1"}],
+              "trackViews": [
+                {"name": "영상만", "encryptedVideoId": "mv-2"},
+                {"name": "음원", "encryptedVideoId": "mv-3", "atvExternalVideoId": "song-3"}
+              ]
+            }
+            """.trimIndent(),
+        )
+        assertTrue(ChartsParser.parse(root, ChartType.VIDEOS).single().shelfItem().isVideo)
+        val tracks = ChartsParser.parse(root, ChartType.TRACKS)
+        assertEquals("mv-2", tracks[0].videoId)
+        assertTrue(tracks[0].shelfItem().isVideo)
+        assertEquals("song-3", tracks[1].videoId)
+        assertFalse(tracks[1].shelfItem().isVideo)
     }
 
     private fun json(text: String) = Json.parseToJsonElement(text)

@@ -196,4 +196,62 @@ class StationFirstAnswerTest {
             station.map { it.videoId }.toSet(),
         )
     }
+
+    // Review F2a-3: a first playlist with 60+ rows filled the whole mood queue.
+    @Test
+    fun `a long first playlist leaves room for the mood's other playlists`() = runBlocking {
+        val others = CompletableDeferred<Unit>()
+        var early = emptyList<Song>()
+        val shelves = listOf(
+            HomeShelf(title = "Pop romance", items = listOf(playlist("a"), playlist("b"), playlist("c"))),
+        )
+
+        val queue = withTimeout(2_000) {
+            TopPicks.buildMoodQueue(
+                mood = TopPickMood.LOVE,
+                shelves = shelves,
+                hints = emptyList(),
+                onFirstBatch = {
+                    early = it
+                    others.complete(Unit)
+                },
+                songsOf = { item ->
+                    val id = item.browseId!!.removePrefix("VL")
+                    // "a" answers at once; the others wait until it has started the queue.
+                    if (id != "a") others.await()
+                    (1..60).map { index -> song("$id-$index") }
+                },
+            )
+        }.getOrNull().orEmpty()
+
+        assertTrue(early.isNotEmpty())
+        assertTrue(early.size <= 20, "the first playlist must start with its own share, not ${early.size} rows")
+        val from = queue.map { it.videoId.substringBefore('-') }.toSet()
+        assertEquals(setOf("a", "b", "c"), from, "every playlist of the mood must reach the queue")
+    }
+
+    // Review F2a-3: a seed radio answering first left the mix about 2 of 60 rows.
+    @Test
+    fun `a radio that answers first leaves the mix its share of the station`() = runBlocking {
+        val mixGate = CompletableDeferred<Unit>()
+        val mixRows = (1..60).map { song("mix-$it") }
+        val history = listOf(song("seed1"), song("seed2"), song("seed3"))
+
+        val station = withTimeout(2_000) {
+            TopPicks.buildFreshStation(
+                kind = TopPickKind.PERSONAL_STATION,
+                mix = {
+                    mixGate.await()
+                    mixRows
+                },
+                history = { history },
+                radio = { seed -> (1..60).map { song("${seed.videoId}-$it") } },
+                onFirstBatch = { mixGate.complete(Unit) },
+            )
+        }.getOrNull().orEmpty()
+
+        assertEquals(60, station.size)
+        val fromMix = station.count { it.videoId.startsWith("mix-") }
+        assertTrue(fromMix >= 25, "the mix must keep its half of the station, had $fromMix")
+    }
 }

@@ -539,10 +539,22 @@ internal object CatalogSongMapper {
             " tracks=$tracks candidates=$candidates" +
             " queryLength=${query.length} queryHash=${Integer.toHexString(query.hashCode())}"
 
-    private sealed interface Outcome {
+    internal sealed interface Outcome {
         data class Found(val song: CatalogSong) : Outcome
         data object NotFound : Outcome
         data object Failed : Outcome
+    }
+
+    /**
+     * [resolve]'s answer when no album page held the song. A page whose request
+     * failed means the song may be on it, so the answer stays retryable
+     * (never cached) even when another page opened; a page that opened but
+     * parsed empty is a completed read and keeps today's answers.
+     */
+    internal fun noMatchOutcome(opened: Int, requestFailed: Boolean, emptyPage: Boolean): Outcome = when {
+        requestFailed -> Outcome.Failed
+        opened == 0 && emptyPage -> Outcome.Failed
+        else -> Outcome.NotFound
     }
 
     private suspend fun resolve(
@@ -604,12 +616,17 @@ internal object CatalogSongMapper {
         }
         var opened = 0
         var failed = false
+        var emptyPage = false
         var tracksRead = 0
         var candidatesRead = 0
         for (album in matching) {
             val tracks = albumTracks(album.browseId)
             if (tracks == null) {
                 failed = true
+                continue
+            }
+            if (tracks.isEmpty()) {
+                emptyPage = true
                 continue
             }
             opened++
@@ -638,7 +655,7 @@ internal object CatalogSongMapper {
             return Outcome.Found(catalog)
         }
         val reason = when {
-            opened == 0 && failed -> "page-failed"
+            opened == 0 && (failed || emptyPage) -> "page-failed"
             opened == 0 -> "no-page"
             candidatesRead == 0 -> "no-candidates"
             else -> "no-track"
@@ -657,7 +674,7 @@ internal object CatalogSongMapper {
                 candidatesRead,
             ),
         )
-        return if (opened > 0) Outcome.NotFound else if (failed) Outcome.Failed else Outcome.NotFound
+        return noMatchOutcome(opened, failed, emptyPage)
     }
 
     /** Anonymous WEB_REMIX album search, or null when the request itself failed. */
@@ -680,9 +697,13 @@ internal object CatalogSongMapper {
         null
     }
 
-    /** One anonymous album page's tracks, from the LRU when it has been read. */
+    /**
+     * One anonymous album page's tracks, from the LRU when it has been read.
+     * Null only when the request failed; a page with no id or no parsed tracks
+     * is an empty read (not stored), so it is never mistaken for a failure.
+     */
     private suspend fun albumTracks(browseId: String): List<Song>? {
-        if (browseId.isBlank()) return null
+        if (browseId.isBlank()) return emptyList()
         synchronized(albumPages) { albumPages[browseId] }?.let { return it }
         val root = try {
             Innertube.browseAnonymous(browseId)
@@ -693,7 +714,7 @@ internal object CatalogSongMapper {
             return null
         }
         val tracks = InnertubeParser.collectSongsDeep(root)
-        if (tracks.isEmpty()) return null
+        if (tracks.isEmpty()) return emptyList()
         synchronized(albumPages) { albumPages[browseId] = tracks }
         return tracks
     }

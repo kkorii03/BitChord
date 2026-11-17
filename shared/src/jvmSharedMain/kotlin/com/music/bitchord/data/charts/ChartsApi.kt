@@ -38,6 +38,8 @@ internal data class ChartEntry(
     val videoId: String? = null,
     val browseId: String? = null,
     val thumbnailUrl: String? = null,
+    /** The id plays a music video (a VIDEOS row, or a track with no album audio id). */
+    val isVideo: Boolean = false,
 ) {
     fun shelfItem(): ShelfItem = ShelfItem(
         title = title,
@@ -45,6 +47,7 @@ internal data class ChartEntry(
         thumbnailUrl = thumbnailUrl,
         videoId = videoId,
         browseId = browseId,
+        isVideo = isVideo,
     )
 }
 
@@ -222,6 +225,10 @@ internal object ChartsParser {
                 },
                 browseId = if (type == ChartType.ARTISTS) browseIdOf(entry) else null,
                 thumbnailUrl = thumbnailOf(entry),
+                // Review F2a-5: an MV id typed as a song skipped the
+                // song-version lookup and played the MV soundtrack.
+                isVideo = type == ChartType.VIDEOS ||
+                    (type == ChartType.TRACKS && entry.string("atvExternalVideoId") == null),
             )
         }
     }

@@ -122,4 +122,19 @@ class YouTubeFallbackHomeCacheTest {
         assertNull(YouTubeFallback.likedFirstPageWith { asks++; JsonObject(emptyMap()) })
         assertEquals(4, asks)
     }
+
+    @Test
+    fun `F2a-4 a failed Music channel browse is not cached as no shelves`() = withCleanCaches {
+        var asks = 0
+        assertTrue(YouTubeFallback.channelShelvesWith { asks++; error("timeout") }.isEmpty())
+
+        // The failure was not stored, so the next caller asks again and gets the shelf.
+        val shelf = HomeShelf(title = "channel", items = emptyList())
+        assertEquals(listOf(shelf), YouTubeFallback.channelShelvesWith { asks++; listOf(shelf) })
+        assertEquals(2, asks)
+
+        // A real answer is kept for the window.
+        assertEquals(listOf(shelf), YouTubeFallback.channelShelvesWith { asks++; emptyList() })
+        assertEquals(2, asks)
+    }
 }

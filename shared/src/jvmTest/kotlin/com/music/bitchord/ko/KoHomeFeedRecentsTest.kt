@@ -3,6 +3,7 @@ package com.music.bitchord.ko
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -52,5 +53,25 @@ class KoHomeFeedRecentsTest {
         ).items.single()
         assertEquals("화조도 花鳥圖", first.title)
         assertEquals(first.title, again.title)
+    }
+
+    // Review F2a-2: every continuation page asked (and waited) for the chart.
+    @Test
+    fun `a page with no chart shelf never asks for the chart`() = runBlocking {
+        val chart = HomeShelf(
+            title = "chart",
+            items = listOf(ShelfItem("Chart song", "Singer", null, "c1", null)),
+        )
+        var asks = 0
+        val plain = HomeShelf(title = "새 앨범", items = listOf(ShelfItem("Song", "Artist", null, "v1", null)))
+        val untouched = KoHomeFeed.contentCountryCharts(listOf(plain)) { asks++; chart }
+        assertEquals(0, asks)
+        assertEquals(listOf(plain), untouched)
+
+        val trending = HomeShelf(title = "인기곡", items = listOf(ShelfItem("Old", "Artist", null, "v2", null)))
+        val filled = KoHomeFeed.contentCountryCharts(listOf(plain, trending)) { asks++; chart }
+        assertEquals(1, asks)
+        assertEquals(chart.items, filled[1].items)
+        assertEquals(plain, filled[0])
     }
 }

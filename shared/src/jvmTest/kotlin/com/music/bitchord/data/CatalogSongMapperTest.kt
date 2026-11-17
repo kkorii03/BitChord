@@ -562,4 +562,18 @@ class CatalogSongMapperTest {
         // A source that already names the release adds no second name.
         assertNull(catalog.toSong(upload.copy(title = "체포하겠어")).uploadTitle)
     }
+
+    @Test
+    fun `a failed album page keeps the miss retryable even when another page opened`() {
+        // Review F2a-1: one page opened without the song, the other timed out.
+        // That was a 7-day cached NotFound; the song may be on the failed page.
+        assertEquals(CatalogSongMapper.Outcome.Failed, CatalogSongMapper.noMatchOutcome(1, requestFailed = true, emptyPage = false))
+        assertEquals(CatalogSongMapper.Outcome.Failed, CatalogSongMapper.noMatchOutcome(0, requestFailed = true, emptyPage = false))
+        // Unchanged answers: completed reads stay a cached miss, and a lookup
+        // whose only pages parsed empty stays retryable as before.
+        assertEquals(CatalogSongMapper.Outcome.NotFound, CatalogSongMapper.noMatchOutcome(1, requestFailed = false, emptyPage = false))
+        assertEquals(CatalogSongMapper.Outcome.NotFound, CatalogSongMapper.noMatchOutcome(1, requestFailed = false, emptyPage = true))
+        assertEquals(CatalogSongMapper.Outcome.Failed, CatalogSongMapper.noMatchOutcome(0, requestFailed = false, emptyPage = true))
+        assertEquals(CatalogSongMapper.Outcome.NotFound, CatalogSongMapper.noMatchOutcome(0, requestFailed = false, emptyPage = false))
+    }
 }

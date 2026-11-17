@@ -249,8 +249,11 @@ object TopPicks {
         }
         val answers = firstAnswer(sources) { index, songs ->
             // Capped here, not only after the radio, so the first answer a
-            // player is handed cannot grow past the station it belongs to.
-            val batch = (if (index == 0) mixBatch(songs) else radioBatch(songs)).take(STATION_SIZE)
+            // player is handed cannot grow past the station it belongs to. A
+            // radio gets only its own share (review F2a-3: one seed's radio
+            // was 50 of 60 rows and squeezed the mix out).
+            val batch = (if (index == 0) mixBatch(songs) else radioBatch(songs).take(RADIO_FIRST_BATCH))
+                .take(STATION_SIZE)
             if (batch.isEmpty()) {
                 false
             } else {
@@ -268,8 +271,14 @@ object TopPicks {
         val core = if (firstWasMix) emptyList() else mixBatch(mixSongs)
         val coreIds = core.mapTo(HashSet()) { it.videoId }
         val firstIds = firstBatch.mapTo(HashSet()) { it.videoId }
-        val extra = around.filter { keep(it) && it.videoId !in coreIds }
+        // The radios fill only what the first batch and the mix's half leave,
+        // drawn across all of them, so the mix keeps its share of the station.
+        val coreLeft = core.filterNot { it.videoId in firstIds }.distinctBy { it.videoId }.size
+        val room = (STATION_SIZE - firstBatch.size - coreLeft).coerceAtLeast(0)
+        val extra = around.filter { keep(it) && it.videoId !in coreIds && it.videoId !in firstIds }
             .distinctBy { it.videoId }
+            .shuffled()
+            .take(room)
         val tail = (core + extra)
             .filterNot { it.videoId in firstIds }
             .distinctBy { it.videoId }
@@ -291,6 +300,8 @@ object TopPicks {
     private const val SEED_RADIOS = 3
     private const val STATION_FROM_MIX = 30
     private const val STATION_SIZE = 60
+    /** A seed radio that answers first starts the station with its own share only. */
+    private const val RADIO_FIRST_BATCH = (STATION_SIZE - STATION_FROM_MIX) / SEED_RADIOS
 
     // ---- Cards --------------------------------------------------------------
 
@@ -579,7 +590,9 @@ object TopPicks {
         val answers = firstAnswer(chosen.map { item -> suspend { songsOf(item) } }) { _, songs ->
             // A row YouTube couldn't pair stays the video, and plays as one;
             // the player menu's version switch turns it into the song.
-            val batch = songs.distinctBy { it.videoId }.shuffled().take(MOOD_QUEUE)
+            // Only this playlist's share (review F2a-3: one long playlist
+            // filled the whole queue), so the mood's playlists stay mixed.
+            val batch = songs.distinctBy { it.videoId }.shuffled().take(MOOD_QUEUE / MOOD_PLAYLISTS)
             if (batch.isEmpty()) {
                 false
             } else {

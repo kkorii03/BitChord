@@ -126,8 +126,18 @@ internal object KoHomeFeed {
      * its later pages or a supplement, filled from the content country's
      * chart: the feed itself picks them by the account's registered country.
      */
-    internal suspend fun contentCountryCharts(shelves: List<HomeShelf>): List<HomeShelf> =
-        withContentCountryChart(shelves, contentCountryChart())
+    internal suspend fun contentCountryCharts(
+        shelves: List<HomeShelf>,
+        chart: suspend () -> HomeShelf? = { contentCountryChart() },
+    ): List<HomeShelf> =
+        // Review F2a-2: a page with no chart shelf cannot use the chart, so it
+        // does not ask (and wait) for one. A missing chart is never cached,
+        // so every continuation page used to ask again.
+        if (shelves.none { TRENDING_TITLE.matches(it.title) }) {
+            cleanVideoRows(shelves)
+        } else {
+            withContentCountryChart(shelves, chart())
+        }
 
     internal fun withContentCountryChart(
         shelves: List<HomeShelf>,
@@ -234,7 +244,7 @@ internal object KoHomeFeed {
             ?: return null
         return HomeShelf(
             title = pick.title,
-            items = songs.map { ShelfItem(title = it.title, subtitle = it.artist, thumbnailUrl = it.thumbnailUrl, videoId = it.videoId, browseId = null) },
+            items = songs.map { ShelfItem(title = it.title, subtitle = it.artist, thumbnailUrl = it.thumbnailUrl, videoId = it.videoId, browseId = null, isVideo = it.isVideo) },
             moreBrowseId = browseId,
         )
     }
