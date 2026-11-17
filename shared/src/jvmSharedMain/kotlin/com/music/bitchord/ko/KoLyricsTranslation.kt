@@ -314,7 +314,7 @@ object KoLyricsTranslation {
     private val askGates = ConcurrentHashMap<String, Mutex>()
 
     /** Gemini's saved answer for [cacheKey], when it still fits [slots]. */
-    private fun savedGemini(cacheKey: String, slots: List<TextSlot>): CachedTranslation? {
+    private suspend fun savedGemini(cacheKey: String, slots: List<TextSlot>): CachedTranslation? {
         val cached = LyricsTranslation.rememberedTranslation(cacheKey)
             ?: LyricsTranslation.readCache(cacheKey)?.also { LyricsTranslation.rememberTranslation(cacheKey, it) }
         if (cached == null || cached.version != LyricsTranslation.CACHE_VERSION || cached.texts.size != slots.size) return null
