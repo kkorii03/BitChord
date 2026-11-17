@@ -414,9 +414,13 @@ internal object TranslationAhead {
         }
     }
 
-    /** Called once a download is saved at [uri]. */
+    /**
+     * Called once a download is saved at [uri]. Not on power saving (review
+     * X8: a 300-song playlist download sent ~300 Gemini requests): the player
+     * and the ahead pass translate the song with keep=true when it is played.
+     */
     fun downloaded(context: Context, song: Song, uri: String) {
-        if (!AppSettings.keepDownloadTranslation.value) return
+        if (!shouldTranslateDownload(AppSettings.keepDownloadTranslation.value, AppSettings.heavyWorkAllowed)) return
         val app = context.applicationContext
         scope.launch {
             val lines = EmbeddedLyrics.forUri(app, uri) ?: return@launch
@@ -493,4 +497,8 @@ internal object TranslationAhead {
         is LyricsTranslation.Result.SameLanguage -> "same-language"
         LyricsTranslation.Result.Unavailable -> "unavailable"
     }
+
+    /** A finished download is translated for keeping only with the setting on and heavy work allowed. */
+    internal fun shouldTranslateDownload(keepSetting: Boolean, heavyWorkAllowed: Boolean): Boolean =
+        keepSetting && heavyWorkAllowed
 }

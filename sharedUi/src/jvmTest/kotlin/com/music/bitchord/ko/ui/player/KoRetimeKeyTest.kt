@@ -37,6 +37,14 @@ class KoRetimeKeyTest {
         assertTrue(koSameTiming(remade.lines, after))
     }
 
+    /** Review X4: auto-translate asks once per sheet, not once per re-timed list. */
+    @Test
+    fun `a re-timed list keeps the auto-translate key and new words change it`() {
+        assertEquals(koLyricsWordsKey(before), koLyricsWordsKey(after))
+        assertNotEquals(koLyricsWordsKey(before), koLyricsWordsKey(listOf(LyricLine(1_000, "c"))))
+        assertNotEquals(koLyricsWordsKey(null), koLyricsWordsKey(before))
+    }
+
     @Test
     fun `states other than Ready do not re-run it`() {
         assertEquals(

@@ -2,6 +2,7 @@ package com.music.bitchord.ko.ui.player
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.ui.player.LyricsDisplayMode
 import com.music.bitchord.ui.player.LyricsTranslationResult
@@ -49,6 +50,10 @@ internal fun koRetimeKey(
 ): Pair<List<LyricLine>?, LyricsTranslationUiState.Ready?> =
     lyrics to (state as? LyricsTranslationUiState.Ready)
 
+/** The sheet's words alone, the same key the translation state is kept under. */
+internal fun koLyricsWordsKey(lyrics: List<LyricLine>?): String? =
+    lyrics?.joinToString("\n") { it.text }
+
 @Composable
 internal fun koAutoTranslateEffect(
     trackId: String,
@@ -62,7 +67,11 @@ internal fun koAutoTranslateEffect(
     // Auto-translate: each new lyric sheet asks for its translation once, as
     // if the button had been pressed. Keyed on the sheet, so turning the
     // translation off by hand is left alone for the rest of the song.
-    LaunchedEffect(trackId, translationLanguage, lyrics, autoTranslate) {
+    // Keyed on its words, not the list (review X4): a re-timed list with the
+    // same words arrives per correction and per sync-drawer tap, and after an
+    // unavailable answer each one used to send the whole request again.
+    val words = remember(lyrics) { koLyricsWordsKey(lyrics) }
+    LaunchedEffect(trackId, translationLanguage, words, autoTranslate) {
         if (
             autoTranslate &&
             !lyrics.isNullOrEmpty() &&
