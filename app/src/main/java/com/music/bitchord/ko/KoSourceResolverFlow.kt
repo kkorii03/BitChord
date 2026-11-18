@@ -8,6 +8,7 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.telegram.TelegramClientManager
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -67,6 +68,12 @@ internal suspend fun blockedStartStream(
  * the client lease and the first note for as long as TDLib takes to open.
  * Null means this source ran out of time and the caller steps over it
  * exactly as it would a miss.
+ *
+ * [KO] OPT2: a resting source is skipped by the same gate as `bestAcross`
+ * ([skipsResting], also null), and a Telegram search holds one walk lease
+ * across its queries, as `bestAcross` does. [probesResting] gives a resting
+ * source its shared probe turn (the download ladder is looking for the better
+ * copy); the pre-sound walk in `resolve` passes false and never waits on one.
  */
 internal suspend fun matchAndStreamWithin(
     source: MusicSource,
@@ -76,17 +83,22 @@ internal suspend fun matchAndStreamWithin(
     strictLength: Boolean = false,
     strictOriginal: Boolean = false,
     baseTimeoutMs: Long = SOURCE_LOOKUP_TIMEOUT_MS,
+    probesResting: Boolean = false,
 ): SourceResolver.SearchOutcome? {
+    val resting = SourceResolver.SourceCooldown.isResting(source.configId)
+    if (skipsResting(source, target, manual = false, probesResting = probesResting)) return null
     val timeoutMs = sourceLookupTimeoutMsFor(source, baseTimeoutMs)
     val answer = withTimeoutOrNull(timeoutMs) {
-        SourceResolver.matchAndStreamForKo(
-            source,
-            target,
-            request,
-            waitForAll = waitForAll,
-            strictLength = strictLength,
-            strictOriginal = strictOriginal,
-        )
+        TelegramClientManager.holdingWalk(source.kind == SourceKind.TELEGRAM) {
+            SourceResolver.matchAndStreamForKo(
+                source,
+                target,
+                request,
+                waitForAll = waitForAll,
+                strictLength = strictLength,
+                strictOriginal = strictOriginal,
+            )
+        }
     }
     if (answer == null) {
         // A timeout while the device is offline is the connection, not the
@@ -102,10 +114,67 @@ internal suspend fun matchAndStreamWithin(
             "BitChord",
             hqSearchLine(target, source, SourceResolver.SearchOutcome(verdict = "timeout", conclusive = false)),
         )
-    } else if (answer.stream != null) {
+    } else if (answer.stream != null || (resting && answer.conclusive)) {
+        // A probe's complete answer, even a miss, proves a resting source is back (bestAcross's rule).
         SourceResolver.SourceCooldown.succeeded(source.configId)
     }
     return answer
+}
+
+/**
+ * [KO] OPT2: whether a walk skips [source] as resting, logging and recording the skip —
+ * `bestAcross`'s per-source gate, moved here unchanged so the sequential walks
+ * ([matchAndStreamWithin]) cannot drift from it. [probesResting] is `manual || probeResting`.
+ */
+internal fun skipsResting(
+    source: MusicSource,
+    target: TrackMatcher.Target,
+    manual: Boolean,
+    probesResting: Boolean,
+    manualSession: Any? = null,
+    report: KoSearchReport? = null,
+): Boolean {
+    val resting = SourceResolver.SourceCooldown.isResting(source.configId)
+    // A source parked for unmeasurable candidates is not probed even by
+    // hand: its search works, its download is what keeps being refused.
+    val unmeasurable = resting && SourceResolver.SourceCooldown.isUnmeasurable(source.configId)
+    val alreadyProbed = resting && probesResting && (
+        unmeasurable || (manualSession != null &&
+            !KoSourceSearchMemo.manualRestingProbes.add(
+                KoSourceSearchMemo.manualProbeKey(manualSession, source.configId, target),
+            )) ||
+            // A hand-made request is worth its probe; a walk the app
+            // started on its own waits its turn.
+            (!manual && !KoSourceCooldown.takeRestProbe(source.configId))
+        )
+    return if (alreadyProbed) {
+        val skipped = SourceResolver.SearchOutcome(verdict = "resting", conclusive = false)
+        report?.record(skipped, source.displayName, restingId = source.configId)
+        TrackLog.d("BitChord", hqSearchLine(target, source, skipped))
+        true
+    } else if (resting && !probesResting) {
+        TrackLog.d(
+            "BitChord",
+            "${source.displayName} is resting after repeated failures; skipping for this track",
+        )
+        val skipped = SourceResolver.SearchOutcome(verdict = "resting", conclusive = false)
+        report?.record(skipped, source.displayName, restingId = source.configId)
+        TrackLog.d("BitChord", hqSearchLine(target, source, skipped))
+        true
+    } else {
+        if (resting) {
+            val why = if (manual) {
+                "this upgrade was requested by hand"
+            } else {
+                "this walk is looking for a better copy"
+            }
+            TrackLog.d(
+                "BitChord",
+                "${source.displayName} is resting; asking it once because $why",
+            )
+        }
+        false
+    }
 }
 
 /**

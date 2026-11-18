@@ -115,8 +115,11 @@ class DownloadService : Service() {
      * 300-track download being drained by however many happened to win that
      * race.
      */
-    private suspend fun drainQueue() = coroutineScope {
-        repeat(WORKERS) { launch { work() } }
+    // [KO] OPT2: one Telegram walk lease per drain, so a batch keeps one TDLib session (opens nothing by itself).
+    private suspend fun drainQueue() = com.music.bitchord.telegram.TelegramClientManager.holdingWalk(true) {
+        coroutineScope {
+            repeat(WORKERS) { launch { work() } }
+        }
     }
 
     /**

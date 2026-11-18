@@ -258,7 +258,11 @@ object SourceRegistry {
      * stream is budgeted further by [activeForPlayback]; downloads deliberately
      * apply no connection-quality ceiling — see [SourceResolver.forDownload].
      */
+    /** [KO] Test seam: the enabled sources a JVM test hands in. Null in production. */
+    @Volatile internal var activeForTest: List<MusicSource>? = null
+
     fun active(): List<MusicSource> {
+        activeForTest?.let { return it } // [KO] test seam
         open()
         val unverified = AddonAuth.standingRefusal() != null
         return enabledConfigs(configs.value)

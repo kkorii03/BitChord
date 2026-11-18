@@ -102,6 +102,10 @@ object TelegramClientManager {
     @Volatile
     private var requestForTest: ((TdApi.Function<*>, Long) -> TdApi.Object)? = null
 
+    /** [KO] Test seam: sees each [holdingWalk] begin (true) and end (false) without TDLib. Null in production. */
+    @Volatile
+    internal var walkHoldForTest: ((Boolean) -> Unit)? = null
+
     private data class SearchKey(val chats: List<Long>, val query: String, val limit: Int)
     private class RecentSearch(val result: SearchResult, val atNanos: Long)
     private class SearchResult(val tracks: List<TelegramTrack>, val mode: String)
@@ -210,6 +214,11 @@ object TelegramClientManager {
      * worker. The end runs on every exit, cancellation and timeout included.
      */
     suspend fun <T> holdingWalk(hold: Boolean, block: suspend () -> T): T {
+        val counted = walkHoldForTest
+        if (hold && counted != null) {
+            counted(true)
+            try { return block() } finally { counted(false) }
+        }
         if (!hold || context == null) return block()
         work.execute { gate.beginWalk() }
         try {

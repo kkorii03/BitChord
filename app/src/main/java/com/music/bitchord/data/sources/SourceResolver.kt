@@ -92,9 +92,6 @@ object SourceResolver {
     ): T? = attempt(source, block = block) // [KO] source-attempt
 
     private val searchAnswers get() = com.music.bitchord.ko.KoSourceSearchMemo.searchAnswers // [KO] search-memo
-    private val manualRestingProbes get() = com.music.bitchord.ko.KoSourceSearchMemo.manualRestingProbes // [KO] manual-probe
-    private fun manualProbeKey(session: Any, sourceId: String, target: TrackMatcher.Target): String =
-        com.music.bitchord.ko.KoSourceSearchMemo.manualProbeKey(session, sourceId, target) // [KO] manual-probe
     internal fun clearManualProbes(session: Any) =
         com.music.bitchord.ko.KoSourceSearchMemo.clearManualProbes(session) // [KO] manual-probe
     internal fun clearManualProbes() =
@@ -988,6 +985,10 @@ object SourceResolver {
     ): SourceStream? = coroutineScope {
         val until = budgetMs?.let { System.nanoTime() + it * 1_000_000 }
         if (target.title.isBlank()) return@coroutineScope null
+        if (target.isVideo) { // [KO] OPT2: like every playback lookup, a module match is another recording
+            TrackLog.d(TAG, "download: '${target.title}' is a video row; keeping YouTube's own stream")
+            return@coroutineScope null
+        }
         val wantsLossless = when (request) {
             is StreamRequest.Lossless -> true
             is StreamRequest.Best -> false
@@ -1091,6 +1092,7 @@ object SourceResolver {
                     strictLength = strictLength,
                     strictOriginal = true,
                     baseTimeoutMs = DOWNLOAD_SOURCE_TIMEOUT_MS,
+                    probesResting = true, // [KO] OPT2: a resting source gets bestAcross's probe turn
                 )?.stream?.let { keep(it) }
             }
         }
@@ -1471,45 +1473,7 @@ object SourceResolver {
         // [probeResting]) rather than through a second mechanism.
         val probesResting = manual || probeResting
         val usable = sources.filterNot { source ->
-            val resting = SourceCooldown.isResting(source.configId)
-            // A source parked for unmeasurable candidates is not probed even by
-            // hand: its search works, its download is what keeps being refused.
-            val unmeasurable = resting && SourceCooldown.isUnmeasurable(source.configId)
-            val alreadyProbed = resting && probesResting && (
-                unmeasurable || (manualSession != null &&
-                    !manualRestingProbes.add(manualProbeKey(manualSession, source.configId, target))) ||
-                    // A hand-made request is worth its probe; a walk the app
-                    // started on its own waits its turn.
-                    (!manual && !com.music.bitchord.ko.KoSourceCooldown.takeRestProbe(source.configId))
-                )
-            if (alreadyProbed) {
-                val skipped = SearchOutcome(verdict = "resting", conclusive = false)
-                report?.record(skipped, source.displayName, restingId = source.configId) // [KO] OPT1
-                TrackLog.d(TAG, hqSearchLine(target, source, skipped))
-                true
-            } else if (resting && !probesResting) {
-                TrackLog.d(
-                    TAG,
-                    "${source.displayName} is resting after repeated failures; skipping for this track",
-                )
-                val skipped = SearchOutcome(verdict = "resting", conclusive = false)
-                report?.record(skipped, source.displayName, restingId = source.configId) // [KO] OPT1
-                TrackLog.d(TAG, hqSearchLine(target, source, skipped))
-                true
-            } else {
-                if (resting) {
-                    val why = if (manual) {
-                        "this upgrade was requested by hand"
-                    } else {
-                        "this walk is looking for a better copy"
-                    }
-                    TrackLog.d(
-                        TAG,
-                        "${source.displayName} is resting; asking it once because $why",
-                    )
-                }
-                false
-            }
+            com.music.bitchord.ko.skipsResting(source, target, manual, probesResting, manualSession, report) // [KO] OPT2 rest gate
         }
         if (usable.isEmpty()) return@coroutineScope null
         val order = usable.mapIndexed { index, source -> source.configId to index }.toMap()
@@ -1758,8 +1722,9 @@ object SourceResolver {
         strictLength: Boolean = false,
         strictOriginal: Boolean = false,
         baseTimeoutMs: Long = SOURCE_LOOKUP_TIMEOUT_MS,
+        probesResting: Boolean = false,
     ): SearchOutcome? = com.music.bitchord.ko.matchAndStreamWithin(
-        source, target, request, waitForAll, strictLength, strictOriginal, baseTimeoutMs,
+        source, target, request, waitForAll, strictLength, strictOriginal, baseTimeoutMs, probesResting,
     ) // [KO] match-stream-within
 
     /**
