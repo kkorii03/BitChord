@@ -1772,10 +1772,11 @@ object SourceResolver {
         driftSec: Int = UPGRADE_DRIFT_SEC,
         lengthLater: (suspend () -> Int?)? = null,
         checkFileLength: Boolean = false,
+        queries: List<String> = TrackMatcher.queries(target), // [KO] TG2 artist-only Telegram query
     ): SearchOutcome {
         var last = SearchOutcome()
         var matchOn = target
-        for (query in TrackMatcher.queries(target)) {
+        for (query in queries) { // [KO] TG2
             val key = SearchKey(
                 sourceId = source.configId,
                 target = targetKey(target),
@@ -1843,7 +1844,7 @@ object SourceResolver {
             // [strictLength] — so with nothing to measure by, it is not strict.
             val strict = strictLength && matchOn.durationSec != null
             val ranked = TrackMatcher.ranked(candidates, matchOn)
-            com.music.bitchord.ko.KoVersionGuard.noteSearch(source.configId, matchOn.title, matchOn.artist, candidates) { SourceRegistry.parseTrackKey(it.videoId)?.second ?: it.videoId } // [KO] version risk
+            com.music.bitchord.ko.KoVersionGuard.noteSearch(source.configId, matchOn.title, matchOn.artist, com.music.bitchord.ko.KoTelegramArtistQuery.versionRows(source, query, matchOn, candidates)) { SourceRegistry.parseTrackKey(it.videoId)?.second ?: it.videoId } // [KO] version risk, TG2
             // Rows whose only disagreement is an artist credit in another
             // script are kept apart so the ordinary match order still wins.
             // Judged over every result, not just the top row: the localised
@@ -2100,7 +2101,7 @@ object SourceResolver {
         }
         // One line per source per walk, whether it found the recording or not.
         TrackLog.d(TAG, hqSearchLine(target, source, last))
-        return last
+        return com.music.bitchord.ko.KoTelegramArtistQuery.after(source, target, strictOriginal, allowArtistUnverified, queries, last) { matchAndStream(source, target, request, waitForAll, strictLength, requireSharedArtist, strictOriginal, manual, allowArtistUnverified, driftSec, lengthLater, checkFileLength, listOf(it)) } // [KO] TG2
     }
 
     /**

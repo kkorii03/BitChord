@@ -621,6 +621,34 @@ internal object KoTrackMatcher {
     }
 
     /**
+     * [KO] TG2: the act's Latin name, as the one artist-only search for a
+     * Hangul title a foreign catalogue files under its Latin name (ILLIT's
+     * '체포하겠어' as 'You're Under Arrest'). A literal search never meets that
+     * file through the Hangul title.
+     *
+     * Null unless [isTitleUnverifiedOriginal] could admit a row for [target] at
+     * all: a runtime, a Hangul title with no filing Latin of its own (that title
+     * already asks its Latin half through [titleVariants]), and a Latin spelling
+     * of the act, printed alone or beside a Hangul one. This only finds rows; it
+     * admits none.
+     */
+    fun latinArtistQuery(target: Target): String? {
+        if (target.durationSec == null || target.artist.isBlank()) return null
+        val title = normalize(target.title)
+        // A soundtrack label or a compilation credit names no act to search by.
+        if (!hasHangul(title) || hasFilingLatin(title) || isSoundtrackCredit(target.artist) ||
+            normalize(target.artist).contains("various artists")
+        ) {
+            return null
+        }
+        return artistVariants(target.artist).map { it.trim() }.firstOrNull { name ->
+            name.count { it in 'a'..'z' } >= 2 &&
+                name.none { it.isLetter() && it !in 'a'..'z' } &&
+                name !in YOUTUBE_TYPE_LABELS
+        }
+    }
+
+    /**
      * Whether one title is written in Latin and the other in a script that
      * carries none — the shape a catalogue's own-language filing takes
      * ("You're Under Arrest" for ILLIT's "체포하겠어").

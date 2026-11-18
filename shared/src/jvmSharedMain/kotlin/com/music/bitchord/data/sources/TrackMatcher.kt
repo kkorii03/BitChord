@@ -219,6 +219,7 @@ object TrackMatcher {
         target: Target,
         maxDriftSec: Int = ARTIST_UNVERIFIED_DRIFT_SEC,
     ) = KoTrackMatcher.isTitleUnverifiedOriginal(candidate, target, maxDriftSec) // [KO] title-unverified
+    fun latinArtistQuery(target: Target): String? = KoTrackMatcher.latinArtistQuery(target) // [KO] TG2 artist-only Telegram query
     /** The audio switch's use of that grade, at a window shaped like a video's overhang. */
     internal fun isAudioSwitchTitleUnverified(candidate: Song, target: Target) =
         KoTrackMatcher.isAudioSwitchTitleUnverified(candidate, target) // [KO] title-unverified
