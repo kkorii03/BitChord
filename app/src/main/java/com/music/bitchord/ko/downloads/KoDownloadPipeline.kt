@@ -172,6 +172,11 @@ internal object KoDownloadPipeline {
             Log.d(TAG, "can't export a .${storable.extension} manifest; taking YouTube for ${track.videoId}")
             return null
         }
+        // dupdl: the player filling this very file now hands its copy over instead of a second GET.
+        // F2: asked once — by the automatic pass before it takes the host slot, else by the write.
+        val playersFill = com.music.bitchord.ko.KoPlayersFill.Asked<AudioCache.CompleteCopy> {
+            if (packaged) null else AudioCache.playersFillOf(track.videoId, stream.url, storable.extension)
+        }
         return Downloads.Route(
             // DASH is saved *as* HLS — see [OfflineDash] for why — so both
             // kinds land as the same package and are named for what was
@@ -188,14 +193,14 @@ internal object KoDownloadPipeline {
             taggable = true,
             offlineHls = Downloads.Manifest(stream.url, stream.headers, dash = dash).takeIf { packaged },
             write = { sink, onProgress ->
-                // dupdl: the player filling this very file now hands its copy over instead of a second GET.
-                val fill = if (packaged) null else AudioCache.playersFillOf(track.videoId, stream.url, storable.extension)
+                val fill = playersFill.get()
                 if (fill != null) {
                     AudioCache.copyOut(fill, sink, onProgress)
                 } else {
                     Downloader.fetchDirect(stream.url, stream.headers, sink, onProgress)
                 }
             },
+            beforeHostSlot = { playersFill.get() },
         )
     }
     data class PreviousRecordState(
@@ -558,6 +563,11 @@ internal object KoDownloadPipeline {
         // again until its own wait has passed.
         val rest = HqHostTracker.restRemainingMs(host)
         if (rest > 0L) throw AutoDownloadDeferred(rest)
+        // F2: the wait for the player's own fill of this file asks nothing of the
+        // host, so it runs before the slot and the candidate-host lock. Held under
+        // them it kept the next track's read-ahead and sound checks off this host
+        // until the player let go, near the song's end.
+        route.beforeHostSlot?.invoke()
         // Playback's upgrade/read-ahead and its verification hold the same host
         // slots; an automatic file waits for them rather than opening a second
         // request to the same server.

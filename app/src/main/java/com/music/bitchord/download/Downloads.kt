@@ -1921,6 +1921,8 @@ object Downloads {
         val taggable: Boolean = true,
         val offlineHls: Manifest? = null,
         val write: suspend (OutputStream, (written: Long, total: Long) -> Unit) -> Unit,
+        /** [KO] F2: a request-free wait the automatic pass runs before it takes [host]'s slot. */
+        val beforeHostSlot: (suspend () -> Unit)? = null,
     )
 
     /**

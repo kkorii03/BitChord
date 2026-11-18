@@ -1,5 +1,8 @@
 package com.music.bitchord.ko
 
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
 /**
  * [KO] dupdl: a download of the very file the player is filling into the song
  * cache right now takes the player's copy instead of a second whole GET.
@@ -19,6 +22,27 @@ package com.music.bitchord.ko
  * download fetches as before.
  */
 internal object KoPlayersFill {
+
+    /**
+     * F2 (review 11-19): [ask]'s answer, asked once. The automatic pass asks it
+     * before it takes the host slot (`Downloads.Route.beforeHostSlot`); the
+     * route's write then reads the same answer and does not wait again. The
+     * wait makes no request of its own, and held under the slot it kept the
+     * next track's read-ahead and sound checks off that host for most of a song.
+     */
+    class Asked<T : Any>(private val ask: suspend () -> T?) {
+        private val lock = Mutex()
+        private var answered = false
+        private var answer: T? = null
+
+        suspend fun get(): T? = lock.withLock {
+            if (!answered) {
+                answer = ask()
+                answered = true
+            }
+            answer
+        }
+    }
 
     suspend fun <T> copyOf(
         url: String,
