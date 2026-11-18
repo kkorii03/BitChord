@@ -374,16 +374,10 @@ object InnerTubeXResolver {
                 clientPlaybackNonce = generateClientPlaybackNonce(),
             )
         }
-        val withoutDead = if (dead.isEmpty()) null else try {
-            walk(skip + dead)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            if (UnplayableReason.isDefinitelyGone(e.message)) throw e
+        // [KO] fix1119 F3: a failure without them, even "definitely gone", is not the verdict; ask them too.
+        val stream = com.music.bitchord.ko.KoDeadClients.walkSkippingDead(dead, { skipDead -> walk(if (skipDead) skip + dead else skip) }) { e ->
             TrackLog.w(TAG, "InnerTubeX walk without ${dead.joinToString()} failed for $videoId: ${e.message}; asking them too")
-            null
-        }
-        val stream = withoutDead ?: walk(skip) ?: return null
+        } ?: return null
         com.music.bitchord.ko.KoDeadClients.served(deadRoute, stream.clientName) // [KO] UPG-speed 1
         check(stream.sabrBootstrap == null) { "SABR is not supported by this playback engine" }
         val mime = stream.mimeType.orEmpty()

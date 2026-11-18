@@ -68,9 +68,26 @@ object KoDeadClients {
     fun place(): String {
         val proxy = com.music.bitchord.data.net.YouTubeProxy
         val c = proxy.config
-        if (!c.usable) return "off"
-        val server = if (proxy.usingBackup) "b/${c.backupHost}/${c.backupPort}" else "p/${c.host}/${c.port}"
-        return Integer.toHexString("${c.mode.name}/${c.scope.name}/$server".hashCode())
+        val base = if (!c.usable) {
+            "off"
+        } else {
+            val server = if (proxy.usingBackup) "b/${c.backupHost}/${c.backupPort}" else "p/${c.host}/${c.port}"
+            Integer.toHexString("${c.mode.name}/${c.scope.name}/$server".hashCode())
+        }
+        // [KO] fix1119 F3: Wi-Fi and LTE reach YouTube from different addresses, and the network id the wipe uses is per process.
+        val kind = transport
+        return if (kind.isEmpty()) base else "$base.$kind"
+    }
+
+    @Volatile private var transport = ""
+
+    /**
+     * The default network's transport ("wifi", "cell", ...), stable across
+     * processes unlike [onNetwork]'s id, so a record made on one transport
+     * is never restored on another. Empty while unknown.
+     */
+    fun onTransport(kind: String) {
+        transport = kind
     }
 
     /**
@@ -169,6 +186,32 @@ object KoDeadClients {
         val at = now()
         val restored = placeOf(route)?.let { recorded[it] }?.filterValues { at - it in 0 until RESTORED_TTL_MS }?.keys.orEmpty()
         return (inMemory + restored) - state?.served.orEmpty()
+    }
+
+    /**
+     * [KO] fix1119 F3: one walk without the [dead] clients, then one with them
+     * whenever it finds nothing or fails, whatever the failure says. A
+     * "definitely gone" answer from the walk that skipped them is not the
+     * video's verdict: a client skipped here (dead on a stale memo, or on
+     * another network this process only thinks it left) may still serve it,
+     * and the verdict is kept and acted on for the rest of the play. So a
+     * verdict only ever comes from the walk that asked every client.
+     */
+    suspend fun <T : Any> walkSkippingDead(
+        dead: Set<String>,
+        walk: suspend (skipDead: Boolean) -> T?,
+        onRetry: (Exception) -> Unit = {},
+    ): T? {
+        if (dead.isNotEmpty()) {
+            try {
+                walk(true)?.let { return it }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onRetry(e)
+            }
+        }
+        return walk(false)
     }
 
     /** The default network is [id] now; a different one starts a fresh memo. */

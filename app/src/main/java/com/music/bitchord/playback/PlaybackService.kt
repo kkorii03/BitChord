@@ -1,6 +1,7 @@
 package com.music.bitchord.playback
 
 import com.music.bitchord.ko.koTryAutoplayRefillBeforeStopping
+import com.music.bitchord.ko.koOnCachedPrefixSettled // [KO] fix1119 F1
 import com.music.bitchord.ko.koCatchUpStandbyQueue // [KO] review V-3
 import com.music.bitchord.ko.koSwapFromStillCurrent // [KO] review V-4
 import com.music.bitchord.ko.KoSilenceReresolve // [KO] SW7ps-1
@@ -2402,6 +2403,7 @@ class PlaybackService : MediaLibraryService() {
                 }
                 StreamChoice.consumeExpired(videoId)
             }
+            if (serving != null && com.music.bitchord.ko.KoCachedPrefixStart.refusesSplice(videoId, QualityUpgrade.cacheTag(dataSpec.uri) != null || dataSpec.uri.getQueryParameter(AudioCache.WATCH_READ_PARAM) != null)) throw java.io.IOException("cold-prefix: $videoId moved onto the addon's own rendition; its YouTube entry is not continued by it") // [KO] fix1119 F1
             if (serving != null) {
                 // What the stream claims to be, restated on every open rather
                 // than only on the one that chose it.
@@ -2728,6 +2730,7 @@ class PlaybackService : MediaLibraryService() {
                 refreshArmedIncomingLossless()
             }
         }
+        scope.launch { com.music.bitchord.ko.KoCachedPrefixStart.settled.collect { koOnCachedPrefixSettled(it) } } // [KO] fix1119 F1
 
         mediaSession = MediaLibrarySession.Builder(
             this,

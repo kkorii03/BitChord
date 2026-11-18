@@ -45,7 +45,7 @@ class KoColdStartTest {
         StreamChoice.forget(id)
         Downloads.setSavedMetadata(emptyMap())
         launched.clear()
-        KoCachedPrefixStart.behind = { videoId, _ -> launched += videoId }
+        KoCachedPrefixStart.behind = { videoId, _, _ -> launched += videoId }
         DirectSourceGate.onPlaying(setOf(id))
     }
 

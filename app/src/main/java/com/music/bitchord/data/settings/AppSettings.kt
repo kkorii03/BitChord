@@ -1394,6 +1394,7 @@ object AppSettings {
             }.getOrNull()
         }
         refresh()
+        runCatching { com.music.bitchord.ko.KoDeadClients.onTransport(com.music.bitchord.ko.KoNetworkPolicy.transportKind(manager.getNetworkCapabilities(manager.activeNetwork))) } // [KO] fix1119 F3
         runCatching {
             manager.registerDefaultNetworkCallback(
                 object : ConnectivityManager.NetworkCallback() {
@@ -1405,7 +1406,10 @@ object AppSettings {
                     override fun onCapabilitiesChanged(
                         network: Network,
                         capabilities: NetworkCapabilities,
-                    ) = refresh()
+                    ) {
+                        com.music.bitchord.ko.KoDeadClients.onTransport(com.music.bitchord.ko.KoNetworkPolicy.transportKind(capabilities)) // [KO] fix1119 F3
+                        refresh()
+                    }
                 },
             )
         }

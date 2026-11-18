@@ -32,6 +32,23 @@ object KoNetworkPolicy {
             captivePortal = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL) == true,
         )
     }
+
+    /** [KO] fix1119 F3: the transport [KoDeadClients] keys its stored memo by. */
+    fun transportKind(capabilities: NetworkCapabilities?): String = transportKindOf(
+        known = capabilities != null,
+        wifi = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true,
+        cellular = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true,
+        ethernet = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true,
+    )
+}
+
+/** Pure half of [KoNetworkPolicy.transportKind]; empty while there is no network to name. */
+internal fun transportKindOf(known: Boolean, wifi: Boolean, cellular: Boolean, ethernet: Boolean): String = when {
+    !known -> ""
+    wifi -> "wifi"
+    cellular -> "cell"
+    ethernet -> "eth"
+    else -> "other"
 }
 
 /**
