@@ -40,6 +40,8 @@ import org.junit.Test
  * exist (this class does not compile), and the source checks fail.
  */
 class KoReviewFix1119Test {
+    @get:org.junit.Rule val koTimeout: org.junit.rules.Timeout = org.junit.rules.Timeout.seconds(60) // a hang fails with its stack instead of stalling CI
+
 
     private val id = "fix1119-row"
     private val target = TrackMatcher.Target("Cold One", "Eljohnzc", durationSec = 220)

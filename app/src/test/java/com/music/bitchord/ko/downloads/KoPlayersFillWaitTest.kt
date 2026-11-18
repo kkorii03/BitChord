@@ -28,6 +28,8 @@ import org.junit.Test
  * waited with it. The wait makes no request: it now runs before the slot.
  */
 class KoPlayersFillWaitTest {
+    @get:org.junit.Rule val koTimeout: org.junit.rules.Timeout = org.junit.rules.Timeout.seconds(60) // a hang fails with its stack instead of stalling CI
+
 
     private val host = "hr-front.example.dev"
 

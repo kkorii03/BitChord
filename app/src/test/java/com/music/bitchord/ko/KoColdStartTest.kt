@@ -30,6 +30,8 @@ import org.junit.Test
  * settleDirectEntry, which went straight to the race.
  */
 class KoColdStartTest {
+    @get:org.junit.Rule val koTimeout: org.junit.rules.Timeout = org.junit.rules.Timeout.seconds(60) // a hang fails with its stack instead of stalling CI
+
 
     private val id = "cold-prefix-1"
     private val target = TrackMatcher.Target("Cold One", "Eljohnzc", durationSec = 220)
