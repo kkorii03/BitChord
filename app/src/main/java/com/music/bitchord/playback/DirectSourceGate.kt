@@ -135,6 +135,7 @@ object DirectSourceGate {
         com.music.bitchord.ko.KoNextUrlAhead.keepOnly(now.playing + listOfNotNull(now.next)) // [KO] UPG-speed 2
         com.music.bitchord.ko.KoDirectLead.keepOnly(now.playing, now.next) // [KO] direct-lead
         com.music.bitchord.ko.KoLateDirectProof.keepOnly(now.next?.takeIf { it !in now.playing }) // [KO] nextprep fix 3
+        com.music.bitchord.ko.KoCachedPrefixStart.keepOnly(now.playing) // [KO] cold2
     }
 
     private fun Open.admits(mediaId: String) = mediaId in playing || mediaId == next
@@ -492,8 +493,11 @@ object DirectSourceGate {
      * Called only once the YouTube URL is in hand, because that walk is what
      * sets the bitrate a candidate has to beat.
      */
-    fun startedOnYouTube(videoId: String, target: TrackMatcher.Target) {
-        val running = stillLooking(videoId)
+    fun startedOnYouTube(
+        videoId: String,
+        target: TrackMatcher.Target,
+        running: Deferred<SourceStream?>? = stillLooking(videoId), // [KO] cold2: an answered lookup is no longer in the table
+    ) {
         val pending = QualityUpgrade.settledForLess(
             mediaId = videoId,
             target = target,

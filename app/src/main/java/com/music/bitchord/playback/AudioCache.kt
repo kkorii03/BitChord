@@ -1610,7 +1610,7 @@ object AudioCache {
      * Runs on the loader thread, which the resolver blocks in exactly the same
      * way on a direct-mode miss.
      */
-    private fun settleDirectEntry(uri: Uri) {
+    private fun settleDirectEntry(uri: Uri, position: Long = 0L) {
         if (uri.scheme != "bitchord" || uri.authority != "watch") return
         val videoId = uri.getQueryParameter("v") ?: return
         // A rendition of its own (an upgrade, a revert), the watch's capped
@@ -1626,6 +1626,8 @@ object AudioCache {
         if (!DirectSourceGate.isActive() || StreamChoice.of(videoId) != null) return
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         if (!heldByYouTube(key) || isOffline()) return
+        // [KO] cold2: the row the listener waits on plays YouTube's cached bytes now; the settle runs behind it.
+        if (com.music.bitchord.ko.KoCachedPrefixStart.takesOver(videoId, SourceResolver.targetIn(uri), runCatching { cache.getCachedLength(key, position, com.music.bitchord.ko.KoCachedPrefixStart.MIN_AHEAD_BYTES) }.getOrDefault(0L), isComplete(key))) return
         try {
             runBlocking<Unit>(TrackLog.about(videoId)) {
                 // The same hold the resolver applies, so a track prepared early
@@ -1694,7 +1696,7 @@ object AudioCache {
                 inner.addTransferListener(transferListener)
 
             override fun open(dataSpec: DataSpec): Long {
-                settleDirectEntry(dataSpec.uri)
+                settleDirectEntry(dataSpec.uri, dataSpec.position) // [KO] cold2: where the read starts
                 yieldAnalysisHeadToPlayback(cacheKeyOf(dataSpec.uri), dataSpec.uri.getQueryParameter("v"))
                 koOpened = dataSpec.uri; koLossless.seedForPlayer(dataSpec.uri) // [KO] dupdl: the verify head, not byte 0 again
                 return inner.open(dataSpec)

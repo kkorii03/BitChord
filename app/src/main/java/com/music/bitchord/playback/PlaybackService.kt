@@ -1385,7 +1385,8 @@ class PlaybackService : MediaLibraryService() {
                     ) ?: return@let
                     TrackLog.d(
                         "BitChord",
-                        "TIMING first audio: ${tookMs}ms since track selected",
+                        "TIMING first audio: ${tookMs}ms since track selected" +
+                            com.music.bitchord.ko.KoFirstAudioSplit.suffix(selectedAt, selectedAt + tookMs), // [KO] cold2
                         about = exoPlayer.currentMediaItem?.mediaId,
                     )
                     if (summarySong?.videoId == exoPlayer.currentMediaItem?.mediaId) {
@@ -1492,6 +1493,7 @@ class PlaybackService : MediaLibraryService() {
                 "cmd: ${if (playWhenReady) "resume" else "pause"} from ${playReason(reason)}",
                 about = player?.currentMediaItem?.mediaId,
             )
+            if (playWhenReady) com.music.bitchord.ko.KoFirstAudioSplit.pressed(trackSelectedAt, SystemClock.elapsedRealtime()) // [KO] cold2
             // Something started the phone's own player while a receiver is the
             // speaker — an internal path, since the session player's door
             // already sends a listener's play to the receiver. The phone goes
