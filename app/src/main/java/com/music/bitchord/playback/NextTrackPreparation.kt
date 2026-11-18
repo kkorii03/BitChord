@@ -449,6 +449,7 @@ internal class NextTrackPreparation(
                                     fromFile = found.fromFile,
                                     source = found.source,
                                     searchedAs = found.searchedAs,
+                                    recheckOverride = found.recheckOverride, // [KO] spaghetti-3
                                 )
                                 // Keep the free answer even if the paid gate or
                                 // the step's deadline cancels the rest below.

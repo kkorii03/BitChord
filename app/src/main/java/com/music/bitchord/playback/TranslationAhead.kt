@@ -79,6 +79,9 @@ internal object TranslationAhead {
 
     private fun wasPrepared(videoId: String): Boolean = synchronized(prepared) { videoId in prepared }
 
+    /** [KO] spaghetti-3: a downloaded file's own sheet for [lyricsForPrep]; a seam for tests, as LyricsController.fileLyrics is. */
+    internal var fileLyrics: suspend (Context, String) -> EmbeddedLyrics.Embedded? = EmbeddedLyrics::withSource
+
     /** The language the translate button would ask for, worked out the way the player does. */
     fun targetLanguage(context: Context): String {
         // [LocaleTags.translationTarget] is the same resolver the player uses,
@@ -170,18 +173,21 @@ internal object TranslationAhead {
                     lines = override.lines,
                     source = override.source,
                     searchedAs = null,
-                    fromFile = true,
+                    // [KO] spaghetti-3: the service's and the screen's values (PlaybackService readSaved,
+                    // LyricsController's KoLockSheet.chose): an override on a streamed song is not a file's.
+                    fromFile = song.localUri != null,
                     recheckOverride = override.kind == LyricsOverrideFile.Kind.RECHECK,
                 )
             }
             song.localUri?.let { uri ->
-                val embedded = EmbeddedLyrics.withSource(app, uri)
+                val embedded = fileLyrics(app, uri) // [KO] spaghetti-3: seam
                 if (embedded != null && embedded.lines.any { it.text.isNotBlank() }) {
                     return AheadLyrics(
                         lines = embedded.lines,
                         source = embedded.source,
                         searchedAs = null,
                         fromFile = true,
+                        recheckOverride = true, // [KO] spaghetti-3: the screen re-checks a file's own sheet, as the service reads it
                     )
                 }
             }

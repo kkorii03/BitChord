@@ -1791,8 +1791,9 @@ object Downloads {
                 reservedName = name
                 val manifest = route.offlineHls
                 if (manifest != null) {
-                    val onSegment: (Long, Long) -> Unit = { written, total ->
-                        val fraction = written.toFloat() / total
+                    val segmentGate = com.music.bitchord.ko.downloads.KoPercentGate() // [KO] OPT2 F4
+                    val onSegment: (Long, Long) -> Unit = onSegment@{ written, total ->
+                        val fraction = segmentGate.next(written, total) ?: return@onSegment // [KO] OPT2 F4
                         _active.update { it + (id to DownloadState.Running(fraction)) }
                         DownloadSession.running(id, fraction)
                     }
@@ -1838,8 +1839,9 @@ object Downloads {
                 val destination = DownloadStore.begin(context, name, route.mimeType)
                 pending = destination
                 destination.openStream().use { sink ->
-                    route.write(sink) { written, total ->
-                        val fraction = written.toFloat() / total
+                    val progressGate = com.music.bitchord.ko.downloads.KoPercentGate() // [KO] OPT2 F4
+                    route.write(sink) progress@{ written, total ->
+                        val fraction = progressGate.next(written, total) ?: return@progress // [KO] OPT2 F4
                         _active.update { it + (id to DownloadState.Running(fraction)) }
                         DownloadSession.running(id, fraction)
                     }

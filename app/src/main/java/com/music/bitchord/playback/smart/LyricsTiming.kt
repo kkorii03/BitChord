@@ -4208,9 +4208,19 @@ object LyricsTiming {
         fromFile: Boolean,
         source: LyricsSource?,
         searchedAs: Pair<String, String>?,
+        /** [KO] spaghetti-3: a re-check wrote this sheet for the file, so its stored timing applies (KoLockSheet.Sheet). */
+        recheckOverride: Boolean = false,
     ): Timing? {
         val query = CoverTitles.lyricsQuery(song)
-        val timeable = !fromFile || query.isVideo
+        // [KO] spaghetti-3: the service's rule (KoLockSheet.Sheet, NextTrackPreparation.timed); timed = true as
+        // timed() passes it, so a video's measure gate below is what it was. Default recheckOverride: today's result.
+        val timeable = com.music.bitchord.playback.LocalTimingPolicy.downloadedTimingTimeable(
+            timed = true,
+            fromFile = fromFile,
+            isVideo = query.isVideo,
+            recheckOverride = recheckOverride,
+            sourceTimedToVideo = timedToVideo(source),
+        )
         val recordTimed = timeable && (!fromFile || source != null) &&
             !timedToVideo(source)
         // A cover is an upload even when its queue row lost the video flag —
