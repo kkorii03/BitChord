@@ -113,7 +113,14 @@ class KoDirectLeadTest {
         KoDirectLead.onTick(this, current, next, next, 58_000) { target }
         AppSettings.lowPower.value = false
         AppSettings.meteredConnection.value = true
-        KoDirectLead.onTick(this, current, next, next, 58_000) { target }
+        // [KO] metered at a lossless ceiling: a metered network below lossless still starts nothing.
+        val cellular = AppSettings.audioQualityCellular.value
+        AppSettings.audioQualityCellular.value = com.music.bitchord.data.settings.AudioQuality.HIGH
+        try {
+            KoDirectLead.onTick(this, current, next, next, 58_000) { target }
+        } finally {
+            AppSettings.audioQualityCellular.value = cellular
+        }
         AppSettings.meteredConnection.value = false
         // A song version streams another video; its proof would be for the wrong recording.
         KoDirectLead.onTick(this, current, next, "lead-other-video", 58_000) { target }

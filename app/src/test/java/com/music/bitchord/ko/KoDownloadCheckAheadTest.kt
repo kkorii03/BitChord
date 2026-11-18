@@ -46,7 +46,14 @@ class KoDownloadCheckAheadTest {
     @Test
     fun savingPowerOrAMeteredConnectionLeavesTheCheckToTheStart() {
         assertTrue(KoDownloadCheckAhead.allowed(metered = false, lowPower = false))
-        assertFalse(KoDownloadCheckAhead.allowed(metered = true, lowPower = false))
+        // [KO] metered at a lossless ceiling: metered below lossless leaves it to the start.
+        val cellular = com.music.bitchord.data.settings.AppSettings.audioQualityCellular.value
+        com.music.bitchord.data.settings.AppSettings.audioQualityCellular.value = com.music.bitchord.data.settings.AudioQuality.HIGH
+        try {
+            assertFalse(KoDownloadCheckAhead.allowed(metered = true, lowPower = false))
+        } finally {
+            com.music.bitchord.data.settings.AppSettings.audioQualityCellular.value = cellular
+        }
         assertFalse(KoDownloadCheckAhead.allowed(metered = false, lowPower = true))
     }
 
