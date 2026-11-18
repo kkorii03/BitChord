@@ -49,7 +49,7 @@ internal object NextPrepLog {
         val manualMs = timing?.manualMs ?: 0L
         return LyricsFacts(
             provider = source?.label ?: "file",
-            sync = TrackDiagnostics.syncLabel(baseLabel, manualMs),
+            sync = TrackDiagnostics.syncLabel(baseLabel, manualMs, refined = timing != null && (timing.refineMs != 0L || timing.refineSlopePerMin != 0.0)), // [KO] log1819
             shiftMs = null,
             matchPercent = (base as? LyricsTiming.Adjustment.Mapped)?.matchPercent,
             manualOffsetMs = manualMs,

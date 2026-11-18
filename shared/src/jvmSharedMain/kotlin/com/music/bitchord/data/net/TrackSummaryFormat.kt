@@ -19,7 +19,8 @@ object TrackSummaryFormat {
      *   first sound, or null when sound never arrived.
      * @param lyrics the provider that supplied the shown lines, `file` for a
      *   local file's own, or `none`.
-     * @param sync `measured`, `ai`, `manual`, `verified` or `none`.
+     * @param sync `measured`, `ai`, `manual`, `verified`, `refined` (no base, the
+     *   heard words moved the provider's own lines) or `none`.
      * @param shiftMs how far the first line moved; for `verified`, the measured
      *   median that was small enough to leave the lines in place. Null when
      *   nothing was measured or moved.

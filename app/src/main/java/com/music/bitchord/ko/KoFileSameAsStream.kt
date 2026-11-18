@@ -53,13 +53,39 @@ object KoFileSameAsStream {
         return uri != null && noted == key(uri, version())
     }
 
-    /** One straight line through the start: the same master, cut the same way. */
+    /**
+     * One straight line through the start: the same master, cut the same way. A few
+     * milliseconds is the alignment's own grain (11-18 Espresso kIft-LUHHVA: `match=100%
+     * offset=1`), far under anything a lyric line shows.
+     */
     internal fun identical(offsetMs: Long?, rate: Double?): Boolean =
-        offsetMs == 0L && rate != null && rate.isFinite() && abs(rate - 1.0) <= RATE_SLACK
+        offsetMs != null && abs(offsetMs) <= OFFSET_SLACK_MS &&
+            rate != null && rate.isFinite() && abs(rate - 1.0) <= RATE_SLACK
 
-    /** Both answers on YouTube's clock, the file playing, and the file heard to be the stream. */
+    /**
+     * The file playing and heard to be the stream, with the answer on YouTube's clock
+     * on both sides, or untagged. An untagged answer is read as made on the upload
+     * wherever the upload plays ([LyricsTiming.timing] keeps it raw there); this file is
+     * that upload's sound, whatever source pair it was fetched under (log1819: 11-18
+     * Espresso and 11-19 Dance The Night `sibling=untagged` right after the file was
+     * heard at offset 0-1 ms, the stream's answer applied three seconds before).
+     */
     internal fun carries(aiClock: LyricsTiming.Clock, playing: LyricsTiming.Clock, playsFile: Boolean, heardSame: Boolean): Boolean =
-        playsFile && heardSame && aiClock == LyricsTiming.Clock.YouTube && playing == LyricsTiming.Clock.YouTube
+        playsFile && heardSame && when (aiClock) {
+            LyricsTiming.Clock.YouTube -> playing == LyricsTiming.Clock.YouTube
+            LyricsTiming.Clock.Unknown -> playing !is LyricsTiming.Clock.Unknown
+            else -> false
+        }
+
+    /**
+     * Whether [LyricsTiming.timing] tries the other source's answer: a substitute clock
+     * maps it (and [LyricsTiming] converts or drops it), or [sameAsStream] says this
+     * file was heard to be the stream ([carries]).
+     */
+    internal fun siblingTried(aiClock: LyricsTiming.Clock, playing: LyricsTiming.Clock, sameAsStream: () -> Boolean): Boolean =
+        (aiClock !is LyricsTiming.Clock.Unknown &&
+            (aiClock is LyricsTiming.Clock.Substitute || playing is LyricsTiming.Clock.Substitute)) ||
+            sameAsStream()
 
     /** [carries] for [videoId] as [LyricsTiming.timing] sees it, playing [audioSource]. */
     fun carries(
@@ -82,5 +108,8 @@ object KoFileSameAsStream {
 
     /** 30 ms over five minutes. */
     private const val RATE_SLACK = 1e-4
+
+    /** As much again at the start: the rate's slack over a whole song. */
+    private const val OFFSET_SLACK_MS = 30L
     private const val MAX_FILES = 256
 }

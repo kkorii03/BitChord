@@ -1653,7 +1653,7 @@ class LyricsController(
             sync = if (verifiedShift != null) {
                 "verified"
             } else {
-                TrackDiagnostics.syncLabel(baseLabel, manualMs)
+                TrackDiagnostics.syncLabel(baseLabel, manualMs, refined = refineShift != 0L) // [KO] log1819
             },
             shiftMs = verifiedShift ?: shiftMs,
             matchPercent = matchPercent,

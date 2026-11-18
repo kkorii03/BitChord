@@ -73,6 +73,24 @@ class TrackDiagnosticsPreparedTest {
     }
 
     @Test
+    fun `lines the heard words moved with no base are refined, not none`() {
+        // log1819: 11-18 DK_0jXPuIr0 `lyrics-sync: ... base=none ... refine=-698ms` was
+        // summed up as `sync=none shift=-`; Rolling in the Deep 4ujBQOzs6Lw likewise after
+        // base-choice picked the provider's own clock over the AI answer on the whole song.
+        val refined = LyricsTiming.Timing(base = null, manualMs = 0L, refineMs = -698L)
+        assertEquals("refined", NextPrepLog.summaryFacts(LyricsSource.LRCLIB, true, refined)?.sync)
+        val sloped = LyricsTiming.Timing(base = null, manualMs = 0L, refineSlopePerMin = -474.0)
+        assertEquals("refined", NextPrepLog.summaryFacts(LyricsSource.LRCLIB, true, sloped)?.sync)
+        assertEquals("refined", TrackDiagnostics.syncLabel("none", 0L, refined = true))
+        // A base or the listener's own correction still names itself.
+        assertEquals("ai", TrackDiagnostics.syncLabel("ai", 0L, refined = true))
+        assertEquals("manual", TrackDiagnostics.syncLabel("none", 250L, refined = true))
+        assertEquals("none", TrackDiagnostics.syncLabel("none", 0L))
+        val screen = source("app/src/main/java/com/music/bitchord/ui/LyricsController.kt")
+        assertTrue(screen.contains("TrackDiagnostics.syncLabel(baseLabel, manualMs, refined = refineShift != 0L)"))
+    }
+
+    @Test
     fun `the service writes next-prep's fact and the summary reads it`() {
         val prep = source("app/src/main/java/com/music/bitchord/playback/NextTrackPreparation.kt")
         assertTrue(

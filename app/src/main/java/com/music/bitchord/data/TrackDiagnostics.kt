@@ -160,10 +160,11 @@ object TrackDiagnostics {
     }
 
     /** Which kind of timing is on screen, in the summary's vocabulary. */
-    fun syncLabel(base: String, manualOffsetMs: Long): String = when {
+    fun syncLabel(base: String, manualOffsetMs: Long, refined: Boolean = false): String = when {
         manualOffsetMs != 0L && base == "none" -> "manual"
         base == "ai" -> "ai"
         base == "measured" -> "measured"
+        refined -> "refined" // [KO] log1819: the heard words moved the provider's own clock
         else -> "none"
     }
 

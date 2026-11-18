@@ -812,8 +812,10 @@ internal class NextTrackPreparation(
                 .setDeleteAfterDelivery(true)
                 .send()
         }.getOrNull() ?: return false
+        val startedId = player.currentMediaItem?.mediaId
         return try {
-            withTimeoutOrNull(waitMs + AI_GATE_GRACE_MS) { reached.await() } != null
+            withTimeoutOrNull(waitMs + AI_GATE_GRACE_MS) { reached.await() } != null ||
+                currentPlayer().let { now -> com.music.bitchord.ko.KoAiGateAfterSwap.openAfterTimeout(startedId, now?.currentMediaItem?.mediaId, now?.currentPosition ?: 0L) } // [KO] log1819
         } finally {
             message.cancel()
         }
