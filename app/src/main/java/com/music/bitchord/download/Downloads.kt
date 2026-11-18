@@ -1851,6 +1851,7 @@ object Downloads {
                 // Publish only after metadata is part of the file. This keeps
                 // concurrent album workers from exposing untagged tracks.
                 MediaTagger.embed(context, destination.tagUri, track, route.extension, words, cover)
+                com.music.bitchord.ko.downloads.KoFlacMeasure.refusedLowerFile(context, setOf(song.videoId, track.videoId), destination.tagUri, route.downloadFormat, plan.hq)?.let { error(it) } // [KO] HQ-DOWN
                 val artworkUri = MediaTagger.persistArtwork(context, track.thumbnailUrl, cover)
                 val savedUri = destination.commit()
                 pending = null

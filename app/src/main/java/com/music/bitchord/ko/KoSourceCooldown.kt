@@ -161,6 +161,13 @@ internal object KoSourceCooldown {
         return state.untilMs > nowMs
     }
 
+    /** How long [configId]'s rest (failure or unmeasurable) still runs; 0 when it is not resting. */
+    internal fun restLeftMs(configId: String, nowMs: Long = System.currentTimeMillis()): Long {
+        val failure = states[configId]?.untilMs ?: 0L
+        val parked = unmeasurable[configId]?.let { synchronized(it) { it.untilMs } } ?: 0L
+        return (maxOf(failure, parked) - nowMs).coerceAtLeast(0L)
+    }
+
     /**
      * [restUntilMs] is the host's own rest expiry when there is one, so a
      * sleeping gateway that wakes in a minute is not written off for

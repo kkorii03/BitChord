@@ -193,6 +193,37 @@ object HqQuality {
         return candidateBetter || (!currentBetter && candidateEarlier)
     }
 
+    /**
+     * [KO] HQ-DOWN: whether [candidate] would be a step down from [current], a
+     * copy whose depth and rate were measured (the decoder, or a file's
+     * STREAMINFO).
+     *
+     * 11-18 16:31 Bones: a saved 24-bit/48 kHz FLAC was playing and the look
+     * logged `hq-tier: Hi-Res 24-bit -> Lossless 16-bit`, then prefetched and
+     * served the addon's 16/44.1 copy for the next play. The rung ladder alone
+     * cannot stop that: a lossless row that has not been read yet states no
+     * depth and lands on [HqTier.LOSSLESS_16], or is promoted by its hi-res flag.
+     *
+     * True when the candidate is lossy against a lossless [current], when a
+     * measured depth or rate is lower, or when [current] is above 16-bit/48 kHz
+     * and the candidate has not stated both. Atmos keeps its own rule, and an
+     * unknown or lossy [current] is never protected here.
+     */
+    fun isDowngradeFrom(current: StreamFormat?, candidate: StreamFormat?): Boolean {
+        if (current == null || candidate == null) return false
+        if (current.isDolbyAtmos || candidate.isDolbyAtmos) return false
+        if (current.isLossless != true) return false
+        if (candidate.isLossless == false) return true
+        val oldBits = current.bitDepth
+        val oldRate = current.sampleRateHz
+        val newBits = candidate.bitDepth
+        val newRate = candidate.sampleRateHz
+        if (oldBits != null && newBits != null && newBits < oldBits) return true
+        if (oldRate != null && newRate != null && newRate < oldRate) return true
+        val oldHiRes = (oldBits ?: 0) > 16 || (oldRate ?: 0) > BASE_RATES_HZ.last
+        return oldHiRes && (newBits == null || newRate == null)
+    }
+
     /** A short label for logs: the rung and, when stated, the rate. */
     fun label(format: StreamFormat?): String {
         val tier = tierOf(format)

@@ -7267,6 +7267,7 @@ class PlaybackService : MediaLibraryService() {
                         var verified: HqVerificationStore.Verified? = null
                         uri?.let { SourceResolver.targetIn(it) }?.let { target ->
                             val currentTier = currentTierFor(mediaId)
+                            if (com.music.bitchord.ko.KoQualityUpgrade.refusesDowngrade(mediaId, target.title, currentFormatForNotice(mediaId), shelved.format)) { QualityUpgrade.forget(mediaId); return@launch } // [KO] HQ-DOWN
                             // Only a lossless answer is used here — see
                             // [HqQuality.worthProving]. A lossy one used to be
                             // proved for an answer nothing reads.
@@ -7428,6 +7429,7 @@ class PlaybackService : MediaLibraryService() {
                     var verified: HqVerificationStore.Verified? = null
                     uri?.let { SourceResolver.targetIn(it) }?.let { target ->
                         val currentTier = currentTierFor(mediaId)
+                        if (com.music.bitchord.ko.KoQualityUpgrade.refusesDowngrade(mediaId, target.title, currentFormatForNotice(mediaId), better.format)) { QualityUpgrade.forget(mediaId); return@launch } // [KO] HQ-DOWN
                         // Only a lossless answer is used here: [swapLosslessMidSong]
                         // and [prefetchLosslessForNextPlay] both refuse anything
                         // else, so proving a lossy candidate cost verify=34756ms

@@ -33,7 +33,7 @@ internal object KoDownloadPipeline {
     private const val TAG = "BitChord"
 
     /** The pass has parked this host until the time it named. */
-    class AutoDownloadDeferred(val waitMs: Long) : Exception("server busy")
+    class AutoDownloadDeferred(val waitMs: Long, message: String = "server busy") : Exception(message)
 
     /** What an automatic download's exception means to the high-quality pass. */
     fun automaticFailure(error: Exception): DownloadFailure {
@@ -641,7 +641,7 @@ internal object KoDownloadPipeline {
         hqTrackId = hq?.trackId,
         hqOffsetMs = hq?.offsetMs,
         hqRate = hq?.rate,
-        hqTier = hq?.tier?.name,
+        hqTier = hq?.tier?.name ?: KoFlacMeasure.measuredTierName(uri, downloadFormat), // [KO] HQ-DOWN
         hqSourceTitle = hq?.sourceTitle ?: sourceTitle,
         hqSourceArtist = hq?.sourceArtist ?: sourceArtist,
         recordingVerified = recordingVerified,

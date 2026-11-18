@@ -56,6 +56,16 @@ internal object KoDirectLead {
     const val LEAD_MS = 60_000L
 
     /**
+     * Each addon's search-and-open budget for the lead only. The window keeps
+     * [SOURCE_LOOKUP_TIMEOUT_MS] (its standby has no room for more); 11-18 log:
+     * 7 of 34 Private Hi-Res searches timed out at exactly 4 s and answered the
+     * re-look 15-19 s after the search began. Started at T-55..60, 15 s plus a
+     * 17.6 s proof still ends near the window's T-25, and a timeout counts once
+     * toward the rest exactly as a 4 s one does.
+     */
+    const val LEAD_SOURCE_TIMEOUT_MS = 15_000L
+
+    /**
      * The pair already led. Once only: a timed-out search is a failure toward
      * the addon's 30-minute rest (two in a row), and an empty or refused answer
      * is in the search memo and the verdict store, so asking again buys nothing.
@@ -164,7 +174,15 @@ internal object KoDirectLead {
         return KoDirectHqAhead.lookup(
             target.title,
             null,
-            addons = { SourceResolver.directStream(target, mediaId = videoId, verify = verify, lengthOf = lengthOf) },
+            addons = {
+                SourceResolver.directStream(
+                    target,
+                    mediaId = videoId,
+                    verify = verify,
+                    lengthOf = lengthOf,
+                    sourceTimeoutMs = LEAD_SOURCE_TIMEOUT_MS,
+                )
+            },
             hq = suspend { KoDirectHqAhead.stream(target, verify) }
                 .takeIf { KoDirectHqAhead.wanted(videoId, target, nextNotPlaying = true, hasProof = true) },
         )

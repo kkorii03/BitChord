@@ -549,6 +549,36 @@ class DirectSourceGateTest {
         }
     }
 
+    /**
+     * 11-18: the 60 s-ahead lead timed out on 7 of 34 lookups at the 4 s budget
+     * that the window and direct start need. Only the lead gets the longer one.
+     */
+    @Test
+    fun theLeadsLongerBudgetFindsASlowSourceTheDefaultMisses() = runBlocking<Unit> {
+        install(
+            listOf(
+                FakeSource("Slow", listOf(row("slow-1", "Slow Answer")), searchDelayMs = 4_300),
+                FakeSource("YouTube", kind = SourceKind.YOUTUBE),
+            ),
+        )
+        try {
+            assertNull(SourceResolver.directStream(target("Slow Answer")) { true })
+            SourceResolver.SourceCooldown.resetForTest()
+            SourceResolver.clearSearchAnswers()
+            val lead = SourceResolver.directStream(
+                target("Slow Answer"),
+                sourceTimeoutMs = com.music.bitchord.ko.KoDirectLead.LEAD_SOURCE_TIMEOUT_MS,
+            ) { true }
+            assertEquals("https://Slow/slow-1", lead?.url)
+        } finally {
+            install(emptyList())
+        }
+        val root = File(".").canonicalFile
+        val leadSource = listOf("app/", "").map { File(root, "${it}src/main/java/com/music/bitchord/ko/KoDirectLead.kt") }
+            .first { it.exists() }.readText()
+        assertTrue(leadSource.contains("sourceTimeoutMs = LEAD_SOURCE_TIMEOUT_MS"))
+    }
+
     private fun target() = TrackMatcher.Target("Golden Boy", "Eljohnzc", durationSec = 200)
 
     /** A row for [title] that the matcher accepts as the original recording. */

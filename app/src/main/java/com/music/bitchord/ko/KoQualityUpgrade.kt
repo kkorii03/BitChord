@@ -638,6 +638,24 @@ internal object KoQualityUpgrade {
             )
 
     /**
+     * [KO] HQ-DOWN: the automatic look's last gate before a swap or a next-play
+     * prefetch. [playing] is what the decoder measures now (a saved file the look
+     * outlived included), not the format the look began against; see
+     * [HqQuality.isDowngradeFrom]. A refusal is the look's answer for this play
+     * ([QualityUpgrade.asked]), so the same copy is not searched and refused again.
+     */
+    fun refusesDowngrade(mediaId: String, title: String, playing: StreamFormat?, candidate: StreamFormat): Boolean {
+        if (!HqQuality.isDowngradeFrom(playing, candidate)) return false
+        QualityUpgrade.asked += mediaId
+        TrackLog.i(
+            TAG,
+            "hq-tier: $title refused downgrade ${playing?.summary} -> ${candidate.summary}; keeping what plays",
+            mediaId,
+        )
+        return true
+    }
+
+    /**
      * The best lossy copy a look passed over while it waited for a lossless one.
      *
      * 11-07, twelve hours of the phone's logs: 16 of 91 songs played to their end

@@ -187,21 +187,59 @@ internal fun skipsResting(
  * the verdict, and this asks only that source for that row.
  *
  * Null when the source is disabled, no longer configured, is YouTube
- * itself, or cannot serve the row right now. The caller keeps the old file
- * rather than falling back to an unverified search.
+ * itself, or answered that it has no stream for the row. The caller keeps the
+ * old file rather than falling back to an unverified search.
+ *
+ * A source that is resting (a 503 with Retry-After, two failures) or whose
+ * open failed with a fault rather than a miss throws
+ * [KoDownloadPipeline.AutoDownloadDeferred] instead: the pair is still the
+ * proved one, so the download fails as transient, keeps the pair for Retry and
+ * the automatic pass waits out the rest (its own attempt cap still ends it).
  */
 internal suspend fun forDownloadVerified(
     sourceConfigId: String,
     trackId: String,
     request: StreamRequest = SourceResolver.requestForDownload(),
 ): SourceStream? {
-    if (sourceConfigId.isBlank() || trackId.isBlank()) return null
+    if (sourceConfigId.isBlank() || trackId.isBlank()) return verifiedRefused(trackId, "blank-id")
     val source = SourceRegistry.activeForDownload()
         .firstOrNull { it.configId == sourceConfigId }
-        ?: return null
-    if (source.kind == SourceKind.YOUTUBE) return null
-    if (SourceResolver.SourceCooldown.isResting(source.configId)) return null
-    val opened = SourceResolver.attemptForKo(source) { source.stream(trackId, request) } ?: return null
+        ?: return verifiedRefused(trackId, "not-downloadable")
+    if (source.kind == SourceKind.YOUTUBE) return verifiedRefused(trackId, "youtube")
+    if (SourceResolver.SourceCooldown.isResting(source.configId)) {
+        throw verifiedDeferred(trackId, source.configId, "resting")
+    }
+    val markBefore = SourceResolver.SourceCooldown.failureMark(source.configId)
+    val opened = SourceResolver.attemptForKo(source) { source.stream(trackId, request) }
+    if (opened == null) {
+        // A raised failure mark is a fault (503, transport, 5xx), not the
+        // source saying it lacks the row; only a miss is final for the pair.
+        if (SourceResolver.SourceCooldown.failureMark(source.configId) != markBefore) {
+            throw verifiedDeferred(trackId, source.configId, "open-failed")
+        }
+        return verifiedRefused(trackId, "no-stream")
+    }
     SourceResolver.SourceCooldown.succeeded(source.configId)
     return opened.copy(sourceConfigId = source.configId, trackId = trackId)
 }
+
+private fun verifiedRefused(trackId: String, reason: String): SourceStream? {
+    TrackLog.w("BitChord", "download-verified: $trackId refused reason=$reason")
+    return null
+}
+
+private fun verifiedDeferred(
+    trackId: String,
+    configId: String,
+    reason: String,
+): com.music.bitchord.ko.downloads.KoDownloadPipeline.AutoDownloadDeferred {
+    val waitMs = SourceResolver.SourceCooldown.restLeftMs(configId).coerceAtLeast(VERIFIED_RETRY_MS)
+    TrackLog.w("BitChord", "download-verified: $trackId deferred reason=$reason waitMs=$waitMs")
+    return com.music.bitchord.ko.downloads.KoDownloadPipeline.AutoDownloadDeferred(
+        waitMs,
+        "고음질 음원 출처가 잠시 응답하지 않습니다. 잠시 후 다시 시도하십시오",
+    )
+}
+
+/** The shortest wait before a deferred verified pair is asked again (a 503's usual Retry-After). */
+private const val VERIFIED_RETRY_MS = 60_000L

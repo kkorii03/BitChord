@@ -2847,7 +2847,8 @@ object AudioCache {
     ): Pair<Long, String?> {
         val upstream = upstreamFactory ?: return 0L to null
 
-        val source = readAheadCacheFactory(upstream)
+        var rangeTotal = 0L // [KO] AUD-LEN
+        val source = readAheadCacheFactory(com.music.bitchord.ko.KoRangeTotal.noting(upstream) { rangeTotal = it }) // [KO] AUD-LEN
             .apply { if (pinKey) setCacheKeyFactory { cacheKey } }
             .createDataSource()
         val spec = DataSpec.Builder()
@@ -2872,6 +2873,10 @@ object AudioCache {
                 }
             }
         }.exceptionOrNull()
+        // [KO] AUD-LEN: a bounded warm leaves no length; the server's own 206 total does.
+        if (rangeTotal > 0 && uri.scheme.let { it == "https" || it == "http" }) {
+            recordContentLength(if (pinKey) cacheKey else keyFactory.buildCacheKey(DataSpec(uri)), rangeTotal)
+        }
         return length to failure?.message
     }
 }

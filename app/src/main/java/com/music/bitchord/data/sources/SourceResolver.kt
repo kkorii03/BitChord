@@ -11,6 +11,7 @@ import com.music.bitchord.ko.DOWNLOAD_SOURCE_TIMEOUT_MS
 import com.music.bitchord.ko.KoRefusedRows
 import com.music.bitchord.ko.MANUAL_RESTING_PROBE_TIMEOUT_MS
 import com.music.bitchord.ko.SOURCE_LOOKUP_TIMEOUT_MS
+import com.music.bitchord.ko.hostRestUntilMs
 import com.music.bitchord.ko.hqSearchLine
 import com.music.bitchord.ko.isArtistUnverifiedRank
 import com.music.bitchord.ko.isNetworkFailure
@@ -328,6 +329,12 @@ object SourceResolver {
          */
         lengthOf: (suspend () -> Int?)? = null,
         /**
+         * Each source's search-and-open budget. Only the 60 s lead passes more
+         * ([com.music.bitchord.ko.KoDirectLead]); before [probe] for the same
+         * trailing-lambda reason as [verify].
+         */
+        sourceTimeoutMs: Long = SOURCE_LOOKUP_TIMEOUT_MS,
+        /**
          * Whether the candidate can actually serve its first bytes — see
          * [com.music.bitchord.ko.KoStreamProbe]. Injected so the choice can be
          * decided without a network, and so nothing else here has to know about
@@ -420,6 +427,7 @@ object SourceResolver {
                 target,
                 requestForNow(),
                 strictOriginal = true,
+                sourceTimeoutMs = sourceTimeoutMs,
                 lengthLater = lengthLater,
                 accept = accept,
             )
@@ -432,6 +440,7 @@ object SourceResolver {
                     target,
                     requestForNow(),
                     strictOriginal = true,
+                    sourceTimeoutMs = sourceTimeoutMs,
                     lengthLater = lengthLater,
                     accept = accept,
                 )
@@ -2399,7 +2408,7 @@ object SourceResolver {
             } else if (e.isNetworkFailure()) {
                 SourceCooldown.networkFailed(source.configId, online = !offlineCheck())
             } else {
-                SourceCooldown.failed(source.configId)
+                SourceCooldown.failed(source.configId, e.hostRestUntilMs()) // [KO] retry-after rest
             }
         }
         TrackLog.w(TAG, "${source.displayName} failed: ${e.javaClass.simpleName}: ${e.message}")

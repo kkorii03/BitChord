@@ -274,7 +274,13 @@ class KoPrefetchQueue(
                         TrackLog.d(tag, "warm-up substitute failed for $next: ${failed.message}", about = next)
                         null
                     }
-                    found?.takeIf { candidate -> koMayPinAhead(context, next, candidate) }?.also { candidate ->
+                    found?.takeIf { candidate ->
+                        // [KO] HQ-DOWN: never re-pin the next row below the copy it already holds.
+                        val held = StreamChoice.of(next)?.format
+                        val down = HqQuality.isDowngradeFrom(held, candidate.format)
+                        if (down) TrackLog.d(tag, "hq-tier: $next not re-pinned ${held?.summary} -> ${candidate.format.summary}", about = next)
+                        !down && koMayPinAhead(context, next, candidate)
+                    }?.also { candidate ->
                         SourceResolver.rememberOriginal(target, candidate)
                         StreamChoice.remember(next, candidate, substituted = true)
                         logHqTier(next, target.title, candidate, currentTier)

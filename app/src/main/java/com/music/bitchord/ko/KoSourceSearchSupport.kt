@@ -135,6 +135,20 @@ internal fun Throwable.isNetworkFailure(): Boolean {
     return NETWORK_FAILURE_MARKERS.any(text::contains)
 }
 
+/**
+ * The host's own rest expiry a 429/503 carried (Retry-After), anywhere in
+ * [this]'s cause chain; 0 when none did, which keeps the ordinary cooldown.
+ */
+internal fun Throwable.hostRestUntilMs(): Long {
+    var cause: Throwable? = this
+    var depth = 0
+    while (cause != null && depth++ < 8) {
+        if (cause is com.music.bitchord.data.sources.addon.AddonUnavailable) return cause.restUntilMs
+        cause = cause.cause?.takeIf { it !== cause }
+    }
+    return 0L
+}
+
 private val NETWORK_FAILURE_MARKERS = listOf(
     "unable to resolve host",
     "no address associated with hostname",
