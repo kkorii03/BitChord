@@ -45,7 +45,7 @@ class KoAudioSwitchProxyCatalogueTest {
         TrackMatcher.audioSwitchTargetOf(KoAudioSwitch.audioSwitchRow(mv)).copy(isVideo = true)
 
     @Test
-    fun `with the proxy the US official audio is adopted and cached`() = runBlocking {
+    fun `with the proxy the US official audio is adopted and cached`() = runBlocking<Unit> {
         YtMusicRepository.audioVersionCache.remove(mv.videoId)
         val asked = mutableListOf<String>()
         val adopted = KoAudioSwitch.proxyCatalogueAudio("what do you mean justin bieber", target(), mv, proxyReady = true) {
@@ -59,7 +59,7 @@ class KoAudioSwitchProxyCatalogueTest {
     }
 
     @Test
-    fun `without the proxy nothing is searched`() = runBlocking {
+    fun `without the proxy nothing is searched`() = runBlocking<Unit> {
         var calls = 0
         val adopted = KoAudioSwitch.proxyCatalogueAudio("what do you mean justin bieber", target(), mv, proxyReady = false) {
             calls++
@@ -70,7 +70,7 @@ class KoAudioSwitchProxyCatalogueTest {
     }
 
     @Test
-    fun `a cover, a video row or another song is never adopted`() = runBlocking {
+    fun `a cover, a video row or another song is never adopted`() = runBlocking<Unit> {
         YtMusicRepository.audioVersionCache.remove(mv.videoId)
         val adopted = KoAudioSwitch.proxyCatalogueAudio("what do you mean justin bieber", target(), mv, proxyReady = true) {
             listOf(cover, mvAsVideoRow, otherSong, mv.copy(isVideo = false))
