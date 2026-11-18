@@ -14,6 +14,9 @@ import kotlinx.coroutines.withContext
 
 private const val TAG = "BitChord"
 
+/** [KO] TG1: rows the matcher may see from one search; one global page is 100. */
+private const val MATCH_ROWS = 100
+
 /**
  * The listener's own Telegram chats as a music source.
  *
@@ -58,13 +61,25 @@ class TelegramSource(
         limit: Int,
         waitForAll: Boolean,
         request: StreamRequest?,
-    ): List<Song> {
+    ): List<Song> = searchRows(query, limit, limit)
+
+    /**
+     * [KO] TG1: the HQ matcher's search. TDLib's global search is newest first,
+     * so a common title fills [limit] with other artists' files while the right
+     * one sits later in the page already downloaded. Pages and the per-chat
+     * walk are still decided by [limit]; every fetched row, up to
+     * [MATCH_ROWS], goes to the matcher. The Search tab keeps [search].
+     */
+    suspend fun matchCandidates(query: String, limit: Int): List<Song> =
+        searchRows(query, limit, MATCH_ROWS)
+
+    private suspend fun searchRows(query: String, limit: Int, retain: Int): List<Song> {
         if (query.isBlank()) return emptyList()
         return try {
             // The source contract runs on IO; keep the encrypted-prefs and
             // TDLib work off whatever thread the search box happens to be on.
             withContext(Dispatchers.IO) {
-                TelegramClientManager.searchTracks(query, limit)
+                TelegramClientManager.searchTracks(query, limit, retain)
                     .map { TelegramTrackMapper.toSong(it, config.id) }
             }
         } catch (cancelled: CancellationException) {

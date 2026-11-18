@@ -106,7 +106,7 @@ object TelegramClientManager {
     @Volatile
     internal var walkHoldForTest: ((Boolean) -> Unit)? = null
 
-    private data class SearchKey(val chats: List<Long>, val query: String, val limit: Int)
+    private data class SearchKey(val chats: List<Long>, val query: String, val limit: Int, val retain: Int)
     private class RecentSearch(val result: SearchResult, val atNanos: Long)
     private class SearchResult(val tracks: List<TelegramTrack>, val mode: String)
     private class GlobalSearch(
@@ -413,8 +413,14 @@ object TelegramClientManager {
      * from the next track's upgrade pass. A flight nobody is waiting for any
      * more (every caller timed out) is cancelled so it cannot keep the lease,
      * the radio or TDLib busy.
+     *
+     * [limit] alone decides how many pages are asked for and whether the
+     * per-chat walk runs. [retain] ([KO] TG1, default [limit]) is how many rows
+     * of the pages already fetched are kept: TDLib's global search is newest
+     * first, not by relevance, so the HQ matcher keeps the whole page instead
+     * of the 15 newest same-title files. It never adds a request.
      */
-    suspend fun searchTracks(query: String, limit: Int): List<TelegramTrack> {
+    suspend fun searchTracks(query: String, limit: Int, retain: Int = limit): List<TelegramTrack> {
         // The credential store and Keystore are disk work. Load them on the
         // worker so the first search from the UI thread never does that I/O
         // itself, and read the selected chats only after they are loaded.
@@ -423,7 +429,7 @@ object TelegramClientManager {
         if (chats.isEmpty()) return emptyList()
         val wanted = query.trim()
         if (wanted.isEmpty()) return emptyList()
-        val key = SearchKey(chats, wanted, limit)
+        val key = SearchKey(chats, wanted, limit, maxOf(limit, retain))
         recentSearches[key]?.let { recent ->
             if (System.nanoTime() - recent.atNanos < SEARCH_REUSE_NANOS) return recent.result.tracks
             recentSearches.remove(key, recent)
@@ -516,7 +522,7 @@ object TelegramClientManager {
         val started = System.nanoTime()
         return try {
             awaitReady()
-            val result = withContext(Dispatchers.IO) { searchSelected(key.chats, key.query, key.limit) }
+            val result = withContext(Dispatchers.IO) { searchSelected(key.chats, key.query, key.limit, key.retain) }
             val millis = (System.nanoTime() - started) / 1_000_000
             TelegramLog.search(
                 queryLength = key.query.length,
@@ -680,18 +686,19 @@ object TelegramClientManager {
         chats: List<Long>,
         query: String,
         limit: Int,
+        retain: Int,
     ): SearchResult {
         val wanted = query.trim()
         if (wanted.isEmpty()) return SearchResult(emptyList(), "global")
         val global = try {
-            searchGlobal(chats.toSet(), wanted, limit)
+            searchGlobal(chats.toSet(), wanted, limit, retain)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (globalFailure: Throwable) {
             // A TDLib build without the global search, or one rejected request,
             // falls back to the selected chats directly. Still bounded to four
             // in-flight requests instead of the old one-at-a-time loop.
-            return searchFallback(chats, wanted, limit, globalFailure)
+            return searchFallback(chats, wanted, limit, globalFailure, retain)
         }
         // A global page is not the whole answer: selected chats can fill the
         // page while a selected chat's matches sit behind nextOffset. If the
@@ -703,7 +710,7 @@ object TelegramClientManager {
         // place, and a failed walk keeps the global rows.
         if (!global.exhausted && global.tracks.size < limit) {
             val extra = try {
-                searchFallback(chats, wanted, limit, null).tracks
+                searchFallback(chats, wanted, limit, null, retain).tracks
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
@@ -711,7 +718,7 @@ object TelegramClientManager {
                 emptyList()
             }
             val merged = LinkedHashMap<String, TelegramTrack>()
-            (global.tracks + extra).forEach { if (merged.size < limit) merged.putIfAbsent(it.id, it) }
+            (global.tracks + extra).forEach { if (merged.size < retain) merged.putIfAbsent(it.id, it) }
             return SearchResult(merged.values.toList(), "global+perChat")
         }
         return SearchResult(global.tracks, "global")
@@ -722,8 +729,9 @@ object TelegramClientManager {
         query: String,
         limit: Int,
         globalFailure: Throwable?,
+        retain: Int,
     ): SearchResult = try {
-        SearchResult(searchPerChat(chats, query, limit), "perChat")
+        SearchResult(searchPerChat(chats, query, limit, retain), "perChat")
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (chatFailure: Throwable) {
@@ -736,11 +744,13 @@ object TelegramClientManager {
     /**
      * Audio and documents across all chats, paging on [TdApi.FoundMessages.nextOffset]
      * until the selected chats have enough rows or there is no next page.
+     * Paging stops on [limit]; up to [retain] rows of the fetched pages are kept.
      */
     private suspend fun searchGlobal(
         selected: Set<Long>,
         query: String,
         limit: Int,
+        retain: Int,
     ): GlobalSearch {
         val rows = LinkedHashMap<String, TelegramTrack>()
         var firstFailure: Throwable? = null
@@ -777,7 +787,7 @@ object TelegramClientManager {
                 }
                 found.messages?.forEach { message ->
                     if (message.chatId !in selected) return@forEach
-                    if (rows.size < limit) {
+                    if (rows.size < retain) {
                         TelegramMessageMapper.from(message)?.let { rows.putIfAbsent(it.id, it) }
                     }
                 }
@@ -805,6 +815,7 @@ object TelegramClientManager {
         chats: List<Long>,
         query: String,
         limit: Int,
+        retain: Int,
     ): List<TelegramTrack> = coroutineScope {
         val rows = LinkedHashMap<String, TelegramTrack>()
         var firstFailure: Throwable? = null
@@ -833,7 +844,7 @@ object TelegramClientManager {
                             )
                             synchronized(rows) {
                                 found.messages?.forEach { message ->
-                                    if (rows.size < limit) {
+                                    if (rows.size < retain) {
                                         TelegramMessageMapper.from(message)?.let { rows.putIfAbsent(it.id, it) }
                                     }
                                 }

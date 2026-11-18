@@ -1803,6 +1803,7 @@ object SourceResolver {
                 com.music.bitchord.ko.KoTelegramDocumentLength.known(source, cached) // [KO] telegram document length
             } else {
                 val rows = attempt(source) {
+                    (source as? TelegramSource)?.matchCandidates(query, MATCH_CANDIDATES) ?: // [KO] TG1 every fetched Telegram row
                     source.search(
                         query,
                         limit = MATCH_CANDIDATES,
