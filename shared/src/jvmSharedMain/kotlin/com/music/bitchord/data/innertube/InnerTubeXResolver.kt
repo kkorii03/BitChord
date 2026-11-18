@@ -289,7 +289,11 @@ object InnerTubeXResolver {
     private val proxyHttp by lazy { httpClient(Http.proxyMediaClient) }
     private val proxyInnerTube by lazy { InnerTube(proxyHttp, logger = logger) }
     private val proxyRemoteStore by lazy { RemotePlayerConfigStore(proxyHttp, repository, logger) }
-    private val proxyCipherService by lazy { YouTubeCipherService(proxyHttp, proxyRemoteStore, logger) }
+    // [KO] oom1119: one cipher service for both stacks. Each one copies the 3.8 MB
+    // preprocessed player ~10 times per solve (Java) and parses it in QuickJS
+    // (~150 MB native); two of them let the direct and proxy legs solve at once,
+    // which is the 02:08:49 OOM. The cipher only fetches base.js, never media.
+    private val proxyCipherService get() = cipherService
     private val proxyExtractor by lazy {
         InnerTubeExtractor(
             configParser = com.music.bitchord.ko.KoPlayerUrlTap(YtConfigParserImpl(proxyHttp, proxyInnerTube, proxyRemoteStore, logger)) { ejsPrep?.onPlayerUrl(it) }, // [KO] ejs-prep
@@ -300,29 +304,8 @@ object InnerTubeXResolver {
         )
     }
 
-    @Volatile
-    private var proxyPlayerCacheLinked = false
-
-    /**
-     * Shares the direct stack's preprocessed-player cache with the proxy stack.
-     *
-     * The setter is suspend, so it cannot live in [proxyExtractor]'s lazy
-     * initializer; doing it on the first proxied walk still avoids the
-     * multi-second cold solve on every later one.
-     */
-    private suspend fun linkProxyPlayerCache() {
-        if (proxyPlayerCacheLinked) return
-        proxyPlayerCacheLinked = true
-        try {
-            proxyCipherService.setPreprocessedPlayerCache(::readPlayer, ::writePlayer)
-        } catch (e: CancellationException) {
-            proxyPlayerCacheLinked = false
-            throw e
-        } catch (e: Exception) {
-            proxyPlayerCacheLinked = false
-            TrackLog.w(TAG, "proxy player cache link failed: ${e.message}")
-        }
-    }
+    /** [KO] oom1119 test seam: the proxy walk must not get a second cipher service. */
+    internal fun proxySharesCipherForTest(): Boolean = proxyCipherService === cipherService
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -360,7 +343,6 @@ object InnerTubeXResolver {
     ): Extracted? {
         val itx = if (viaProxy) proxyInnerTube else innerTube
         val walker = if (viaProxy) proxyExtractor else extractor
-        if (viaProxy) linkProxyPlayerCache()
         itx.cookie = Innertube.cookie
         itx.visitorData = Innertube.ensureVisitorData()
         itx.locale = YouTubeLocale(gl = Innertube.currentRegion, hl = Innertube.currentLanguage)

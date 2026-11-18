@@ -5721,6 +5721,7 @@ class PlaybackService : MediaLibraryService() {
                 "reason=${transitionReason(reason)} meta=${missingMeta(played)}",
             about = mediaItem?.mediaId,
         )
+        com.music.bitchord.ko.KoHeapTrend.onTrackChange(this, "track=${mediaItem?.mediaId}") // [KO] oom1119
         DiagnosticsState.currentTrackId = mediaItem?.mediaId
         DiagnosticsState.nextTrackId = nextMediaIdOf(exoPlayer)
         DiagnosticsState.currentTitle = played?.title
