@@ -130,7 +130,7 @@ internal object KoDirectHqAhead {
         hasProof: Boolean,
         awakeSources: Int,
     ): Boolean = nextNotPlaying &&
-        BatteryPolicy.cachePrefetchBytesAllowed(metered = metered, lowPower = lowPower) &&
+        KoHiResPrefetch.allowed(metered = metered, lowPower = lowPower) && // [KO] metered at a lossless ceiling
         trackEligible &&
         hasProof &&
         awakeSources > 0

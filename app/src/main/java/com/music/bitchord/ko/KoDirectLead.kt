@@ -42,9 +42,9 @@ import kotlinx.coroutines.ensureActive
  * Driven by the playing sampler's five-second tick in
  * PlaybackService.driveDirectWindow, past its pause and seek-settle returns: no
  * timer of its own, nothing while paused, and a lead for a track the queue moved
- * away from is stopped by [keepOnly]. Never while saving power or on a metered
- * connection ([BatteryPolicy.cachePrefetchBytesAllowed], the rule read-ahead
- * bytes and hq-ahead follow), and never without a proof.
+ * away from is stopped by [keepOnly]. Never while saving power, nor on a metered
+ * connection whose quality setting is below lossless ([KoHiResPrefetch], built
+ * on [BatteryPolicy.cachePrefetchBytesAllowed]), and never without a proof.
  */
 internal object KoDirectLead {
 
@@ -109,8 +109,8 @@ internal object KoDirectLead {
         val lowPower = AppSettings.lowPower.value
         return when {
             streamedId != nextId -> "streams ${streamedId ?: "no YouTube id"}"
-            !BatteryPolicy.cachePrefetchBytesAllowed(metered = metered, lowPower = lowPower) ->
-                if (lowPower) "saving power" else "metered connection"
+            !KoHiResPrefetch.allowed(metered = metered, lowPower = lowPower) ->
+                if (lowPower) "saving power" else "metered connection, quality below lossless"
             nextId in Downloads.saved.value -> "saved"
             OriginalVersion.isPinned(nextId) -> "kept on its original upload"
             StreamChoice.isSubstitute(nextId) -> "already on a substitute"

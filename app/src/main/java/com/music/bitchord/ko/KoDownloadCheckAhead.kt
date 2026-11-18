@@ -49,7 +49,8 @@ import kotlinx.coroutines.withContext
  * while paused, inside the seek settle, or for a row that is not waiting on its
  * check. The check can read the network (the YouTube reference when it is not
  * kept, a words hearing when one is owed), so it follows read-ahead's rule
- * ([BatteryPolicy.cachePrefetchBytesAllowed]: not saving power, not metered);
+ * ([KoHiResPrefetch] on [BatteryPolicy.cachePrefetchBytesAllowed]: not saving
+ * power, and metered only at a lossless quality setting);
  * otherwise the start's check runs as before.
  */
 internal object KoDownloadCheckAhead {
@@ -73,7 +74,7 @@ internal object KoDownloadCheckAhead {
     }
 
     internal fun allowed(metered: Boolean, lowPower: Boolean): Boolean =
-        BatteryPolicy.cachePrefetchBytesAllowed(metered = metered, lowPower = lowPower)
+        KoHiResPrefetch.allowed(metered = metered, lowPower = lowPower) // [KO] metered at a lossless ceiling
 
     /**
      * Whether a verified next row may be rebuilt as its file before it plays.
@@ -125,7 +126,10 @@ internal fun PlaybackService.koCheckNextDownloadAhead(exoPlayer: ExoPlayer, last
             metered = AppSettings.meteredConnection.value == true,
             lowPower = AppSettings.lowPower.value,
         )
-    ) return
+    ) {
+        TrackLog.d("BitChord", "download-check ahead: $id skipped (${if (AppSettings.lowPower.value) "saving power" else "metered connection, quality below lossless"})", about = id)
+        return
+    }
     val song = next.toSong()
     TrackLog.d("BitChord", "download-check ahead: $id ${remaining}ms before the transition", about = id)
     // The row is not playing yet: its decode waits behind the playing track's.

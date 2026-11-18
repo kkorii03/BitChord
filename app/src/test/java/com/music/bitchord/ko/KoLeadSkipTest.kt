@@ -2,6 +2,7 @@ package com.music.bitchord.ko
 
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.sources.MusicSource
 import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceHealth
@@ -65,6 +66,7 @@ class KoLeadSkipTest {
         KoDirectHqAhead.proofForTest = null
         AppSettings.lowPower.value = false
         AppSettings.meteredConnection.value = null
+        AppSettings.audioQualityCellular.value = AudioQuality.HIGH
         DirectSourceGate.onPlaying(emptySet())
         install(emptyList())
     }
@@ -75,6 +77,7 @@ class KoLeadSkipTest {
         install(listOf(FakeSource("Addon"), FakeSource("YouTube", kind = SourceKind.YOUTUBE)))
         KoDirectLead.work = { _, _ -> null }
 
+        AppSettings.audioQualityCellular.value = AudioQuality.HIGH
         AppSettings.meteredConnection.value = true
         repeat(3) { KoDirectLead.onTick(this, current, next, next, 58_000 - it * 5_000L) { target } }
         AppSettings.meteredConnection.value = false
@@ -85,7 +88,7 @@ class KoLeadSkipTest {
         // Before the lead's span: nothing to say yet.
         KoDirectLead.onTick(this, current, "skip-next-early", "skip-next-early", 90_000) { target }
 
-        assertEquals(1, lines("direct-lead: $next skipped (metered connection)"))
+        assertEquals(1, lines("direct-lead: $next skipped (metered connection, quality below lossless)"))
         assertEquals(1, lines("direct-lead: $next skipped (saving power)"))
         assertEquals(1, lines("direct-lead: $next skipped (streams skip-other-video)"))
         assertEquals(0, lines("skip-next-early skipped"))

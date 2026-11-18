@@ -46,7 +46,9 @@ internal fun readAheadBytesAllowed(
     substitutePinned: Boolean,
     pinnedToYouTube: Boolean,
     playerHoldsHead: Boolean,
-): Boolean = BatteryPolicy.cachePrefetchBytesAllowed(metered, lowPower) &&
+    /** The bytes are a lossless pin's ([KoHiResPrefetch]); YouTube's own lossy read-ahead keeps the old rule. */
+    pinnedLossless: Boolean = false,
+): Boolean = (if (pinnedLossless) KoHiResPrefetch.allowed(metered, lowPower) else BatteryPolicy.cachePrefetchBytesAllowed(metered, lowPower)) &&
     (!substitutable || substitutePinned) &&
     !pinnedToYouTube &&
     !playerHoldsHead
@@ -303,6 +305,8 @@ class KoPrefetchQueue(
                 // same answer for the bytes half — the URL is still warmed so a
                 // transition does not wait on a client walk.
                 val metered = AppSettings.meteredConnection.value == true
+                // [KO] metered at a lossless ceiling: a FLAC pin's bytes are the ones the listener asked for.
+                val pinnedLossless = warmed?.format?.isLossless == true
                 val cacheBytes = readAheadBytesAllowed(
                     metered = metered,
                     lowPower = AppSettings.lowPower.value,
@@ -310,17 +314,16 @@ class KoPrefetchQueue(
                     substitutePinned = warmed != null,
                     pinnedToYouTube = pinnedToYouTube,
                     playerHoldsHead = next == heldHead,
+                    pinnedLossless = pinnedLossless,
                 )
                 if (cacheBytes) {
                     launch(TrackLog.about(next)) {
                         delay(PREFETCH_DELAY_MS)
                         // Low power can begin during the grace delay. Re-read
                         // it here, where the bytes would actually be spent.
-                        if (!BatteryPolicy.cachePrefetchBytesAllowed(
-                                metered = AppSettings.meteredConnection.value == true,
-                                lowPower = AppSettings.lowPower.value,
-                            )
-                        ) {
+                        val stillMetered = AppSettings.meteredConnection.value == true
+                        val stillLowPower = AppSettings.lowPower.value
+                        if (!(if (pinnedLossless) KoHiResPrefetch.allowed(stillMetered, stillLowPower) else BatteryPolicy.cachePrefetchBytesAllowed(stillMetered, stillLowPower))) {
                             return@launch
                         }
                         // Visible to [requestAnalysisHead] while these bytes are
