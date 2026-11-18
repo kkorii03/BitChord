@@ -5778,7 +5778,7 @@ class PlaybackService : MediaLibraryService() {
         com.music.bitchord.download.HqLibraryUpgrade.scheduleIfEnabled(this)
         // A missing reference belonged to the previous playback attempt, not
         // to this recording. The next play is free to measure it again.
-        if (!sameTrackSwap) HqAudioVerify.onPlaybackStarted()
+        if (!sameTrackSwap) HqAudioVerify.onPlaybackStarted(setOfNotNull(mediaItem?.mediaId, mediaItem?.localConfiguration?.uri?.getQueryParameter("v"))) // [KO] UPG-7: keep heads proved ahead for this song
         // The outgoing track's low-quality cache entry can be dropped now that
         // its lossless replacement is complete — see [AudioCache.prefetchVerifiedRendition].
         AudioCache.onTrackBecameCurrent(mediaItem?.mediaId)
@@ -10492,7 +10492,7 @@ class PlaybackService : MediaLibraryService() {
         val boundary = crossfade?.plannedTransitionFor(current.mediaId) ?: duration
         val speed = exoPlayer.playbackParameters.speed.coerceAtLeast(MIN_WINDOW_SPEED)
         val remaining = ((boundary - exoPlayer.currentPosition) / speed).toLong()
-        if (remaining > DirectSourceGate.WINDOW_MS) return
+        if (remaining > DirectSourceGate.WINDOW_MS) return com.music.bitchord.ko.KoDirectLead.onTick(scope, current.mediaId, next.mediaId, next.localConfiguration?.uri?.getQueryParameter("v"), remaining) { TrackMatcher.targetOf(next.toSong()) } // [KO] direct-lead
         if (!DirectSourceGate.openNext(next.mediaId)) return
         TrackLog.d(
             "BitChord",

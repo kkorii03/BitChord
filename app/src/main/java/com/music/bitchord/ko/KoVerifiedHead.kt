@@ -50,6 +50,10 @@ internal object KoVerifiedHead {
     ) {
         @Volatile
         internal var accepted: Boolean = false
+
+        /** The YouTube id the check accepted this head for; null when not said. */
+        @Volatile
+        internal var youtubeId: String? = null
     }
 
     /** Keyed by URL. Guarded by `this`. */
@@ -117,8 +121,9 @@ internal object KoVerifiedHead {
     }
 
     /** The check accepted the candidate [entry] holds; only now may a swap take it. */
-    fun accept(entry: Entry): Boolean = synchronized(this) {
+    fun accept(entry: Entry, youtubeId: String? = null): Boolean = synchronized(this) {
         if (held[entry.url] !== entry) return false
+        entry.youtubeId = youtubeId
         entry.accepted = true
         true
     }
@@ -151,9 +156,17 @@ internal object KoVerifiedHead {
      * The track changed: no swap of the old one will ask any more. Detached at
      * once (a head the new track offers later is not caught); the caller deletes
      * the returned files off the main thread.
+     *
+     * [starting]: the ids of the track now starting. A head accepted for one of
+     * them was proved ahead for this very song (the direct lead or the window's
+     * proof) and is its swap's to take, so it stays; so does a head whose check
+     * is still running, which its own accept or [dropPending] settles. Null
+     * detaches everything.
      */
-    fun detachAll(): List<File> = synchronized(this) {
-        held.values.map { it.file }.also { held.clear() }
+    fun detachAll(starting: Set<String>? = null): List<File> = synchronized(this) {
+        val stale = held.values.filter { starting == null || (it.accepted && it.youtubeId !in starting) }
+        stale.forEach { held.remove(it.url) }
+        stale.map { it.file }
     }
 
     /** What to lay into the cache entry; [length] 0 means nothing, for [why]. */

@@ -132,6 +132,7 @@ object DirectSourceGate {
         }
         KoDirectHqAhead.stopKeptProofsExcept(now.playing) // OPT1: a proof kept for a song no longer audible stops
         com.music.bitchord.ko.KoNextUrlAhead.keepOnly(now.playing + listOfNotNull(now.next)) // [KO] UPG-speed 2
+        com.music.bitchord.ko.KoDirectLead.keepOnly(now.playing, now.next) // [KO] direct-lead
     }
 
     private fun Open.admits(mediaId: String) = mediaId in playing || mediaId == next
@@ -238,6 +239,10 @@ object DirectSourceGate {
      */
     internal fun startLookup(videoId: String, target: TrackMatcher.Target): Deferred<SourceStream?>? =
         start(videoId, target)?.work
+
+    /** [KO] direct-lead: this lookup's search and proof, run before the window and outside [lookups]; see KoDirectLead. */
+    internal suspend fun leadLookup(videoId: String, target: TrackMatcher.Target): SourceStream? =
+        com.music.bitchord.ko.KoDirectLead.lookup(videoId, target, KoDirectHqAhead.proofForTest ?: proofOf(videoId, target)) { youTubeLength(videoId) }
 
     private fun start(videoId: String, target: TrackMatcher.Target): Lookup? {
         val proof = KoDirectHqAhead.proofForTest ?: proofOf(videoId, target) // [KO] hq-ahead

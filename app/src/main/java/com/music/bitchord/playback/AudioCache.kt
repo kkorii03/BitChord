@@ -1958,7 +1958,7 @@ object AudioCache {
                     StreamChoice.remember(id, stream, substituted = addon != null)
                     if (addon == null) DirectSourceGate.startedOnYouTube(id, upcoming.target)
                 }
-            }
+            } else com.music.bitchord.ko.KoReplayAhead.start(id, upcoming.target) // [KO] replay-ahead: still pinned to YouTube from an earlier play
             fetch(id, 0, PRELOAD_BYTES)
         }
     }

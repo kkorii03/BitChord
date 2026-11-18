@@ -3,6 +3,8 @@ package com.music.bitchord.ko
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.file.Files
+import com.music.bitchord.playback.smart.HqAudioVerify
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -93,6 +95,48 @@ class KoVerifiedHeadTest {
         val stale = KoVerifiedHead.detachAll()
         assertEquals(listOf(entry.file), stale)
         assertNull(KoVerifiedHead.take(url, "src", "row-1"))
+    }
+
+    /**
+     * Direct lead: the next song's head is proved and accepted before it starts.
+     * The old onPlaybackStarted detached every head, so the one proved ahead for
+     * the song now starting was deleted before its swap could take it.
+     */
+    @Test
+    fun `a head proved ahead for the starting song survives its start`() = runBlocking<Unit> {
+        val ahead = KoVerifiedHead.offer(head(headBytes, "a.bin"), url, "src", "row-1", total)!!
+        KoVerifiedHead.accept(ahead, "song-next")
+        val old = KoVerifiedHead.offer(head(headBytes, "b.bin"), "$url&old", "src", "row-2", total)!!
+        KoVerifiedHead.accept(old, "song-old")
+
+        val stale = KoVerifiedHead.detachAll(setOf("song-next", "song-next-video"))
+
+        assertEquals("only the old song's head goes", listOf(old.file), stale)
+        assertSame(ahead, KoVerifiedHead.take(url, "src", "row-1"))
+        assertNull(KoVerifiedHead.take("$url&old", "src", "row-2"))
+    }
+
+    @Test
+    fun `the track start through the verifier keeps the starting song's head`() = runBlocking<Unit> {
+        val ahead = KoVerifiedHead.offer(head(headBytes, "a.bin"), url, "src", "row-1", total)!!
+        KoVerifiedHead.accept(ahead, "song-next")
+
+        HqAudioVerify.onPlaybackStarted(setOf("song-next"))
+
+        assertTrue(ahead.file.exists())
+        assertSame(ahead, KoVerifiedHead.take(url, "src", "row-1"))
+    }
+
+    @Test
+    fun `a head whose check is still running is left to that check`() = runBlocking<Unit> {
+        val pending = KoVerifiedHead.offer(head(headBytes), url, "src", "row-1", total)!!
+
+        assertEquals(emptyList<File>(), KoVerifiedHead.detachAll(setOf("song-next")))
+        assertTrue(pending.file.exists())
+        // The check ends unaccepted: its own drop deletes it, as before.
+        KoVerifiedHead.dropPending(url)
+        assertFalse(pending.file.exists())
+        assertEquals(0, KoVerifiedHead.heldCount())
     }
 
     @Test

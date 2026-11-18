@@ -886,7 +886,7 @@ object HqAudioVerify {
                     HqLibraryUpgrade.onVerified(context)
                     // [KO] UPG-7: the swap of this exact stream may now start from this head.
                     val heldHead = candidate.held
-                    if (heldHead != null && KoVerifiedHead.accept(heldHead)) {
+                    if (heldHead != null && KoVerifiedHead.accept(heldHead, youtubeId)) {
                         TrackLog.d(TAG, "hq-verify: kept head ${heldHead.bytes}/${heldHead.totalBytes} bytes for the swap", youtubeId)
                     }
                     Outcome.Verified(verified)
@@ -1063,10 +1063,10 @@ object HqAudioVerify {
      * ten-minute timer. It is also the event that wakes a song left unmeasured
      * by a 429 once its host has rested.
      */
-    fun onPlaybackStarted() {
+    fun onPlaybackStarted(startingIds: Set<String>? = null) {
         noReference.clear()
         playbackEpoch.getAndSet(PlaybackEpoch()).changed.complete(Unit)
-        KoVerifiedHead.detachAll().takeIf { it.isNotEmpty() }?.let { stale -> // [KO] UPG-7: the old track's heads
+        KoVerifiedHead.detachAll(startingIds).takeIf { it.isNotEmpty() }?.let { stale -> // [KO] UPG-7: the old track's heads; one proved ahead for the starting song stays
             pendingRetryScope.launch { stale.forEach { it.delete() } }
         }
         retryPendingRateLimits()
