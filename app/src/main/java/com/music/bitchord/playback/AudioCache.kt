@@ -1406,6 +1406,9 @@ object AudioCache {
      * player lets go of it, as a copy a download can take instead of fetching
      * the same file again; see [com.music.bitchord.ko.KoPlayersFill]. Null: fetch.
      */
+    /** [playersFillOf]'s longest wait for the player to let go: about one song. */
+    private const val PLAYERS_FILL_WAIT_MS = 6 * 60_000L
+
     suspend fun playersFillOf(videoId: String, url: String, extension: String): CompleteCopy? {
         if (openedCache == null || videoId.isBlank()) return null
         val key = cacheKeyOf(Uri.parse("bitchord://watch?v=$videoId"))
@@ -1423,7 +1426,9 @@ object AudioCache {
                 }
             },
             extensionOf = { it.extension },
-            awaitRelease = { koTracker.awaitRelease(key) },
+            // A paused player can hold the entry for hours: the wait is bounded, and an
+            // entry still not whole after it is fetched as before (KoPlayersFill).
+            awaitRelease = { kotlinx.coroutines.withTimeoutOrNull(PLAYERS_FILL_WAIT_MS) { koTracker.awaitRelease(key) } },
             log = { TrackLog.d(TAG, "$it ($videoId)", about = videoId) },
         )
     }
