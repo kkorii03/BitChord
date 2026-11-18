@@ -219,8 +219,10 @@ class KoLosslessCache(
                     if (failure == null) break
                 }
                 // [KO] UPG-7: a head spliced onto another file states another length.
-                if (failure == null && !KoVerifiedHead.lengthAgrees(expectedLength, contentLengthOf(key))) {
-                    failure = "length ${contentLengthOf(key)} is not the verified file's $expectedLength"
+                // dupdl: a head a player's open laid in promised its length too.
+                val expected = if (expectedLength > 0L) expectedLength else KoVerifiedHead.promisedLength(key, stream?.url)
+                if (failure == null && !KoVerifiedHead.lengthAgrees(expected, contentLengthOf(key))) {
+                    failure = "length ${contentLengthOf(key)} is not the verified file's $expected"
                 }
                 val bytes = cache.getCachedSpans(key).filter { it.isCached }.sumOf { it.length }
                 val complete = failure == null && isComplete(key)
@@ -473,6 +475,58 @@ class KoLosslessCache(
         } finally {
             target?.delete()
             held.file.delete()
+        }
+    }
+
+    /**
+     * [KO] dupdl: a player opening an upgraded [uri] (the next track's standby
+     * re-prepared as FLAC, the window's proof, a lead) starts from the head the
+     * sound check accepted for exactly that stream, instead of reading the whole
+     * file from byte 0 again. 11-19 night log: 12 heads of 19-31 MB were kept
+     * and then fetched again in full by the next player.
+     *
+     * Runs on the player's loader thread, before its cache open. Only into an
+     * empty entry, asked before the head is taken, so an entry that already
+     * holds bytes leaves the head to the swap that can discard and use it.
+     * The length the check saw is promised for [checkPlayerSeed].
+     */
+    fun seedForPlayer(uri: Uri) {
+        if (KoVerifiedHead.heldCount() == 0) return
+        val stream = QualityUpgrade.forcedStream(uri) ?: return
+        if (!KoVerifiedHead.holdsAccepted(stream.url, stream.sourceConfigId, stream.trackId)) return
+        val cache = cache() ?: return
+        val mediaId = mediaIdIn(uri) ?: return
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        val cachedBytes = runCatching {
+            cache.getCachedSpans(key).filter { it.isCached }.sumOf { it.length }
+        }.getOrDefault(-1L)
+        if (cachedBytes != 0L || contentLengthOf(key) > 0L) return
+        val total = seedFromVerifiedHead(uri, stream, mediaId) ?: return
+        KoVerifiedHead.promise(key, stream.url, total)
+        TrackLog.d(tag, "hq-cache: $mediaId player opens on the verify head; the rest by Range", about = mediaId)
+    }
+
+    /**
+     * [KO] dupdl: a player's reader of [uri] closed. Once its fill states the
+     * file's length, one other than the length the verify head's file stated is
+     * another file spliced onto that head (the UPG-7 rule): the entry is dropped
+     * so nothing keeps or replays it. Runs on the closing reader's thread.
+     */
+    fun checkPlayerSeed(uri: Uri) {
+        if (!KoVerifiedHead.hasPromises()) return
+        val stream = QualityUpgrade.forcedStream(uri) ?: return
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        val stated = contentLengthOf(key)
+        when (KoVerifiedHead.settle(key, stream.url, stated)) {
+            KoVerifiedHead.Splice.AGREES ->
+                TrackLog.d(tag, "hq-cache: ${mediaIdIn(uri)} verify head and the rest agree on ${formatBytes(stated)}", about = mediaIdIn(uri))
+            KoVerifiedHead.Splice.DIFFERS -> {
+                TrackLog.w(tag, "hq-cache: ${mediaIdIn(uri)} rest states ${formatBytes(stated)}, not the verified file's; dropping the entry", about = mediaIdIn(uri))
+                discardRendition(uri)
+                // Still stated: a live reader kept it, and the next close asks again.
+                if (contentLengthOf(key) <= 0L) KoVerifiedHead.forgetPromise(key)
+            }
+            KoVerifiedHead.Splice.NONE -> Unit
         }
     }
 

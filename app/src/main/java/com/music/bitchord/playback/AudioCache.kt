@@ -1402,6 +1402,33 @@ object AudioCache {
     }
 
     /**
+     * [KO] dupdl: the player's in-flight fill of [videoId] from [url], once the
+     * player lets go of it, as a copy a download can take instead of fetching
+     * the same file again; see [com.music.bitchord.ko.KoPlayersFill]. Null: fetch.
+     */
+    suspend fun playersFillOf(videoId: String, url: String, extension: String): CompleteCopy? {
+        if (openedCache == null || videoId.isBlank()) return null
+        val key = cacheKeyOf(Uri.parse("bitchord://watch?v=$videoId"))
+        return com.music.bitchord.ko.KoPlayersFill.copyOf(
+            url = url,
+            extension = extension,
+            pinnedUrl = { StreamChoice.of(videoId)?.url },
+            playerHolds = { koTracker.playerHoldsKey(key) },
+            whole = {
+                withContext(Dispatchers.IO) {
+                    if (!isComplete(key)) return@withContext null
+                    val length = runCatching { ContentMetadata.getContentLength(cache.getContentMetadata(key)) }.getOrDefault(-1L)
+                    val (ext, mime) = containerOf(key) ?: return@withContext null
+                    CompleteCopy(key, length, ext, mime)
+                }
+            },
+            extensionOf = { it.extension },
+            awaitRelease = { koTracker.awaitRelease(key) },
+            log = { TrackLog.d(TAG, "$it ($videoId)", about = videoId) },
+        )
+    }
+
+    /**
      * Drops every entry an addon or module filled ([Origin.OTHER]), and every
      * copy Automix downloaded for analysis alone that playback never read,
      * except the ones belonging to [keep] — the tracks around the playhead,
@@ -1656,12 +1683,15 @@ object AudioCache {
             .createDataSource()
         // [KO] first-audio: the player takes the entry back before reading it.
         object : DataSource {
+            private var koOpened: Uri? = null // [KO] dupdl
+
             override fun addTransferListener(transferListener: TransferListener) =
                 inner.addTransferListener(transferListener)
 
             override fun open(dataSpec: DataSpec): Long {
                 settleDirectEntry(dataSpec.uri)
                 yieldAnalysisHeadToPlayback(cacheKeyOf(dataSpec.uri), dataSpec.uri.getQueryParameter("v"))
+                koOpened = dataSpec.uri; koLossless.seedForPlayer(dataSpec.uri) // [KO] dupdl: the verify head, not byte 0 again
                 return inner.open(dataSpec)
             }
 
@@ -1670,7 +1700,7 @@ object AudioCache {
 
             override fun getUri(): Uri? = inner.uri
 
-            override fun close() = inner.close()
+            override fun close() = try { inner.close() } finally { koOpened?.let(koLossless::checkPlayerSeed) } // [KO] dupdl
         }
     }
 

@@ -153,6 +153,68 @@ internal object KoVerifiedHead {
     fun heldCount(): Int = synchronized(this) { held.size }
 
     /**
+     * dupdl: whether an accepted head of exactly this stream is held, asked
+     * before a player's open lays it in, so a head is never taken (and deleted)
+     * by an open that cannot use it.
+     */
+    fun holdsAccepted(url: String, sourceConfigId: String?, trackId: String?): Boolean = synchronized(this) {
+        val entry = held[url] ?: return false
+        entry.accepted && entry.sourceConfigId == sourceConfigId && entry.trackId == trackId
+    }
+
+    /**
+     * dupdl: a head laid in by a player's open has no cache writer of its own to
+     * check the file's length on the ranged read that follows; the player's
+     * fill states it in the entry instead. Keyed by cache key: the URL the head
+     * came from and the whole file's length the check saw.
+     */
+    private val promised = LinkedHashMap<String, Pair<String, Long>>()
+
+    private const val MAX_PROMISED = 4
+
+    fun promise(key: String, url: String, total: Long) {
+        synchronized(this) {
+            promised.remove(key)
+            promised[key] = url to total
+            while (promised.size > MAX_PROMISED) promised.remove(promised.keys.first())
+        }
+    }
+
+    fun hasPromises(): Boolean = synchronized(this) { promised.isNotEmpty() }
+
+    /** The length promised for [key] when it is still served from [url]; -1 otherwise. */
+    fun promisedLength(key: String, url: String?): Long = synchronized(this) {
+        promised[key]?.takeIf { it.first == url }?.second ?: -1L
+    }
+
+    enum class Splice { NONE, AGREES, DIFFERS }
+
+    /**
+     * The entry [key], served from [url], now states [stated] bytes. AGREES
+     * settles the promise; DIFFERS keeps it until [forgetPromise] (the caller
+     * drops the entry); NONE while nothing is stated yet. A promise made for
+     * another URL is stale (the entry was refilled) and is dropped.
+     */
+    fun settle(key: String, url: String?, stated: Long): Splice = synchronized(this) {
+        val (promisedUrl, total) = promised[key] ?: return Splice.NONE
+        if (promisedUrl != url) {
+            promised.remove(key)
+            return Splice.NONE
+        }
+        if (stated <= 0L) return Splice.NONE
+        if (stated == total) {
+            promised.remove(key)
+            Splice.AGREES
+        } else {
+            Splice.DIFFERS
+        }
+    }
+
+    fun forgetPromise(key: String) {
+        synchronized(this) { promised.remove(key) }
+    }
+
+    /**
      * The track changed: no swap of the old one will ask any more. Detached at
      * once (a head the new track offers later is not caught); the caller deletes
      * the returned files off the main thread.

@@ -188,7 +188,13 @@ internal object KoDownloadPipeline {
             taggable = true,
             offlineHls = Downloads.Manifest(stream.url, stream.headers, dash = dash).takeIf { packaged },
             write = { sink, onProgress ->
-                Downloader.fetchDirect(stream.url, stream.headers, sink, onProgress)
+                // dupdl: the player filling this very file now hands its copy over instead of a second GET.
+                val fill = if (packaged) null else AudioCache.playersFillOf(track.videoId, stream.url, storable.extension)
+                if (fill != null) {
+                    AudioCache.copyOut(fill, sink, onProgress)
+                } else {
+                    Downloader.fetchDirect(stream.url, stream.headers, sink, onProgress)
+                }
             },
         )
     }
