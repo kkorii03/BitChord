@@ -678,10 +678,17 @@ internal class NextTrackPreparation(
         val leftNow = playerNow?.let { remainingMs(it) } ?: Long.MAX_VALUE
         val query = CoverTitles.lyricsQuery(song)
         val fromFile = found?.fromFile == true
-        val timeable = !fromFile || query.isVideo
         val timedToVideo = LyricsTiming.timedToVideo(found?.source)
+        // [KO] The rule timed() and prepareNextFree time by (81f47229e), so a re-checked file is not logged file-timed.
+        val timeable = LocalTimingPolicy.downloadedTimingTimeable(
+            timed = true,
+            fromFile = fromFile,
+            isVideo = query.isVideo,
+            recheckOverride = found?.recheckOverride == true,
+            sourceTimedToVideo = timedToVideo,
+        )
         val recordTimed = timeable && (!fromFile || found?.source != null) && !timedToVideo
-        val fileTimed = fromFile && !query.isVideo
+        val fileTimed = fromFile && !timeable
         val syncFacts = NextPrepPolicy.SyncFacts(
             lyricsOff = !switches.nextPrepLyrics,
             syncedLyrics = AppSettings.syncedLyrics.value,

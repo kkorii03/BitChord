@@ -4256,6 +4256,8 @@ object LyricsTiming {
             // version's shift rule would refuse a video's honest offset.
             isVideo = query.isVideo,
             audioSource = audioSource,
+            // [KO] As the screen, the service and timed() pass it, so the prepared first frame is placed as the screen places it.
+            ownTranscript = source == LyricsSource.GEMINI_TRANSCRIPT,
         )
     }
 
