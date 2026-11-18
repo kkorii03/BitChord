@@ -1503,9 +1503,10 @@ object SourceResolver {
                     } else {
                         sourceLookupTimeoutMsFor(source, lookupTimeoutMs)
                     }
+                    val inHand = com.music.bitchord.ko.KoRowInHand() // [KO] row-in-hand
                     val answer = withTimeoutOrNull(sourceTimeout) {
                         // [KO] OPT1: one Telegram session across the walk's search, length probe and metadata steps.
-                        com.music.bitchord.telegram.TelegramClientManager.holdingWalk(source.kind == SourceKind.TELEGRAM) {
+                        kotlinx.coroutines.withContext(inHand) { com.music.bitchord.telegram.TelegramClientManager.holdingWalk(source.kind == SourceKind.TELEGRAM) {
                             matchAndStream(
                                 source,
                                 target,
@@ -1520,9 +1521,32 @@ object SourceResolver {
                                 lengthLater,
                                 checkFileLength,
                             )
-                        }
+                        } }
                     }
-                    if (answer == null) {
+                    val held = inHand.row
+                    if (answer == null && held != null) {
+                        // [KO] row-in-hand: the timeout cut short a walk comparing
+                        // rows after one had already opened (phone 11-19 vampire:
+                        // row 1 open, row 2 an 11 s cold read, row 3 aborted at
+                        // 12 s, and the open row 1 was dropped with the walk). The
+                        // open row is the answer, and a source that served a
+                        // stream did not fail toward its rest.
+                        SourceCooldown.succeeded(source.configId)
+                        TrackLog.d(
+                            TAG,
+                            "${source.displayName} timed out after ${sourceTimeout}ms comparing rows; " +
+                                "keeps '${held.first.videoId}' already opened",
+                        )
+                        val kept = SearchOutcome(
+                            stream = refine(source, held.second),
+                            results = 1,
+                            best = held.first,
+                            verdict = "match",
+                            conclusive = false,
+                        )
+                        TrackLog.d(TAG, hqSearchLine(target, source, kept))
+                        source to kept
+                    } else if (answer == null) {
                         // A timeout while the device is offline (or behind a
                         // captive portal) is the connection, not the source.
                         // Counting it here parked every source for 30 minutes
@@ -2291,6 +2315,7 @@ object SourceResolver {
                 )
                 if (!compareRows) return match to stream
                 if (best == null || isBetter(stream.format, best.second.format)) best = match to stream
+                kotlinx.coroutines.currentCoroutineContext()[com.music.bitchord.ko.KoRowInHand]?.row = best // [KO] row-in-hand
                 continue
             }
             TrackLog.d(

@@ -213,8 +213,16 @@ object DirectSourceGate {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    /** [ahead]: cancels the lookup's high-quality half ([KO] hq-ahead); null when it has none. */
-    private class Lookup(val work: Deferred<SourceStream?>, val startedAtMs: Long, val ahead: Job? = null)
+    /**
+     * [ahead]: cancels the lookup's high-quality half ([KO] hq-ahead); null when it has none.
+     * [answer]: what [lookup]'s waiters take, when [work] runs on past it ([KO] late-window).
+     */
+    private class Lookup(
+        val work: Deferred<SourceStream?>,
+        val startedAtMs: Long,
+        val ahead: Job? = null,
+        val answer: Deferred<SourceStream?> = work,
+    )
 
     private val lookups = ConcurrentHashMap<String, Lookup>()
 
@@ -230,7 +238,7 @@ object DirectSourceGate {
     suspend fun lookup(videoId: String, target: TrackMatcher.Target): SourceStream? {
         val lookup = start(videoId, target) ?: return null
         val waited = android.os.SystemClock.elapsedRealtime() - lookup.startedAtMs
-        return withTimeoutOrNull(LOOKUP_TIMEOUT_MS - waited) { lookup.work.await() }
+        return withTimeoutOrNull(LOOKUP_TIMEOUT_MS - waited) { lookup.answer.await() }
     }
 
     /**
@@ -261,8 +269,10 @@ object DirectSourceGate {
         }
         val proof = KoDirectHqAhead.proofForTest ?: proofOf(videoId, target) // [KO] hq-ahead
         // [KO] hq-ahead: the next track, not yet audible, also asks Telegram/JioSaavn.
-        val ahead = open.value.let { it.next == videoId && videoId !in it.playing }
-            .let { KoDirectHqAhead.wanted(videoId, target, nextNotPlaying = it, hasProof = proof != null) }
+        val nextNotPlaying = open.value.let { it.next == videoId && videoId !in it.playing }
+        val ahead = KoDirectHqAhead.wanted(videoId, target, nextNotPlaying = nextNotPlaying, hasProof = proof != null)
+        // [KO] late-window: the next track's addons, before the search, so a timeout in it can be told apart.
+        val marks = if (nextNotPlaying && proof != null) com.music.bitchord.ko.KoLateWindowSearch.marks() else null
         // [KO] first-audio: when every addon is resting, the search can only
         // time out. Skipping the wait lets YouTube start at once instead of
         // after the whole direct-source window.
@@ -274,8 +284,7 @@ object DirectSourceGate {
             return null
         }
         val aheadOf = if (ahead) Job() else null // [KO] hq-ahead
-        val fresh = Lookup(
-            work = scope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
+        val answer = scope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
                 // [KO] direct-lead: the lead's proved copy, or the lead still proving, instead of a second search.
                 com.music.bitchord.ko.KoDirectLead.reused(videoId)?.let { return@async it }
                 KoDirectHqAhead.lookup( // [KO] hq-ahead
@@ -295,13 +304,30 @@ object DirectSourceGate {
                         suspend { KoDirectHqAhead.stream(target, kept) }
                     },
                 )
-            },
+            }
+        // [KO] late-window: the waiters keep [answer] and its 4 s per-addon cap; an addon
+        // that timed out in it is searched on with the lead's budget, for the late proof.
+        val work = if (marks == null) answer else scope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
+            answer.await() ?: com.music.bitchord.ko.KoLateWindowSearch.after(videoId, marks, { open.value.admits(videoId) }) {
+                SourceResolver.directStream(
+                    target,
+                    mediaId = videoId,
+                    verify = proof,
+                    lengthOf = { youTubeLength(videoId) },
+                    sourceTimeoutMs = com.music.bitchord.ko.KoDirectLead.LEAD_SOURCE_TIMEOUT_MS,
+                )
+            }
+        }.also { late -> late.invokeOnCompletion { if (it != null) answer.cancel() } }
+        val fresh = Lookup(
+            work = work,
             startedAtMs = android.os.SystemClock.elapsedRealtime(),
             ahead = aheadOf,
+            answer = answer,
         )
         val running = lookups.putIfAbsent(videoId, fresh)
         if (running != null) {
             fresh.work.cancel()
+            answer.cancel()
         } else {
             fresh.work.invokeOnCompletion { lookups.remove(videoId, fresh) }
             fresh.work.start()
