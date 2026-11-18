@@ -207,7 +207,8 @@ class KoLosslessCache(
                     failure = runCatching {
                         val handle = coroutineContext.job.invokeOnCompletion { writer.cancel() }
                         try {
-                            writer.cache()
+                            // Only the playing track's fills: a next row's fill is the only claim its FLAC, later read from cache, carries.
+                            KoCacheFill.run(marks = mediaId != null && mediaId == currentMediaId) { writer.cache() }
                         } finally {
                             handle.dispose()
                         }

@@ -2334,7 +2334,7 @@ class PlaybackService : MediaLibraryService() {
                 val proving = QualityUpgrade.isAuditioning(videoId)
                 val sourceName = upgraded.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
                     ?: "Upgrade"
-                if (!proving) {
+                if (com.music.bitchord.ko.KoCacheFill.recordsServedUpgrade(proving)) { // [KO] a cache fill is not the player
                     NerdStats.onSourceStream(videoId, upgraded.format, sourceName)
                     NerdStats.recordSource(videoId, sourceName)
                 }

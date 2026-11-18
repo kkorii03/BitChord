@@ -278,6 +278,14 @@ internal fun PlaybackService.koPrefetchLosslessForNextPlay(
 ) {
     if (uri == null) return
     if (!HqQuality.isLosslessTier(stream.format)) return
+    // Log 11-18: looks that began on YouTube ended after the saved FLAC took over
+    // (Opalite, Espresso, 73ouhDibImA), and each pulled 21-36 MB of the same rung again.
+    val playingUri = player?.currentMediaItem?.takeIf { it.mediaId == mediaId }?.localConfiguration?.uri
+    val playsFile = playingUri?.scheme == "file" || playingUri?.scheme == "content"
+    if (KoQualityUpgrade.nextPlayPrefetchRedundant(playsFile, PlayingAudioFormat.streamFormat(mediaId, NerdStats.current.value), stream.format)) {
+        TrackLog.d("BitChord", "hq-prefetch: $mediaId skipped plays-a-file ${stream.format.summary}", about = mediaId)
+        return
+    }
     val upgraded = QualityUpgrade.upgradedUri(uri.toString())
     AudioCache.prefetchVerifiedRendition(Uri.parse(upgraded), title, stream)
 }

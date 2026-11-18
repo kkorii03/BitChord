@@ -532,8 +532,24 @@ internal object KoQualityUpgrade {
      * for a revert onto the previous stream.
      */
     fun forgetReverted(mediaId: String) {
+        // Log 11-18 18:11 Pompeii: the reverted FLAC (216760ms against 214562ms) was
+        // found again by the re-look 150ms later and by the retry a minute on. The
+        // copy that just failed its proof stays out of this play's later looks, as a
+        // failed audition's does; read before [QualityUpgrade.forget] drops it.
+        val reverted = QualityUpgrade.forced[mediaId]
         QualityUpgrade.forget(mediaId)
         StreamChoice.forget(mediaId)
+        reverted?.let { excludeReverted(mediaId, it.sourceConfigId, HqHostTracker.hostOf(it.url)) }
+    }
+
+    /** The exclusion half of [failedCandidate], for a copy a revert already took off the player. */
+    private fun excludeReverted(mediaId: String, sourceConfigId: String?, host: String?) {
+        sourceConfigId?.takeIf { it.isNotBlank() }?.let {
+            failedSources.getOrPut(mediaId) { ConcurrentHashMap.newKeySet() } += it
+        }
+        host?.takeIf { it.isNotBlank() }?.let {
+            failedHosts.getOrPut(mediaId) { ConcurrentHashMap.newKeySet() } += it
+        }
     }
 
     /**
@@ -636,6 +652,15 @@ internal object KoQualityUpgrade {
             format != null && format.isLossless != true && !format.kbpsInferred &&
                 HqQuality.tierOf(format) == HqTier.HIGH_LOSSY
             )
+
+    /**
+     * Whether the next-play prefetch would only fetch again what the saved file now
+     * playing already is: a lossless file on the same rung or above (a lower one is
+     * [refusesDowngrade]'s). A better rung is still fetched, as before.
+     */
+    fun nextPlayPrefetchRedundant(playsFile: Boolean, playing: StreamFormat?, candidate: StreamFormat): Boolean =
+        playsFile && HqQuality.isLosslessTier(playing) &&
+            HqQuality.tierOf(candidate).rank >= HqQuality.tierOf(playing).rank
 
     /**
      * [KO] HQ-DOWN: the automatic look's last gate before a swap or a next-play
