@@ -60,7 +60,7 @@ class HqVerifyRgaWiringTest {
         // The candidate's opening is kept whenever there are words to hear it against
         // ([KO] unaligned-words: youtubeWords, or a doubted row's kept words for a null alignment).
         assertTrue(outcome.contains("val unalignedWords = youtubeWords ?: keptWords?.takeIf {"))
-        assertTrue(outcome.contains("candidateFetch(context, stream, epoch, keepOpening = unalignedWords != null)"))
+        assertTrue(outcome.contains("candidateFetch(context, stream, epoch, keepOpening = unalignedWords != null, onOpeningFull = onOpeningFull)"))
         // Only a chroma match is heard; the guard decides with what was heard.
         assertTrue(outcome.contains("if (youtubeWords != null && verdict.accepted) {"))
         assertTrue(outcome.contains("KoVersionGuard.decide(verdict.accepted, needsWords, words)"))

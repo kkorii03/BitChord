@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.io.File
@@ -241,6 +242,7 @@ object InnerTubeXResolver {
     private val http = httpClient(Http.client)
 
     private val logger = InnerTubeLogger { event ->
+        com.music.bitchord.ko.KoDeadClients.observe(event.tag, event.message, event.details) // [KO] UPG-speed 1
         if (event.level == InnerTubeLogLevel.DEBUG && !debugLogging) return@InnerTubeLogger
         val details = if (event.details.isEmpty()) "" else event.details.entries.joinToString(prefix = " [", postfix = "]") { "${it.key}=${it.value}" }
         val line = "ITX ${event.tag}: ${event.message}$details"
@@ -362,25 +364,45 @@ object InnerTubeXResolver {
         itx.cookie = Innertube.cookie
         itx.visitorData = Innertube.ensureVisitorData()
         itx.locale = YouTubeLocale(gl = Innertube.currentRegion, hl = Innertube.currentLanguage)
-        val stream = walker.extract(
-            videoId = videoId,
-            hints = ContentHints(
-                isUploaded = true.takeIf { uploaded },
-                // InnerTubeX treats this as a manual override and asks this one
-                // client instead of walking its catalog from the top. Used to
-                // lead with the profile that served the last track — see
-                // [ResolutionOrder]; null keeps the measured default order.
-                playbackClientOverrideId = preferredClientId,
+        // [KO] UPG-speed 1: a catalog walk first leaves out the clients that never
+        // answered on this route (KoDeadClients), and walks again with them when
+        // that finds nothing, so they stay a fallback. A one-client override ask
+        // is left as it was.
+        val deadRoute = com.music.bitchord.ko.KoDeadClients.route(viaProxy, com.music.bitchord.data.net.YouTubeProxy.routeGeneration)
+        val skip = excludedFor(videoId) + skipClients
+        val dead = if (preferredClientId == null) com.music.bitchord.ko.KoDeadClients.dead(deadRoute) - skip else emptySet()
+        suspend fun walk(excludedClients: Set<String>) = withContext(com.music.bitchord.ko.KoDeadClients.walkContext(deadRoute, videoId)) {
+            walker.extract(
+                videoId = videoId,
+                hints = ContentHints(
+                    isUploaded = true.takeIf { uploaded },
+                    // InnerTubeX treats this as a manual override and asks this one
+                    // client instead of walking its catalog from the top. Used to
+                    // lead with the profile that served the last track — see
+                    // [ResolutionOrder]; null keeps the measured default order.
+                    playbackClientOverrideId = preferredClientId,
+                )
+                    .withStreamCapabilities(allowHls = false, allowSabr = false, allowBoundedRange = true),
+                excludedClients = excludedClients,
+                audioQuality = when {
+                    requireM4a -> AudioQuality.MP4
+                    maxKbps <= LOW_KBPS -> AudioQuality.LOW
+                    else -> AudioQuality.AUTO
+                },
+                clientPlaybackNonce = generateClientPlaybackNonce(),
             )
-                .withStreamCapabilities(allowHls = false, allowSabr = false, allowBoundedRange = true),
-            excludedClients = excludedFor(videoId) + skipClients,
-            audioQuality = when {
-                requireM4a -> AudioQuality.MP4
-                maxKbps <= LOW_KBPS -> AudioQuality.LOW
-                else -> AudioQuality.AUTO
-            },
-            clientPlaybackNonce = generateClientPlaybackNonce(),
-        ) ?: return null
+        }
+        val withoutDead = if (dead.isEmpty()) null else try {
+            walk(skip + dead)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (UnplayableReason.isDefinitelyGone(e.message)) throw e
+            TrackLog.w(TAG, "InnerTubeX walk without ${dead.joinToString()} failed for $videoId: ${e.message}; asking them too")
+            null
+        }
+        val stream = withoutDead ?: walk(skip) ?: return null
+        com.music.bitchord.ko.KoDeadClients.served(deadRoute, stream.clientName) // [KO] UPG-speed 1
         check(stream.sabrBootstrap == null) { "SABR is not supported by this playback engine" }
         val mime = stream.mimeType.orEmpty()
         val extracted = Extracted(

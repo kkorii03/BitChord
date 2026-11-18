@@ -104,7 +104,8 @@ class KoUnalignedWordsTest {
         val asked = noAlignment.substringAfter("// [KO] unaligned-words", "").substringBefore("UnmeasuredMemory.note(", "")
         for (part in listOf(
             "KoUnverifiedRows.wordsDecide(KoUnverifiedRows.contains(sourceId, trackId), referenceComplete, candidateComplete)",
-            "heardWords(youtubeId, unalignedWords, candidate.opening, offsetMs = 0L, rate = 1.0, unaligned = true)",
+            // [KO] UPG-5: the same hearing, taken from the early ask when one was made for this clip.
+            "heardWords(youtubeId, unalignedWords, candidate.opening, offsetMs = 0L, rate = 1.0, unaligned = true, ahead = early?.take(candidate.opening))",
             "heard?.verdict == KoVersionGuard.Words.DIFFERENT",
             "reject(context, youtubeId, sourceId, trackId)",
             "return@coroutineScope Outcome.Mismatch",

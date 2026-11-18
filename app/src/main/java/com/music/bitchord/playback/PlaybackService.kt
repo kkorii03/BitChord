@@ -10486,6 +10486,7 @@ class PlaybackService : MediaLibraryService() {
         if (nextIndex == C.INDEX_UNSET) return
         val next = exoPlayer.getMediaItemAt(nextIndex)
         if (MusicOnlyPlayback.wants(next)) return
+        com.music.bitchord.ko.KoNextUrlAhead.onTick(scope, current.mediaId, exoPlayer.currentPosition, lastSeekAt, next.mediaId, next.localConfiguration?.uri?.getQueryParameter("v")) // [KO] UPG-speed 2
         val duration = exoPlayer.duration
         if (duration == C.TIME_UNSET || duration <= 0L) return
         val boundary = crossfade?.plannedTransitionFor(current.mediaId) ?: duration

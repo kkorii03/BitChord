@@ -131,6 +131,7 @@ object DirectSourceGate {
             if (now.next != id || id in now.playing) lookup.ahead?.cancel()
         }
         KoDirectHqAhead.stopKeptProofsExcept(now.playing) // OPT1: a proof kept for a song no longer audible stops
+        com.music.bitchord.ko.KoNextUrlAhead.keepOnly(now.playing + listOfNotNull(now.next)) // [KO] UPG-speed 2
     }
 
     private fun Open.admits(mediaId: String) = mediaId in playing || mediaId == next

@@ -1397,7 +1397,10 @@ object AppSettings {
         runCatching {
             manager.registerDefaultNetworkCallback(
                 object : ConnectivityManager.NetworkCallback() {
-                    override fun onAvailable(network: Network) = refresh()
+                    override fun onAvailable(network: Network) {
+                        com.music.bitchord.ko.KoDeadClients.onNetwork(network.toString()) // [KO] UPG-speed 1
+                        refresh()
+                    }
                     override fun onLost(network: Network) = refresh()
                     override fun onCapabilitiesChanged(
                         network: Network,

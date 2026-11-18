@@ -657,6 +657,7 @@ internal class NextTrackPreparation(
                 }
             }
         }
+        if (!deadlineHit && stillCurrent()) com.music.bitchord.ko.KoReferenceAhead.prepare(context, song, hqWanted(song) && existingHq(song) == null, currentPlayer()?.let { remainingMs(it) } ?: Long.MAX_VALUE) // [KO] UPG-4
 
         // A timed-out mix — or a planned mix that an earlier step or the
         // lossless download pushed past the deadline — must not leave the row

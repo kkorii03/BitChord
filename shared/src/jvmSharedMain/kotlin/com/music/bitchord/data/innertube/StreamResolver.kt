@@ -534,6 +534,7 @@ object StreamResolver {
      */
     fun onSessionChanged() {
         InnerTubeXResolver.onSessionChanged()
+        com.music.bitchord.ko.KoDeadClients.clear("session changed") // [KO] UPG-speed 1
         unplayable.clear()
         UploadedTracks.clear()
         // The remembered URLs were minted for the identity that just left: a

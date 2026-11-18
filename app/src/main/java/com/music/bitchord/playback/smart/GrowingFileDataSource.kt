@@ -74,6 +74,15 @@ internal class GrowingFileReader(
 
     private val reader = RandomAccessFile(file, "r")
 
+    /**
+     * [KO] UPG-8: the furthest byte the extractor has read so far. Logged
+     * beside the decoded length so the head a verify needs can be sized from
+     * real reads; nothing else uses it.
+     */
+    @Volatile
+    var maxReadEnd: Long = 0L
+        private set
+
     @Synchronized
     fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
         if (size == 0) return 0
@@ -92,6 +101,7 @@ internal class GrowingFileReader(
                 val read = reader.read(buffer, offset + filled, want)
                 if (read > 0) {
                     filled += read
+                    if (at + read > maxReadEnd) maxReadEnd = at + read // [KO] UPG-8
                     continue
                 }
             }

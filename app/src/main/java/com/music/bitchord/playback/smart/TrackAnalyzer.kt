@@ -733,6 +733,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         if (!running.add(trackId)) return
         val startedAt = SystemClock.elapsedRealtime()
         try {
+            AudioDecoder.aheadOfTime.set(com.music.bitchord.ko.KoAnalysisPriority.aheadOfTime(window)) // [KO] UPG-6
             // Efficient mode yields to decoding and playback rather than
             // competing for a core. Thread count remains the speed knob.
             Process.setThreadPriority(
@@ -767,6 +768,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 recordRegionFailure(trackId, window, durationSeconds)
             }
         } finally {
+            AudioDecoder.aheadOfTime.set(false) // [KO] UPG-6
             analysisMillis.merge(trackId, SystemClock.elapsedRealtime() - startedAt, Long::plus)
             running.remove(trackId)
             analysisCancel.finished(trackId)

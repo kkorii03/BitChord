@@ -422,7 +422,7 @@ class KoOpeningClip(private val seconds: Double) {
         if (rate != inputRate) return
         val out = buffer ?: return
         for (sample in samples) {
-            if (written >= out.size) return
+            if (written >= out.size) break
             sum += sample
             count++
             phase += 1.0
@@ -434,7 +434,21 @@ class KoOpeningClip(private val seconds: Double) {
                 count = 0
             }
         }
+        // [KO] UPG-5: the opening is complete; nothing pushed later changes it.
+        if (!fired && written >= out.size) {
+            fired = true
+            onFull?.let { runCatching { it(this) } }
+        }
     }
+
+    /**
+     * [KO] UPG-5: called once, on the pushing (decoder) thread, when [seconds]
+     * of opening are held, so the words check can be asked while the rest of
+     * the decode runs. It must only hand the clip over, never block.
+     */
+    @Volatile
+    var onFull: ((KoOpeningClip) -> Unit)? = null
+    private var fired = false
 
     /** How much opening is held, in milliseconds. */
     val durationMs: Long
