@@ -32,6 +32,7 @@ import com.music.bitchord.ko.koLosslessAheadItem
 import com.music.bitchord.ko.koLogHqAhead
 import com.music.bitchord.ko.koFollowSession
 import com.music.bitchord.ko.koRefreshArmedIncomingLossless
+import com.music.bitchord.ko.koCheckNextDownloadAhead
 
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -10479,6 +10480,7 @@ class PlaybackService : MediaLibraryService() {
             if (crossfade?.isTransitioning() == true) addItem(spare?.currentMediaItem)
         }
         if (DirectSourceGate.onPlaying(audible)) AudioCache.cancelDirect()
+        koCheckNextDownloadAhead(exoPlayer, lastSeekAt) // [KO] dl-check-ahead: an unchecked saved next track is heard before it plays
         if (!DirectSourceGate.isActive() || !exoPlayer.isPlaying) return
         if (SystemClock.elapsedRealtime() - lastSeekAt < SEEK_SETTLE_MS) return
         val current = exoPlayer.currentMediaItem ?: return

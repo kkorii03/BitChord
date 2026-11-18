@@ -390,33 +390,51 @@ internal fun PlaybackService.koScheduleDownloadHealthCheck(song: Song?, player: 
     if (song.localUri != null) StreamChoice.forgetLapsed(song.videoId)
     downloadHealthJob?.cancel()
     downloadHealthJob = scope.launch(TrackLog.about(song.videoId)) {
-        val outcome = DownloadHealth.onPlayback(service, song) ?: return@launch
-        val wrong = outcome.verdict == com.music.bitchord.data.sources.DownloadHealthPolicy.Verdict.WRONG_RECORDING ||
-            outcome.verdict == com.music.bitchord.data.sources.DownloadHealthPolicy.Verdict.ARRANGEMENT
-        // Only a stream verdict means the network can stand in. Offline the
-        // policy answers REDOWNLOAD, and swapping the condemned local file
-        // for a stream that cannot open would turn a wrong recording into
-        // no playback at all; keep the local file until the repair lands.
-        val canStream = outcome.action == com.music.bitchord.data.sources.DownloadHealthPolicy.Action.STREAM
-        withContext(Dispatchers.Main) {
-            val live = service.player ?: return@withContext
-            val item = live.currentMediaItem ?: return@withContext
-            if (item.mediaId != song.videoId) return@withContext
-            val position = live.currentPosition
-            if (wrong) {
-                // The file is already behind the stream when it was unverified;
-                // there is no restart to make. A file that was playing itself
-                // is swapped in place at the same position.
-                if (!canStream || song.localUri == null) return@withContext
-                koRestreamWrongRecording(live, item, position)
-                return@withContext
-            }
-            if (outcome.verdict == com.music.bitchord.data.sources.DownloadHealthPolicy.Verdict.OK &&
-                item.mediaMetadata.extras?.getBoolean(EXTRA_UNVERIFIED_DOWNLOAD) == true
-            ) {
-                koUseVerifiedDownload(live, item, position)
-            }
-        }
+        val outcome = DownloadHealth.onPlayback(service, song)
+        // [KO] dl-check-ahead: null is also "checked already" (promotesCheckedFile), which
+        // the check ahead leaves behind for a row it could not move while a blend held it.
+        if (outcome == null && !Downloads.isRecordingVerified(song.videoId)) return@launch
+        withContext(Dispatchers.Main) { koApplyDownloadHealth(song, outcome) }
+    }
+}
+
+/**
+ * What a download check means for [song] if it is the track now playing; on
+ * the main thread. The start's check and the check ahead
+ * ([koCheckNextDownloadAhead], landing after the transition) both end here.
+ *
+ * A null [outcome] says nothing new about the file, but a row built while its
+ * file was unverified still moves onto it once the file is verified: a checked
+ * file answers null from then on, so without this the row stayed on YouTube for
+ * the whole song.
+ */
+internal fun PlaybackService.koApplyDownloadHealth(song: Song, outcome: DownloadHealth.Outcome?) {
+    val live = player ?: return
+    val item = live.currentMediaItem ?: return
+    if (item.mediaId != song.videoId) return
+    val position = live.currentPosition
+    val unverifiedItem = item.mediaMetadata.extras?.getBoolean(EXTRA_UNVERIFIED_DOWNLOAD) == true
+    if (outcome == null) {
+        if (unverifiedItem && Downloads.isRecordingVerified(song.videoId)) koUseVerifiedDownload(live, item, position)
+        return
+    }
+    val wrong = outcome.verdict == com.music.bitchord.data.sources.DownloadHealthPolicy.Verdict.WRONG_RECORDING ||
+        outcome.verdict == com.music.bitchord.data.sources.DownloadHealthPolicy.Verdict.ARRANGEMENT
+    // Only a stream verdict means the network can stand in. Offline the
+    // policy answers REDOWNLOAD, and swapping the condemned local file
+    // for a stream that cannot open would turn a wrong recording into
+    // no playback at all; keep the local file until the repair lands.
+    val canStream = outcome.action == com.music.bitchord.data.sources.DownloadHealthPolicy.Action.STREAM
+    if (wrong) {
+        // The file is already behind the stream when it was unverified;
+        // there is no restart to make. A file that was playing itself
+        // is swapped in place at the same position.
+        if (!canStream || song.localUri == null) return
+        koRestreamWrongRecording(live, item, position)
+        return
+    }
+    if (outcome.verdict == com.music.bitchord.data.sources.DownloadHealthPolicy.Verdict.OK && unverifiedItem) {
+        koUseVerifiedDownload(live, item, position)
     }
 }
 

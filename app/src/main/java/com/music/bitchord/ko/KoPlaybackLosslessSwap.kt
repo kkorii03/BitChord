@@ -909,6 +909,8 @@ internal fun MediaItem.koLosslessAheadItem(context: Context): MediaItem? {
     if (SourceRegistry.config(sourceId)?.kind == SourceKind.YOUTUBE) return null
     if (!HqQuality.isLosslessTier(choice.format)) return null
     val uri = localConfiguration?.uri ?: return null
+    // dl-check-ahead: a row on its own file is never reopened as a stream (the marker below is a resolver query).
+    if (uri.scheme == "file" || uri.scheme == "content") return null
     if (uri.getQueryParameter(QualityUpgrade.MARKER) != null) return null
     val verified = HqVerificationStore.get(context, id, sourceId, choice.trackId)
     if (!KoLosslessAhead.cueSafe(verified)) {
