@@ -117,7 +117,7 @@ class KoReviewFix1119Test {
         assertFalse(
             KoCachedPrefixStart.settleBehind(
                 videoId = id,
-                lookup = { CompletableDeferred<SourceStream?>(null) },
+                lookup = { CompletableDeferred<SourceStream?>().apply { complete(null) } },
                 walk = { error("walk failed") },
                 stillWanted = { true },
                 pin = {},

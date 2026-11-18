@@ -146,7 +146,7 @@ class KoColdStartTest {
         var handedOver = false
         val pinnedYouTube = KoCachedPrefixStart.settleBehind(
             videoId = id,
-            lookup = { CompletableDeferred<SourceStream?>(null) },
+            lookup = { CompletableDeferred<SourceStream?>().apply { complete(null) } },
             walk = { error("every client refused") },
             stillWanted = { true },
             pin = { pinned = true },
