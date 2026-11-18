@@ -80,6 +80,14 @@ object KoNextUrlAhead {
                     throw e
                 } catch (e: Exception) {
                     "failed (${e.javaClass.simpleName}); the start resolves it as before"
+                } catch (e: Throwable) {
+                    // 11-19 02:08 and 02:36: the innertubex cipher solve threw
+                    // OutOfMemoryError here (a ~7.9 MB string copy on a 256 MB
+                    // heap) and, being an Error, it escaped this root launch and
+                    // killed the app mid-song. Work ahead is optional: an Error
+                    // here means no stream ahead, and the song's own start
+                    // resolves it as before (that path is unchanged).
+                    "cipher: solve failed (${e.javaClass.simpleName}); the start resolves it as before"
                 }
                 TrackLog.d(TAG, "next-url ahead: $video $outcome in ${(System.nanoTime() - startedAt) / 1_000_000}ms", about = nextId)
             }
