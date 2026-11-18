@@ -442,6 +442,16 @@ internal fun PlaybackService.koRelookAfterFailedSwap(mediaId: String) {
     koArmInconclusiveRetry(mediaId)
 }
 
+/**
+ * A manual walk that ran out after a candidate only failed to buffer in its
+ * audition: the play's one bounded retry may ask that source again, and the
+ * automatic swap fetches the whole file before it cuts anything. A walk with no
+ * such candidate (all mismatches, all refused) is left answered.
+ */
+internal fun PlaybackService.koRelookAfterSlowAudition(mediaId: String) {
+    if (KoQualityUpgrade.releaseAuditionExclusions(mediaId)) koRelookAfterFailedSwap(mediaId)
+}
+
 /** What the badge under the seek bar was told, and from what. */
 internal fun koLogQualityLabel(snapshot: NerdStats.Snapshot) {
     TrackLog.d(

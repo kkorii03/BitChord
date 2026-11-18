@@ -21,6 +21,7 @@ import com.music.bitchord.ko.koPrefetchLosslessForNextPlay
 import com.music.bitchord.ko.koSwapLosslessMidSong
 import com.music.bitchord.ko.koArmInconclusiveRetry
 import com.music.bitchord.ko.koRelookAfterFailedSwap
+import com.music.bitchord.ko.koRelookAfterSlowAudition
 import com.music.bitchord.ko.koLogQualityLabel
 import com.music.bitchord.ko.koHqSwapDecision
 import com.music.bitchord.ko.koCurrentIsSubstitute
@@ -7536,6 +7537,7 @@ class PlaybackService : MediaLibraryService() {
                             )
                             return@launch
                         }
+                        koRelookAfterSlowAudition(mediaId) // [KO] audition-retry
                         reportManualUpgrade(
                             mediaId,
                             noBetterUpgradeMessage(mediaId, retryReport),
@@ -8144,7 +8146,7 @@ class PlaybackService : MediaLibraryService() {
             // returning a few seconds later. Dropping the parked stream stops
             // [QualityUpgrade.forcedStream] serving a URL that has just failed
             // to prove itself.
-            QualityUpgrade.failedCandidate(
+            com.music.bitchord.ko.KoQualityUpgrade.failedAudition( // [KO] audition-retry: out for this walk, not for the play's retry
                 mediaId,
                 stream.sourceConfigId,
                 HqHostTracker.hostOf(stream.url),
@@ -8512,6 +8514,7 @@ class PlaybackService : MediaLibraryService() {
                 AudioCache.warmRange(Uri.parse(upgradedUri), 0, UPGRADE_HEADER_BYTES, probeLock = false)
             }
         }
+        val koAuditionClock = SystemClock.elapsedRealtime() // [KO] audition-clock: [meter] counts no warm-up byte, so neither may the too-slow clock (11-18: 1 MB warmed in 2.6 s, then 642 kB in 0.4 s judged "in 3023ms")
         val expectedLength = withContext(Dispatchers.Main) { koExpectedSwapLengthMs(mediaId, stream, at.duration) } // [KO] NR2b-2
         val audition = withContext(Dispatchers.Main) {
             buildAuditionPlayer(meter).apply {
@@ -8537,6 +8540,7 @@ class PlaybackService : MediaLibraryService() {
                         is Audition.Ready -> return@withTimeoutOrNull verdict.bufferedTo
                         is Audition.Rejected -> {
                             TrackLog.w("BitChord", "upgrade dropped before it was heard: ${verdict.why}")
+                            com.music.bitchord.ko.KoQualityUpgrade.noteAuditionRejected(mediaId) // [KO] audition-retry: a fault in the bytes, not their speed
                             return@withTimeoutOrNull null
                         }
                         Audition.Waiting -> {
@@ -8545,7 +8549,7 @@ class PlaybackService : MediaLibraryService() {
                             // listener asked for; hand the slot to the next
                             // candidate now instead of spending the whole
                             // timeout on it.
-                            val waited = SystemClock.elapsedRealtime() - startedAt
+                            val waited = SystemClock.elapsedRealtime() - koAuditionClock // [KO] audition-clock
                             val buffered = withContext(Dispatchers.Main) { audition.bufferedPosition }
                             if (meter.bytes.get() < MIN_PROVEN_LOAD_BYTES &&
                                 buffered - at.position < 1_000L &&

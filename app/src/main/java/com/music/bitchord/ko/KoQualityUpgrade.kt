@@ -86,6 +86,16 @@ internal object KoQualityUpgrade {
     private val failedSources = ConcurrentHashMap<String, MutableSet<String>>()
     private val failedHosts = ConcurrentHashMap<String, MutableSet<String>>()
 
+    /**
+     * The part of [failedSources]/[failedHosts] earned only by an audition that
+     * did not buffer in time, not by the sound check. 11-18 '체포하겠어': kkorii12's
+     * FLAC passed hq-verify (match=100%), its audition was judged slow, and the
+     * exclusion then kept it out of every later look in that play; the second
+     * press found it at once.
+     */
+    private val auditionSources = ConcurrentHashMap<String, MutableSet<String>>()
+    private val auditionHosts = ConcurrentHashMap<String, MutableSet<String>>()
+
     /** Whether this look is the listener's hand-made request. */
     fun isManual(mediaId: String): Boolean = mediaId in QualityUpgrade.handAsked
 
@@ -125,6 +135,49 @@ internal object KoQualityUpgrade {
         QualityUpgrade.pending.remove(mediaId)
         QualityUpgrade.asked -= mediaId
         HqHostTracker.endDownload(mediaId, host)
+    }
+
+    /**
+     * [failedCandidate] for an audition that never buffered (too slow, timed
+     * out): excluded for the rest of this walk, but [releaseAuditionExclusions]
+     * may hand it to the play's one bounded retry. Only what this adds is
+     * remembered, so an exclusion a mismatch earned is never released.
+     */
+    fun failedAudition(mediaId: String, sourceConfigId: String?, host: String?) {
+        if (rejectedAuditions.remove(mediaId)) return failedCandidate(mediaId, sourceConfigId, host)
+        sourceConfigId?.takeIf { it.isNotBlank() && it !in failedSources[mediaId].orEmpty() }?.let {
+            auditionSources.getOrPut(mediaId) { ConcurrentHashMap.newKeySet() } += it
+        }
+        host?.takeIf { it.isNotBlank() && it !in failedHosts[mediaId].orEmpty() }?.let {
+            auditionHosts.getOrPut(mediaId) { ConcurrentHashMap.newKeySet() } += it
+        }
+        failedCandidate(mediaId, sourceConfigId, host)
+    }
+
+    /**
+     * Audition verdicts about the bytes themselves (ended at once, wrong length,
+     * cannot seek, a transcode under a lossless label): [failedAudition] keeps
+     * those excluded like any other failed candidate.
+     */
+    private val rejectedAuditions: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    fun noteAuditionRejected(mediaId: String) {
+        rejectedAuditions += mediaId
+    }
+
+    /**
+     * Lets the next look ask again the sources and hosts only a failed
+     * audition excluded, with a fresh search (an addon may answer another
+     * URL). False when there were none, so nothing is reopened for them.
+     */
+    fun releaseAuditionExclusions(mediaId: String): Boolean {
+        val sources = auditionSources.remove(mediaId).orEmpty()
+        val hosts = auditionHosts.remove(mediaId).orEmpty()
+        if (sources.isEmpty() && hosts.isEmpty()) return false
+        failedSources[mediaId]?.removeAll(sources)
+        failedHosts[mediaId]?.removeAll(hosts)
+        candidateQueue.remove(mediaId)
+        return true
     }
 
     /**
@@ -275,6 +328,8 @@ internal object KoQualityUpgrade {
     fun afterAskByHand(mediaId: String) {
         failedSources.remove(mediaId)
         failedHosts.remove(mediaId)
+        auditionSources.remove(mediaId)
+        auditionHosts.remove(mediaId)
         lastPending.remove(mediaId)
         retryAfter.remove(mediaId)
         // A new press is a new request: its resting-source probe budget and its
@@ -307,6 +362,8 @@ internal object KoQualityUpgrade {
         lastPending.remove(mediaId)
         failedSources.remove(mediaId)
         failedHosts.remove(mediaId)
+        auditionSources.remove(mediaId)
+        auditionHosts.remove(mediaId)
         retryAfter.remove(mediaId)
         retriedThisPlay -= mediaId
         noLookSaid.removeAll { it.startsWith("$mediaId|") }
@@ -416,6 +473,9 @@ internal object KoQualityUpgrade {
         lastPending.remove(mediaId)
         failedSources.remove(mediaId)
         failedHosts.remove(mediaId)
+        auditionSources.remove(mediaId)
+        auditionHosts.remove(mediaId)
+        rejectedAuditions -= mediaId
         candidateQueue.remove(mediaId)
         manualSessions.remove(mediaId)?.let(SourceResolver::clearManualProbes)
     }

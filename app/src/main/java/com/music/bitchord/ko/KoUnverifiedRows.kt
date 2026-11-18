@@ -69,5 +69,38 @@ internal object KoUnverifiedRows {
     ): Boolean = unverified && referenceComplete && candidateComplete && alignerRan &&
         alignerVerdict?.startsWith(FIGURES_REFUSAL) == true
 
+    /**
+     * [KO] unaligned-words. Phone 11-16 21:15, AKMU's 외국인의 고백: a
+     * title-unverified row (AKMU's Love Lee, the same 3:00) was fetched whole
+     * (19 MB), decoded, and left "unmeasured" with no alignment; nothing was
+     * stored, so the walk fetched it again a minute later. When the aligner gives
+     * no figures to refuse on, a doubted row whose two openings are full is asked
+     * its words instead: different words refuse it like a measured mismatch. The
+     * same words, too few words or no hearing change nothing (still unmeasured).
+     */
+    fun wordsDecide(unverified: Boolean, referenceComplete: Boolean, candidateComplete: Boolean): Boolean =
+        unverified && referenceComplete && candidateComplete
+
+    /**
+     * The words check with no measured offset ([compare] takes the shift,
+     * `candidate = shift + youtube`): tried at [UNALIGNED_SHIFTS_MS] (an intro
+     * one copy has and the other lacks), keeping the reading most favourable to
+     * the candidate. So DIFFERENT comes back only when no tried shift finds the
+     * same words, and UNDECIDED when none could call it either way.
+     */
+    fun unalignedWords(compare: (shiftMs: Long) -> KoVersionGuard.WordsCheck): KoVersionGuard.WordsCheck {
+        val checks = UNALIGNED_SHIFTS_MS.map(compare)
+        // Any shift that hears the same words keeps the row: DIFFERENT only when none does.
+        checks.filter { it.verdict == KoVersionGuard.Words.SAME }
+            .maxByOrNull { it.shared.toDouble() / minOf(it.referenceWords, it.candidateWords).coerceAtLeast(1) }
+            ?.let { return it }
+        return checks.filter { it.verdict != KoVersionGuard.Words.UNDECIDED }
+            .maxByOrNull { it.shared.toDouble() / minOf(it.referenceWords, it.candidateWords).coerceAtLeast(1) }
+            ?: checks.first()
+    }
+
+    /** Zero first; a 60-second opening still leaves a 36-second stretch at the widest shift. */
+    internal val UNALIGNED_SHIFTS_MS = listOf(0L, 5_000L, -5_000L, 10_000L, -10_000L, 15_000L, -15_000L, 20_000L, -20_000L)
+
     private fun key(sourceId: String, trackId: String) = sourceId + '\u0001' + trackId
 }

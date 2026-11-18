@@ -632,6 +632,8 @@ object HqAudioVerify {
                         // minute, and an upgrade nobody doubted would wait behind it.
                         keptWords?.takeIf { KoVersionGuard.hearsKeptWords(needsWords = false, it.seconds, hearer) }
                     }
+                    // [KO] unaligned-words: a doubted row's opening is kept too, for a null alignment to hear.
+                    val unalignedWords = youtubeWords ?: keptWords?.takeIf { KoUnverifiedRows.contains(sourceId, trackId) && KoVersionGuard.worthHearingUnasked(it.seconds) }
                     // The two ninety-second reads do not depend on each other:
                     // the reference comes from the WAV the song check already
                     // decodes and the candidate from a cache file holding its
@@ -643,7 +645,7 @@ object HqAudioVerify {
                     // [KO] OPT1: a read-ahead with no opening, profile or kept reference in hand can only
                     // learn NO_WAV; its candidate (a source API call and a head request) is not started for it.
                     val referenceFirst = !waitForOpening && !referenceInHand(context, youtubeId, target.title)
-                    val candidateDeferred = if (referenceFirst) null else async { candidateFetch(context, stream, epoch, keepOpening = youtubeWords != null) }
+                    val candidateDeferred = if (referenceFirst) null else async { candidateFetch(context, stream, epoch, keepOpening = unalignedWords != null) }
                     val reference = referenceFeatures(
                         context,
                         youtubeId,
@@ -656,7 +658,7 @@ object HqAudioVerify {
                         if (referenceFirst) TrackLog.d(TAG, "hq-verify: $youtubeId skipped fetch, no reference yet", youtubeId)
                         return@coroutineScope Outcome.NoReference(reference.reason)
                     }
-                    val candidate = when (val fetched = (candidateDeferred ?: async { candidateFetch(context, stream, epoch, keepOpening = youtubeWords != null) }).await()) {
+                    val candidate = when (val fetched = (candidateDeferred ?: async { candidateFetch(context, stream, epoch, keepOpening = unalignedWords != null) }).await()) {
                         is CandidateFetch.Ready -> fetched.value
                         is CandidateFetch.RateLimited -> {
                             if (recordRateLimit) {
@@ -739,6 +741,17 @@ object HqAudioVerify {
                             TrackLog.i(TAG, "hq-verify: '${target.title}' $sourceName doubted row refused by sound; stored", youtubeId)
                             reject(context, youtubeId, sourceId, trackId)
                             return@coroutineScope Outcome.Mismatch
+                        }
+                        // [KO] unaligned-words: no figures to refuse on; a doubted row's full opening is asked its words.
+                        if (unalignedWords != null && !trackId.isNullOrBlank() &&
+                            KoUnverifiedRows.wordsDecide(KoUnverifiedRows.contains(sourceId, trackId), referenceComplete, candidateComplete)
+                        ) {
+                            val heard = heardWords(youtubeId, unalignedWords, candidate.opening, offsetMs = 0L, rate = 1.0, unaligned = true)
+                            if (heard?.verdict == KoVersionGuard.Words.DIFFERENT) {
+                                TrackLog.i(TAG, "hq-verify: '${target.title}' $sourceName doubted row with no alignment refused by words; stored", youtubeId)
+                                reject(context, youtubeId, sourceId, trackId)
+                                return@coroutineScope Outcome.Mismatch
+                            }
                         }
                         // [KO] OPT1: only two full openings give the same null again; a partial
                         // reference may still fill in, so that pair is asked again.
@@ -1211,6 +1224,8 @@ object HqAudioVerify {
         opening: KoOpeningClip?,
         offsetMs: Long,
         rate: Double,
+        /** [KO] unaligned-words: no measured offset; [KoUnverifiedRows.unalignedWords] tries the shifts. */
+        unaligned: Boolean = false,
     ): KoVersionGuard.WordsCheck? {
         val clip = opening ?: return null
         val wav = clip.wav() ?: return null
@@ -1235,20 +1250,22 @@ object HqAudioVerify {
             )
             return null
         }
-        val check = KoVersionGuard.compareWords(
-            reference = youtube.words.map { LyricsWordAlign.Heard(it.t, it.s, it.e) },
+        val reference = youtube.words.map { LyricsWordAlign.Heard(it.t, it.s, it.e) }
+        fun compare(shiftMs: Long, pace: Double) = KoVersionGuard.compareWords(
+            reference = reference,
             referenceUntilMs = (youtube.seconds * 1000).toLong(),
             candidate = heard,
             candidateUntilMs = clip.durationMs,
-            offsetMs = offsetMs,
-            rate = rate,
+            offsetMs = shiftMs,
+            rate = pace,
         )
+        val check = if (unaligned) KoUnverifiedRows.unalignedWords { compare(it, 1.0) } else compare(offsetMs, rate)
         TrackLog.i(
             TAG,
             "hq-verify words: ${check.verdict.name.lowercase()} youtube=${check.referenceWords} " +
                 "candidate=${check.candidateWords} shared=${check.shared} window=${check.windowMs}ms " +
                 "lang=${youtube.language} kb=${wav.size / 1024} send=${System.currentTimeMillis() - asked}ms " +
-                "engine=${engine.name.lowercase()}",
+                "engine=${engine.name.lowercase()}" + (if (unaligned) " aligned=no" else ""),
             youtubeId,
         )
         return check
