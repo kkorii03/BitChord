@@ -585,8 +585,10 @@ object StreamResolver {
             // growing: it plays the few seconds that exist and then ends. Live is
             // played from its HLS playlist (upstream 81369066f); only live URLs
             // pay for the lookup. [KO] live-hls
-            val stream = resolveUncached(videoId).let { found ->
-                if (isLiveUrl(found.url)) liveHlsStream(videoId) ?: found else found
+            val stream = com.music.bitchord.ko.KoResolveOom.failSoft(videoId) { // [KO] oom3: an OOM fails the walk as an IOException
+                resolveUncached(videoId).let { found ->
+                    if (isLiveUrl(found.url)) liveHlsStream(videoId) ?: found else found
+                }
             }
             // Whether ALL was still in force when the URL was actually
             // obtained. A proxy outage that begins mid-walk sends the failsafe

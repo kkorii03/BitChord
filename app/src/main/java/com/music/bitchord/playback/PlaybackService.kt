@@ -8754,7 +8754,7 @@ class PlaybackService : MediaLibraryService() {
                     /* bufferForPlaybackMs = */ START_PLAYBACK_MS,
                     /* bufferForPlaybackAfterRebufferMs = */ START_PLAYBACK_MS,
                 )
-                .setTargetBufferBytes(AUDITION_BUFFER_BYTES)
+                .setTargetBufferBytes(com.music.bitchord.ko.KoHeapBuffer.auditionBytes(AUDITION_BUFFER_BYTES)) // [KO] oom3: by free heap
                 .build(),
         )
         .build()
