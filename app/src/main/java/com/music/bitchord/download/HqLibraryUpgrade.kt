@@ -961,6 +961,7 @@ object HqLibraryUpgrade {
     ): HqTier? = entries
         .filter { it.youtubeId == youtubeId && libraryCanFetch(it.sourceConfigId, it.verified.tier, downloadSources, automatic) }
         .minByOrNull { it.verified.tier.rank }
+        ?.verified?.tier
 
     /** [KO] DL-SRC: the enabled sources other than YouTube that a download may use now. */
     internal fun downloadSourceIds(): Set<String> =
