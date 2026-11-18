@@ -182,7 +182,9 @@ internal object RecordingMatch {
             // ordinary release. Treating them as versions made the plain
             // listing of the same recording fail every test below.
             if (words.joinToString("") in NEUTRAL) emptyList() else words.filter { it in VERSION_WORDS }
-        }.toSet()
+        }.toSet() +
+            // [KO] "(Re-record)" splits into "re record": the act's new recording, on its own clock (11-18).
+            extras.filter { normalized(it).replace(" ", "").contains("rerecord") }.map { "rerecord" }
     }
 
     private fun artistsOf(artist: String): Set<String> =

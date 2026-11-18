@@ -119,7 +119,13 @@ internal object KoAudioSwitch {
         if (foreignLead) {
             Log.d(TAG, "audio switch: reject ${catalogue?.videoId} ${catalogue?.title} reason=artist(lead) (catalogue)")
         }
-        if (catalogue != null && !foreignLead && SongVersionPolicy.isSongVersionOf(song, catalogue)) {
+        // 11-18: a mapping stored before the matcher knew re-recordings is read back
+        // unchecked ("Shake It Off" -> "(Taylor's Version)"); a take the video never names is another recording.
+        val otherTake = catalogue != null && !foreignLead && KoTrackMatcher.namesUnaskedTake(target, catalogue)
+        if (otherTake) {
+            Log.d(TAG, "audio switch: reject ${catalogue?.videoId} ${catalogue?.title} reason=version (catalogue)")
+        }
+        if (catalogue != null && !foreignLead && !otherTake && SongVersionPolicy.isSongVersionOf(song, catalogue)) {
             Log.d(TAG, "audio switch: '${song.title}' -> '${catalogue.title}' (catalogue)")
             YtMusicRepository.audioVersionCache[song.videoId] = catalogue
             return catalogue

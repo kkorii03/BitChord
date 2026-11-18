@@ -1067,6 +1067,8 @@ object TrackMatcher {
         "version", "mix", "dub", "vip", "session", "sessions",
         "sped", "slowed", "reverb", "nightcore", "lofi", "orchestral", "symphonic",
         "part", "pt", "chapter",
+        // An act's new recording of an old song: "This Is How We Do It (Re-Recorded)" lands 10 s off the original (11-18).
+        "rerecorded", "rerecord", "rerecording",
         // Non-Latin spellings of the same takes. Without these a `カバー` or
         // `カラオケ` row carries no version marker and scores as the original.
         "カバー", "カラオケ", "リミックス", "ライブ", "アコースティック",

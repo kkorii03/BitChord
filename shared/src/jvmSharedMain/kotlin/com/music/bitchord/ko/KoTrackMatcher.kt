@@ -204,6 +204,11 @@ internal object KoTrackMatcher {
         return !coresEqual(wanted.cores(), got.cores())
     }
 
+    /** Whether [candidate]'s title names a take (remix, live, re-recording…) that [target]'s does not. */
+    internal fun namesUnaskedTake(target: Target, candidate: Song): Boolean =
+        (parseTitle(candidate.title, candidate.artist).versions - parseTitle(target.title, target.artist).versions)
+            .isNotEmpty()
+
     /** True when one credited artist of [wanted] is exactly one credited artist of [got]. */
     internal fun namesTheSameArtist(wanted: String, got: String): Boolean {
         val want = artistNames(wanted)
@@ -1986,7 +1991,7 @@ internal object KoTrackMatcher {
         return TitleParts(
             words = words,
             core = coreString,
-            versions = versions,
+            versions = versions.mapTo(sortedSetOf()) { TAKE_ALIASES[it] ?: it },
             context = context,
             altWords = altWords,
             altCores = altCores,
@@ -2165,6 +2170,9 @@ internal object KoTrackMatcher {
         if (!takeMarkers) {
             context += words.filter { it.length > 2 && it !in NOISE_WORDS }
             return
+        }
+        OWNERS_VERSION.find(normalize(segment))?.let { owned ->
+            versions += "${owned.groupValues[1].ifEmpty { owned.groupValues[2] }}'s version"
         }
         // A named soundtrack label inside a dropped tail names the release,
         // not the take: "Joker OST Korean" keeps its language marker while
@@ -2431,7 +2439,25 @@ internal object KoTrackMatcher {
      * recording even though the word is a plain title word elsewhere. The
      * honorific "Mr. Big" is safe because it is not the only word.
      */
-    private val EXTRA_TAKES = setOf("inst", "band", "piano", "mr")
+    private val EXTRA_TAKES = setOf(
+        "inst", "band", "piano", "mr",
+        // "we can't be friends (wait for your love) – string version" is its own recording (11-18).
+        "string", "strings", "orchestra", "quartet",
+    )
+
+    /** One key for the spellings of one take, so "(Strings)" meets "- String Version". */
+    private val TAKE_ALIASES = mapOf(
+        "strings" to "string",
+        "rerecorded" to "re-recorded", "rerecord" to "re-recorded", "rerecording" to "re-recorded",
+    )
+
+    /**
+     * "(Taylor's Version)": a re-recording named after its owner. "Version" alone is
+     * packaging, so without this the re-record read as the original MV's own song (11-18).
+     */
+    private val OWNERS_VERSION = Regex(
+        """(?<![\p{L}\p{N}])(?:([\p{L}\p{N}]+)['’‘`]s|(taylor)s)\s+ver(?:sion)?(?![\p{L}\p{N}])""",
+    )
 
     /** `Part`/`Pt` spellings of a numbered part. */
     private val PART_WORDS = setOf("part", "pt")
