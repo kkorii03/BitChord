@@ -350,7 +350,7 @@ object InnerTubeXResolver {
         // answered on this route (KoDeadClients), and walks again with them when
         // that finds nothing, so they stay a fallback. A one-client override ask
         // is left as it was.
-        val deadRoute = com.music.bitchord.ko.KoDeadClients.route(viaProxy, com.music.bitchord.data.net.YouTubeProxy.routeGeneration)
+        val deadRoute = com.music.bitchord.ko.KoDeadClients.route(viaProxy, com.music.bitchord.data.net.YouTubeProxy.routeGeneration, com.music.bitchord.ko.KoDeadClients.place())
         val skip = excludedFor(videoId) + skipClients
         val dead = if (preferredClientId == null) com.music.bitchord.ko.KoDeadClients.dead(deadRoute) - skip else emptySet()
         suspend fun walk(excludedClients: Set<String>) = withContext(com.music.bitchord.ko.KoDeadClients.walkContext(deadRoute, videoId)) {

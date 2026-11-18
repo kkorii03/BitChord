@@ -14,16 +14,27 @@ import kotlin.coroutines.CoroutineContext
  * WEB_CREATOR answered.
  *
  * A client is skipped on a route only after it failed for [MIN_VIDEOS]
- * different videos and never served one there. The memo lives in memory
- * only (an app restart starts empty), is per route (direct, or the proxy at
- * its current route generation), and is wiped when the default network
- * changes or the YouTube session changes. It is driven by events, never by a
- * timer. The skipped clients stay a fallback: [InnerTubeXResolver] walks
- * again without them when the walk that skipped them finds nothing.
+ * different videos and never served one there. The memo is per route (direct,
+ * or the proxy at its current route generation), and is wiped when the default
+ * network changes or the YouTube session changes. It is driven by events,
+ * never by a timer. The skipped clients stay a fallback: [InnerTubeXResolver]
+ * walks again without them when the walk that skipped them finds nothing.
+ *
+ * [KO] cold1119: the in-memory memo alone never helped a cold start, the walk
+ * that matters most: the process restarts every 30-90 minutes and each new
+ * process paid VISIONOS x3 + WEB_EMBEDDED_PLAYER again (about 2-3 s on the
+ * 11-18 17:11 cold start) for three more videos before skipping them. A client
+ * that crossed [MIN_VIDEOS] is now also written to [init]'s store (once per
+ * change, never in a loop) under the route's server identity (not its
+ * per-process generation), and a new process skips it for [RESTORED_TTL_MS]
+ * after it was recorded. The same events that wipe the memo wipe the store.
  */
 object KoDeadClients {
     private const val TAG = "BitChord"
     const val MIN_VIDEOS = 3
+
+    /** How long a client recorded dead by an earlier process stays skipped. */
+    const val RESTORED_TTL_MS = 24L * 60 * 60 * 1000
 
     private class Walk(val route: String, val videoId: String)
 
@@ -36,14 +47,70 @@ object KoDeadClients {
     private val routes = HashMap<String, Route>()
     private var network: String? = null
 
+    /** Server identity ([placeOf]) -> client -> when it was recorded dead. */
+    private val recorded = HashMap<String, HashMap<String, Long>>()
+    private var write: ((String) -> Unit)? = null
+    private var now: () -> Long = System::currentTimeMillis
+
     /**
      * The memo key of a walk: direct or through the proxy, at the proxy's
      * [proxyGeneration] (it moves with every proxy route or setting change,
      * which also changes where a "direct" walk goes when the proxy carries all
-     * of YouTube).
+     * of YouTube). [place] names the same route across processes ([place]()).
      */
-    fun route(viaProxy: Boolean, proxyGeneration: Long): String =
-        "${if (viaProxy) "proxy" else "direct"}:$proxyGeneration"
+    fun route(viaProxy: Boolean, proxyGeneration: Long, place: String = ""): String =
+        "${if (viaProxy) "proxy" else "direct"}:$proxyGeneration" + if (place.isEmpty()) "" else ":$place"
+
+    /**
+     * What the proxy route is, stable across processes: a hash of the settings
+     * and the server in use, so another server or scope never inherits a memo.
+     */
+    fun place(): String {
+        val proxy = com.music.bitchord.data.net.YouTubeProxy
+        val c = proxy.config
+        if (!c.usable) return "off"
+        val server = if (proxy.usingBackup) "b/${c.backupHost}/${c.backupPort}" else "p/${c.host}/${c.port}"
+        return Integer.toHexString("${c.mode.name}/${c.scope.name}/$server".hashCode())
+    }
+
+    /**
+     * "proxy:7:abc" -> "proxy@abc": the route without its per-process
+     * generation. A route made without a place is never stored.
+     */
+    private fun placeOf(route: String): String? {
+        val parts = route.split(':')
+        if (parts.size < 3) return null
+        return parts[0] + "@" + parts.drop(2).joinToString(":")
+    }
+
+    /**
+     * Loads what an earlier process recorded and installs the writer. Called
+     * once at startup; [stored] is the value [write] last received.
+     */
+    @Synchronized
+    fun init(stored: String?, write: (String) -> Unit, clock: () -> Long = System::currentTimeMillis) {
+        this.write = write
+        now = clock
+        recorded.clear()
+        val at = clock()
+        stored.orEmpty().lineSequence().forEach { line ->
+            val cells = line.split('\t')
+            val time = cells.getOrNull(2)?.toLongOrNull() ?: return@forEach
+            if (cells[0].isEmpty() || cells[1].isEmpty() || at - time !in 0 until RESTORED_TTL_MS) return@forEach
+            recorded.getOrPut(cells[0]) { HashMap() }[cells[1]] = time
+        }
+        recorded.forEach { (place, clients) ->
+            TrackLog.d(TAG, "dead-client memo: restored ${clients.keys.sorted().joinToString()} on $place " +
+                "(recorded ${(at - clients.values.min()) / 60_000} min ago)")
+        }
+    }
+
+    private fun persist() {
+        val out = write ?: return
+        out(recorded.entries.joinToString("\n") { (place, clients) ->
+            clients.entries.joinToString("\n") { "$place\t${it.key}\t${it.value}" }
+        })
+    }
 
     /**
      * Context for one InnerTubeX walk, so [observe] can tell which video and
@@ -74,6 +141,10 @@ object KoDeadClients {
         videos += videoId
         if (videos.size == MIN_VIDEOS) {
             TrackLog.d(TAG, "dead-client memo: skipping $client on $route (unavailable for $MIN_VIDEOS videos, served none)")
+            placeOf(route)?.let { place ->
+                recorded.getOrPut(place) { HashMap() }[client] = now()
+                persist()
+            }
         }
     }
 
@@ -83,13 +154,21 @@ object KoDeadClients {
         val state = routeState(route)
         state.served += client
         state.failedOn.remove(client)
+        val place = placeOf(route) ?: return
+        if (recorded[place]?.remove(client) != null) {
+            if (recorded[place].isNullOrEmpty()) recorded.remove(place)
+            persist()
+        }
     }
 
     /** Clients a walk on [route] should not ask first. */
     @Synchronized
     fun dead(route: String): Set<String> {
-        val state = routes[route] ?: return emptySet()
-        return state.failedOn.filterValues { it.size >= MIN_VIDEOS }.keys.toSet()
+        val state = routes[route]
+        val inMemory = state?.failedOn?.filterValues { it.size >= MIN_VIDEOS }?.keys.orEmpty()
+        val at = now()
+        val restored = placeOf(route)?.let { recorded[it] }?.filterValues { at - it in 0 until RESTORED_TTL_MS }?.keys.orEmpty()
+        return (inMemory + restored) - state?.served.orEmpty()
     }
 
     /** The default network is [id] now; a different one starts a fresh memo. */
@@ -102,10 +181,14 @@ object KoDeadClients {
 
     @Synchronized
     fun clear(reason: String) {
-        if (routes.values.any { it.failedOn.values.any { v -> v.size >= MIN_VIDEOS } }) {
+        if (recorded.isNotEmpty() || routes.values.any { it.failedOn.values.any { v -> v.size >= MIN_VIDEOS } }) {
             TrackLog.d(TAG, "dead-client memo cleared: $reason")
         }
         routes.clear()
+        if (recorded.isNotEmpty()) {
+            recorded.clear()
+            persist()
+        }
     }
 
     private fun routeState(route: String): Route {

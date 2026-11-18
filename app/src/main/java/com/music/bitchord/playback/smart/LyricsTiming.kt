@@ -75,6 +75,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.encodeToStream
 
 /**
  * Moves a video's lyrics onto the video's own clock.
@@ -6232,9 +6233,8 @@ private const val FIRM_FIT_LINES = 15
                         // its old text over the restored file.
                         runCatching {
                             val target = file
-                            val text = json.encodeToString(Saved.serializer(), snapshot)
                             val temporary = File(target.parentFile, "${target.name}.tmp")
-                            temporary.writeText(text)
+                            temporary.outputStream().buffered().use { writeSaved(snapshot, it) } // [KO] cold1119
                             if (!temporary.renameTo(target)) {
                                 temporary.copyTo(target, overwrite = true)
                                 temporary.delete()
@@ -6248,6 +6248,23 @@ private const val FIRM_FIT_LINES = 15
             }
         }
     }
+
+    /**
+     * [KO] cold1119 (heap-0359 holder 4): the store file streamed as UTF-8
+     * straight into [out], byte for byte what `encodeToString(...)` +
+     * `writeText` produced, without the whole multi-MB file as one String
+     * (15-30 MB transient per save next to the cipher solve's spike).
+     */
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    private fun writeSaved(snapshot: Saved, out: java.io.OutputStream) =
+        json.encodeToStream(Saved.serializer(), snapshot, out)
+
+    /** Test seam for [writeSaved]: the old String form and the streamed bytes of one store. */
+    internal fun storeTextForTest(entries: Map<String, Entry>): String =
+        json.encodeToString(Saved.serializer(), Saved(entries, version = CLOCK_VERSION))
+
+    internal fun storeBytesForTest(entries: Map<String, Entry>): ByteArray =
+        java.io.ByteArrayOutputStream().also { writeSaved(Saved(entries, version = CLOCK_VERSION), it) }.toByteArray()
 
     /** The whole timing memory as text, for a device-migration backup. */
     internal suspend fun exportBackupText(context: Context): String? = withContext(Dispatchers.IO) {

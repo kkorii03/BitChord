@@ -124,6 +124,8 @@ object AndroidStreamHooks {
             poTokenPrewarm = { visitorData -> poTokens.prewarm(visitorData) },
             ejsPreprocess = com.music.bitchord.ko.KoEjsQuickJs::preprocess, // [KO] ejs-prep
         )
+        // [KO] cold1119: clients proven dead on a route survive a restart for a day.
+        com.music.bitchord.ko.KoDeadClients.init(prefs.getString("ko_dead_clients_v1", null), { prefs.edit().putString("ko_dead_clients_v1", it).apply() })
         // Which client answered last time survives a restart for a day. The
         // direct-path bench is deliberately process-only: it is about this run.
         StreamResolver.initLearning(

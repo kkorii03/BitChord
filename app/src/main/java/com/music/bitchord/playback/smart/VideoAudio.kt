@@ -42,9 +42,13 @@ object VideoAudio {
     private const val MAX_SECONDS = 7.0 * 60
 
     /** Both decoded-audio caches together stay under this, oldest evicted first. */
-    // 16 MB: one whole 7-minute clip (13.4 MB) still fits, so the AI timing and
-    // the AI lyrics asking for the same song do not decode it twice.
-    private const val MAX_CACHED_AUDIO_BYTES = 16 * 1024 * 1024
+    // [KO] cold1119: 9 MiB, was 16. What is reused is the 90 s opening (2.88 MB)
+    // of the playing song and of the next one (hq-verify reference, song check),
+    // plus at most one abandoned partial: three openings fit. A whole-song WAV
+    // (AI timing / AI lyrics, Gemini path only) fits up to ~4.9 min; a longer one
+    // is not cached and evicts nothing (ByteLru). heap-0359: the 16 MiB budget
+    // let 13 MB of WAVs stay pinned next to the cipher solve's spike.
+    internal const val MAX_CACHED_AUDIO_BYTES = 9 * 1024 * 1024
 
     /** How long to wait for the rest of the track to come down. */
     private const val FETCH_TIMEOUT_MS = 60_000L
@@ -93,7 +97,7 @@ object VideoAudio {
     /**
      * The AI timing and the AI lyrics often ask for the same song. A long
      * session can otherwise keep every decoded clip: 11-02's heap report had
-     * 11 MB of them. One access-ordered cache with an 8 MB shared budget
+     * 11 MB of them. One access-ordered cache with a shared budget
      * covers both the video WAVs and the song-check openings.
      */
     private val recent = ByteLru<String, SongAudio>(MAX_CACHED_AUDIO_BYTES) { it.bytes.size }
