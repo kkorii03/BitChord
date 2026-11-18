@@ -133,7 +133,7 @@ class KoReviewFix1119Test {
             stillWanted = { true },
             pin = {},
             handOver = {},
-            lastResort = { fail("no lookup to wait for") },
+            lastResort = { fail("no lookup to wait for"); null },
             onSettled = { events += it },
         )
         assertTrue(events.isEmpty())
@@ -171,7 +171,7 @@ class KoReviewFix1119Test {
                 pin = { fail("nothing to pin") },
                 handOver = { handed = it },
                 complete = true,
-                lastResort = { fail("a whole copy needs no rescue") },
+                lastResort = { fail("a whole copy needs no rescue"); null },
                 onSettled = { events += it },
             ),
         )
