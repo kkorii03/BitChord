@@ -113,6 +113,7 @@ object DirectSourceGate {
         val now = open.value
         if (now.next == mediaId || mediaId in now.playing) return false
         open.value = now.copy(next = mediaId)
+        com.music.bitchord.ko.KoWindowClock.opened(mediaId) // [KO] window clock
         dropAheadNotAdmitted() // [KO] hq-ahead
         return true
     }
@@ -267,6 +268,7 @@ object DirectSourceGate {
                 startedAtMs = android.os.SystemClock.elapsedRealtime(),
             )
         }
+        com.music.bitchord.ko.KoWindowClock.step(videoId, "gate") // [KO] window clock
         val proof = KoDirectHqAhead.proofForTest ?: proofOf(videoId, target) // [KO] hq-ahead
         // [KO] hq-ahead: the next track, not yet audible, also asks Telegram/JioSaavn.
         val nextNotPlaying = open.value.let { it.next == videoId && videoId !in it.playing }
@@ -285,6 +287,7 @@ object DirectSourceGate {
         }
         val aheadOf = if (ahead) Job() else null // [KO] hq-ahead
         val answer = scope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
+                com.music.bitchord.ko.KoWindowClock.step(videoId, "work") // [KO] window clock
                 // [KO] direct-lead: the lead's proved copy, or the lead still proving, instead of a second search.
                 com.music.bitchord.ko.KoDirectLead.reused(videoId)?.let { return@async it }
                 KoDirectHqAhead.lookup( // [KO] hq-ahead

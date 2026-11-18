@@ -1932,6 +1932,7 @@ object AudioCache {
             return
         }
         directJob = scope.launch(TrackLog.about(id)) {
+            com.music.bitchord.ko.KoWindowClock.step(id, "read-ahead") // [KO] window clock
             if (StreamChoice.of(id) == null) {
                 val addon = runCatching { DirectSourceGate.lookup(id, upcoming.target) }
                     .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }

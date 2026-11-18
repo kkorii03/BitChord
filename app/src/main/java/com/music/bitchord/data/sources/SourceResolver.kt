@@ -421,6 +421,7 @@ object SourceResolver {
                 verify?.invoke(candidate) ?: true
             }
         }
+        com.music.bitchord.ko.KoWindowClock.walkStarted(mediaId) // [KO] window clock
         val found = try {
             var result = bestAcross(
                 addons,
