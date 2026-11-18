@@ -93,6 +93,32 @@ internal fun koMayPinAhead(context: Context, videoId: String, stream: SourceStre
 }
 
 /**
+ * nextprep B4: the Direct Source Stream proof's clock check. A proved addon or
+ * Telegram copy becomes the next row's pin with no [koMayPinAhead] (prefetchDirect,
+ * resolveDirect), so under Automix an off-clock FLAC opened at the YouTube cue.
+ * A song already audible is not cued by the blend ([audible]), so it passes.
+ */
+internal fun koDirectOnClock(
+    videoId: String,
+    stream: SourceStream,
+    verified: HqVerificationStore.Verified,
+    audible: Boolean,
+    automix: Boolean = AppSettings.smartFadeEnabled.value,
+): Boolean {
+    if (audible) return true
+    val lossless = stream.sourceConfigId?.let { SourceRegistry.config(it)?.kind != SourceKind.YOUTUBE } == true &&
+        HqQuality.isLosslessTier(stream.format)
+    if (KoLosslessAhead.mayPinAhead(automix, lossless, verified)) return true
+    TrackLog.d(
+        "BitChord",
+        "direct: $videoId off YouTube's clock under Automix (offset=${verified.offsetMs} rate=${verified.rate}); " +
+            "starts on YouTube, the mid-song swap maps it",
+        about = videoId,
+    )
+    return false
+}
+
+/**
  * Review SW7A-2: a complete lossless copy from an earlier play takes the plain
  * key ([com.music.bitchord.ko.KoLosslessCache.completeUpgradeRendition]) with
  * no pin and no clock check, so the standby opened it at the YouTube cue.

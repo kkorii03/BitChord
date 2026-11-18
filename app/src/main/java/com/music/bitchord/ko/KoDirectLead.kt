@@ -13,9 +13,12 @@ import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.StreamChoice
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 /**
  * Direct lead: the next track's addon/high-quality lookup, proof included, run
@@ -28,13 +31,13 @@ import kotlinx.coroutines.launch
  * proof took 7.9-17.6 s, so a proof begun at the window rarely landed before the
  * standby gave up and the song started on YouTube, to be swapped mid-song.
  *
- * Nothing is handed over: the answer is thrown away. What it leaves is the
- * pair's stored verdict ([com.music.bitchord.playback.smart.HqAudioVerify]),
- * the search memo and the addon's own warm cache. The window's ordinary lookup
- * then runs exactly as before, the same probe, the same StreamChoice pin and the
- * same settle, and its proof answers from the store (or waits on the pair's
- * lock for a proof still running here) instead of downloading again. A proof
- * that lands too late still leaves the mid-song swap as before.
+ * The answer is handed over ([reused]): the window's lookup takes the lead's
+ * proved copy, or joins the lead still proving, instead of searching again.
+ * vc213 night log: the window's own second search (search, `/stream`, probe)
+ * was what timed out at 4 s and sent proved rows to YouTube. A lead that ended
+ * with nothing leaves the window's ordinary lookup exactly as before; it then
+ * finds the pair's stored verdict, the search memo and the addon's warm cache.
+ * A proof that lands too late still leaves the mid-song swap as before.
  *
  * Driven by the playing sampler's five-second tick in
  * PlaybackService.driveDirectWindow, past its pause and seek-settle returns: no
@@ -71,7 +74,11 @@ internal object KoDirectLead {
      * is in the search memo and the verdict store, so asking again buys nothing.
      */
     private var pair: Pair<String, String>? = null
-    private var job: Job? = null
+    private var job: Deferred<SourceStream?>? = null
+    private var ledAtNs = 0L
+
+    /** How old a lead the window may still take: the lead's span plus room for a short pause. */
+    private const val REUSE_MAX_NS = 5L * 60_000 * 1_000_000
 
     /** What runs one lead; a test swaps it. */
     internal var work: suspend (String, TrackMatcher.Target) -> SourceStream? =
@@ -122,7 +129,8 @@ internal object KoDirectLead {
         if (wanted.title.isBlank() || wanted.isVideo) return
         TrackLog.d(TAG, "direct-lead: looking up $nextId ${remainingMs}ms before the transition", about = nextId)
         synchronized(this) {
-            job = scope.launch(Dispatchers.IO + TrackLog.about(nextId)) {
+            ledAtNs = System.nanoTime()
+            job = scope.async(Dispatchers.IO + TrackLog.about(nextId)) {
                 val startedAt = System.nanoTime()
                 val answer = try {
                     work(nextId, wanted)
@@ -134,12 +142,55 @@ internal object KoDirectLead {
                 }
                 TrackLog.d(
                     TAG,
-                    "direct-lead: $nextId ${answer?.let { "proved ${it.format.summary}" } ?: "none"} " +
+                    "direct-lead: $nextId ${answer?.let { "proved ${it.format.summary}, kept for the window" } ?: "none"} " +
                         "ms=${(System.nanoTime() - startedAt) / 1_000_000}",
                     about = nextId,
                 )
+                answer
             }
         }
+    }
+
+    /** The lead for [nextId] while it may still prove, or once it proved; null after none, a failure or a stop. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Synchronized
+    internal fun reusable(nextId: String): Deferred<SourceStream?>? {
+        if (pair?.second != nextId) return null
+        // A lead left over from a long pause: its stream URL may have gone stale, so the window searches fresh.
+        if (System.nanoTime() - ledAtNs > REUSE_MAX_NS) return null
+        val lead = job ?: return null
+        if (lead.isCancelled) return null
+        if (lead.isCompleted && lead.getCompleted() == null) return null
+        return lead
+    }
+
+    /**
+     * The window's lookup for [videoId] takes the lead's answer instead of a
+     * second search: proved already, or joined while it is still proving (the
+     * window's own wait still caps how long playback waits). Null leaves the
+     * window's ordinary lookup to run as it always did.
+     */
+    internal suspend fun reused(videoId: String): SourceStream? {
+        val lead = reusable(videoId) ?: return null
+        val joined = !lead.isCompleted
+        val answer = try {
+            lead.await()
+        } catch (e: CancellationException) {
+            currentCoroutineContext().ensureActive() // the window's own cancellation still propagates
+            null
+        }
+        // Refused while it waited (a broken substitute, an upgrade that killed the row): not served.
+        val usable = answer?.takeIf { !StreamChoice.substitutesRefused(videoId) && videoId !in QualityUpgrade.refused }
+        TrackLog.d(
+            TAG,
+            if (usable != null) {
+                "direct-lead: $videoId proved ${usable.format.summary} reused by window" + if (joined) " (joined while proving)" else ""
+            } else {
+                "direct-lead: $videoId gave the window nothing; it searches as before"
+            },
+            about = videoId,
+        )
+        return usable
     }
 
     /**

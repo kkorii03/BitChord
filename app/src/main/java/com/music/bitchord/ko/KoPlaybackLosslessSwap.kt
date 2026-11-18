@@ -909,10 +909,11 @@ internal suspend fun PlaybackService.koAwaitPlayerCondition(
  * copy whose verified clock is off YouTube's stays YouTube here
  * ([KoLosslessAhead.cueSafe]); the mid-song upgrade maps it later.
  */
-internal fun MediaItem.koLosslessAheadItem(context: Context): MediaItem? {
+internal fun MediaItem.koLosslessAheadItem(context: Context, late: SourceStream? = null): MediaItem? {
     val id = mediaId
     koDeferOffClockUpgradeKey(context, id) // Review SW7A-2: before any early return
-    val choice = StreamChoice.of(id) ?: return null
+    // nextprep fix 3: a late Direct proof held for this row (KoLateDirectProof) stands in for the YouTube pin.
+    val choice = late ?: StreamChoice.of(id) ?: return null
     val sourceId = choice.sourceConfigId ?: return null
     if (SourceRegistry.config(sourceId)?.kind == SourceKind.YOUTUBE) return null
     if (!HqQuality.isLosslessTier(choice.format)) return null
@@ -954,6 +955,24 @@ internal fun PlaybackService.koRefreshArmedIncomingLossless() {
     val controller = crossfade ?: return
     if (!controller.isArming()) return
     val next = exoPlayer.getMediaItemAt(nextIndex)
-    val prepared = next.koLosslessAheadItem(service) ?: return
-    if (controller.rearmIncoming(prepared)) koLogHqAhead(next.mediaId)
+    // nextprep fix 3: a late Direct proof first; refused, the ordinary pin as before.
+    var late = KoLateDirectProof.take(next.mediaId)
+    val prepared = late?.let { next.koLosslessAheadItem(service, it) }
+        ?: next.koLosslessAheadItem(service).also { late = null }
+        ?: return
+    if (controller.rearmIncoming(prepared)) {
+        late?.let { KoLateDirectProof.adopted(next.mediaId, it) }
+        koLogHqAhead(next.mediaId)
+    }
+}
+
+/**
+ * nextprep fix 3: the standby arming. A late Direct proof held for [this] row
+ * opens it as that copy; otherwise the ordinary [koLosslessAheadItem].
+ */
+internal fun MediaItem.koLosslessAheadItemAtArm(context: Context): MediaItem? {
+    val late = KoLateDirectProof.take(mediaId) ?: return koLosslessAheadItem(context)
+    val prepared = koLosslessAheadItem(context, late) ?: return koLosslessAheadItem(context)
+    KoLateDirectProof.adopted(mediaId, late)
+    return prepared
 }

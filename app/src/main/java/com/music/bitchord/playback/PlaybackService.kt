@@ -28,7 +28,7 @@ import com.music.bitchord.ko.koCurrentIsSubstitute
 import com.music.bitchord.ko.koCurrentPlayingVerification
 import com.music.bitchord.ko.koExpectedSwapLengthMs
 import com.music.bitchord.ko.koAwaitPlayerCondition
-import com.music.bitchord.ko.koLosslessAheadItem
+import com.music.bitchord.ko.koLosslessAheadItemAtArm
 import com.music.bitchord.ko.koLogHqAhead
 import com.music.bitchord.ko.koFollowSession
 import com.music.bitchord.ko.koRefreshArmedIncomingLossless
@@ -2718,7 +2718,11 @@ class PlaybackService : MediaLibraryService() {
         // armed but before its blend starts. The standby is then still holding
         // the lossy copy; re-arm it on the event rather than polling for one.
         scope.launch {
-            StreamChoice.revisions.drop(1).collect {
+            // [KO] nextprep fix 3: a late Direct proof held for the next row is the same event.
+            kotlinx.coroutines.flow.merge(
+                StreamChoice.revisions.drop(1),
+                com.music.bitchord.ko.KoLateDirectProof.landed.drop(1),
+            ).collect {
                 refreshArmedIncomingLossless()
             }
         }
@@ -7113,7 +7117,7 @@ class PlaybackService : MediaLibraryService() {
     ): Boolean = koAwaitPlayerCondition(timeoutMs, *players, condition = condition) // [KO] hq-lossless
 
     private fun losslessAheadItem(item: MediaItem): MediaItem? =
-        item.koLosslessAheadItem(this) // [KO] hq-lossless
+        item.koLosslessAheadItemAtArm(this) // [KO] hq-lossless; nextprep fix 3 takes a late Direct proof
 
     private fun logHqAhead(mediaId: String) =
         koLogHqAhead(mediaId) // [KO] hq-lossless

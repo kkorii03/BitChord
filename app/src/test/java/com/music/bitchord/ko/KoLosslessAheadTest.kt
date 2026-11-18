@@ -69,7 +69,7 @@ class KoLosslessAheadTest {
         val prep = source("src/main/java/com/music/bitchord/playback/NextTrackPreparation.kt")
         assertTrue("next-prep re-pin must ask the clock", "koMayPinAhead(context, song.videoId, found)" in prep)
         val body = source("src/main/java/com/music/bitchord/ko/KoPlaybackLosslessSwap.kt")
-            .substringAfter("internal fun MediaItem.koLosslessAheadItem(context: Context): MediaItem? {")
+            .substringAfter("internal fun MediaItem.koLosslessAheadItem(context: Context, late: SourceStream? = null): MediaItem? {")
         val defer = body.indexOf("koDeferOffClockUpgradeKey(context, id)")
         assertTrue("the standby must defer an off-clock complete copy", defer >= 0)
         assertTrue("before the no-pin early return", defer < body.indexOf("StreamChoice.of(id) ?: return null"))
@@ -127,7 +127,7 @@ class KoLosslessAheadTest {
             .map { File(root, "${it}src/main/java/com/music/bitchord/ko/KoPlaybackLosslessSwap.kt") }
             .first { it.exists() }
         val body = file.readText()
-            .substringAfter("internal fun MediaItem.koLosslessAheadItem(context: Context): MediaItem? {")
+            .substringAfter("internal fun MediaItem.koLosslessAheadItem(context: Context, late: SourceStream? = null): MediaItem? {")
             .substringBefore("internal fun PlaybackService.koLogHqAhead(")
         val gate = body.indexOf("KoLosslessAhead.cueSafe(")
         assertTrue("gate missing", gate >= 0)

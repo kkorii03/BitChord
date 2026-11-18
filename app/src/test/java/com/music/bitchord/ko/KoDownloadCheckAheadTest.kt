@@ -123,7 +123,7 @@ class KoDownloadCheckAheadTest {
         assertTrue(replaced >= 0 && replaced < move.indexOf("StreamChoice.forget(id)"))
 
         val standby = source("ko/KoPlaybackLosslessSwap.kt")
-            .substringAfter("internal fun MediaItem.koLosslessAheadItem(context: Context): MediaItem? {")
+            .substringAfter("internal fun MediaItem.koLosslessAheadItem(context: Context, late: SourceStream? = null): MediaItem? {")
             .substringBefore("internal fun PlaybackService.koLogHqAhead(")
         val guard = standby.indexOf("if (uri.scheme == \"file\" || uri.scheme == \"content\") return null")
         assertTrue("a file row is not rewritten", guard >= 0)

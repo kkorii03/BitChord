@@ -133,6 +133,7 @@ object DirectSourceGate {
         KoDirectHqAhead.stopKeptProofsExcept(now.playing) // OPT1: a proof kept for a song no longer audible stops
         com.music.bitchord.ko.KoNextUrlAhead.keepOnly(now.playing + listOfNotNull(now.next)) // [KO] UPG-speed 2
         com.music.bitchord.ko.KoDirectLead.keepOnly(now.playing, now.next) // [KO] direct-lead
+        com.music.bitchord.ko.KoLateDirectProof.keepOnly(now.next?.takeIf { it !in now.playing }) // [KO] nextprep fix 3
     }
 
     private fun Open.admits(mediaId: String) = mediaId in playing || mediaId == next
@@ -262,6 +263,8 @@ object DirectSourceGate {
         val aheadOf = if (ahead) Job() else null // [KO] hq-ahead
         val fresh = Lookup(
             work = scope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
+                // [KO] direct-lead: the lead's proved copy, or the lead still proving, instead of a second search.
+                com.music.bitchord.ko.KoDirectLead.reused(videoId)?.let { return@async it }
                 KoDirectHqAhead.lookup( // [KO] hq-ahead
                     target.title,
                     aheadOf,
@@ -339,7 +342,12 @@ object DirectSourceGate {
         if (!AppSettings.appContextReady()) return null
         val context = AppSettings.appContext
         // [KO] manifest-verify: a manifest is now measurable, but a direct open is progressive; it stays for the upgrade swap.
-        return { stream -> !StreamContainer.isManifest(stream.url) && HqAudioVerify.verify(context, videoId, target, stream) != null }
+        // [KO] nextprep B4: and, under Automix for a song not yet audible, on YouTube's clock (the pin opens at the YouTube cue).
+        return { stream ->
+            !StreamContainer.isManifest(stream.url) &&
+                HqAudioVerify.verify(context, videoId, target, stream)
+                    ?.let { com.music.bitchord.ko.koDirectOnClock(videoId, stream, it, audible = isPlaying(videoId)) } == true
+        }
     }
 
     internal suspend fun firstAnswer(
@@ -443,12 +451,15 @@ object DirectSourceGate {
      * sets the bitrate a candidate has to beat.
      */
     fun startedOnYouTube(videoId: String, target: TrackMatcher.Target) {
+        val running = stillLooking(videoId)
         val pending = QualityUpgrade.settledForLess(
             mediaId = videoId,
             target = target,
-            inFlight = stillLooking(videoId),
+            inFlight = running,
             playing = NerdStats.pickedBitrateKbps(videoId)?.let { StreamFormat(kbps = it) },
         )
         if (!pending) NerdStats.onLosslessRaceEnd(videoId)
+        // [KO] nextprep fix 3: a proof landing before the row sounds goes to the standby, not only the mid-song swap.
+        if (pending) com.music.bitchord.ko.KoLateDirectProof.watch(videoId, running) { isPlaying(videoId) }
     }
 }
