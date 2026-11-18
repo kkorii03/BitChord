@@ -24,6 +24,7 @@ import com.music.bitchord.data.sources.HqLibraryAutoRetryPolicy
 import com.music.bitchord.data.sources.HqLibraryEntry
 import com.music.bitchord.data.sources.HqLibraryPolicy
 import com.music.bitchord.data.sources.HqLibraryTarget
+import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
@@ -459,7 +460,9 @@ object HqLibraryUpgrade {
      * restarted forever. A manual pass ignores the park by design.
      */
     private fun hasRetryableWork(context: Context, nowMs: Long): Boolean {
+        val downloadSources = downloadSourceIds() // [KO] DL-SRC
         val entries = fetchable(HqVerificationStore.entries(context)) // [KO]
+            .filter { libraryCanFetch(it.sourceConfigId, it.verified.tier, downloadSources, automatic = !manualPass) }
         val downloaded = Downloads.savedMetadataSnapshot()
         synchronized(lock) {
             if (activeVideoId != null) return true
@@ -645,12 +648,15 @@ object HqLibraryUpgrade {
         // recording. Computed before the entry lookup so it can be excluded
         // there, not only from the later search.
         val wrongSource = meta?.takeIf { it.wrongRecording }?.hqSourceConfigId
+        val downloadSources = downloadSourceIds() // [KO] DL-SRC
         val entry = bestEntryFor(
             context = context,
             videoId = song.videoId,
             songTitle = song.title,
             songArtist = song.artist,
             excludeSourceConfigId = wrongSource,
+            downloadSources = downloadSources,
+            automatic = automatic,
         )
         // A repair may accept an equal rung, but never a lower one: replacing
         // a lossless file with a verified 320kbps copy would be a downgrade
@@ -681,11 +687,16 @@ object HqLibraryUpgrade {
         manualScope.launch(TrackLog.about(song.videoId)) {
             val target = TrackMatcher.targetOf(song)
             val report = SourceResolver.SearchReport()
-            val candidate = runCatching {
+            // [KO] DL-SRC: a source a download may not use is not asked, and with none left nothing is searched.
+            val skips = searchSkipsForDownload(
+                com.music.bitchord.data.sources.SourceRegistry.active().map { it.configId to it.kind },
+                downloadSources,
+            )
+            val candidate = if (downloadSources.isEmpty()) null else runCatching {
                 SourceResolver.upgradeFor(
                     target = target,
                     playing = DownloadedQuality.formatOf(badge),
-                    excludeSources = setOfNotNull(wrongSource),
+                    excludeSources = setOfNotNull(wrongSource) + skips,
                     // A tap on the download's own upgrade button is a manual
                     // request: it gets the longer per-source search window and
                     // asks a resting source once. The automatic library pass
@@ -694,6 +705,18 @@ object HqLibraryUpgrade {
                     // The report is what tells a refused credential apart from
                     // a genuine "no better copy" below.
                     report = report,
+                    // [KO] DL-SRC: the automatic pass passes over Atmos before it is heard; see [libraryCanFetch].
+                    verify = if (automatic) {
+                        { source, stream ->
+                            val takes = libraryCanFetch(source.configId, HqQuality.tierOf(stream.format), downloadSources, automatic = true)
+                            if (!takes) {
+                                TrackLog.d(TAG, "download-check: ${song.videoId} passes over ${source.displayName}'s ${stream.format.summary}", song.videoId)
+                            }
+                            takes
+                        }
+                    } else {
+                        null
+                    },
                 )
             }.getOrNull()
             if (candidate != null) {
@@ -747,7 +770,8 @@ object HqLibraryUpgrade {
                     TAG,
                     "download-check: ${song.videoId} manual=${!automatic} result=" +
                         (if (candidate == null) "no-candidate" else "not-verified-better") +
-                        " action=none tier=${currentTier.name}",
+                        " action=none tier=${currentTier.name}" +
+                        (if (skips.isEmpty() && downloadSources.isNotEmpty()) "" else " download-sources=${downloadSources.size} skipped=${skips.size}"), // [KO] DL-SRC
                     song.videoId,
                 )
                 if (!automatic) {
@@ -871,10 +895,13 @@ object HqLibraryUpgrade {
         songTitle: String,
         songArtist: String,
         excludeSourceConfigId: String? = null,
+        downloadSources: Set<String>,
+        automatic: Boolean,
     ): HqVerificationStore.Entry? =
         fetchable(HqVerificationStore.entries(context))
             .asSequence()
             .filter { it.youtubeId == videoId }
+            .filter { libraryCanFetch(it.sourceConfigId, it.verified.tier, downloadSources, automatic) } // [KO] DL-SRC
             .filter { !it.sourceConfigId.isBlank() && !it.trackId.isBlank() }
             .filter { excludeSourceConfigId == null || it.sourceConfigId != excludeSourceConfigId }
             .filter {
@@ -905,6 +932,49 @@ object HqLibraryUpgrade {
         entries.filter {
             com.music.bitchord.ko.KoVersionGuard.closesWordsQuestion(it.verified.wordsChecked, it.verified.guardSeen)
         }
+
+    /**
+     * [KO] DL-SRC: whether a pair from [sourceConfigId] at [tier] can become a library file now.
+     *
+     * 11-18 phone: kkorii12's manifest said `allowDownloads: 0`, yet the pass
+     * searched it, downloaded and heard its row (Groq included), queued the
+     * download and failed in 18 ms ("검증된 고음질 음원을 받을 수 없습니다",
+     * [com.music.bitchord.ko.downloads.KoDownloadPipeline.routeForVerified]),
+     * then planned the same pair again after every cooldown. The automatic
+     * pass also leaves Dolby Atmos out, as the automatic playback look does
+     * ([HqQuality.worthProving][com.music.bitchord.data.sources.HqQuality.worthProving]):
+     * it is not a lossless rung. A request by hand keeps it.
+     */
+    internal fun libraryCanFetch(
+        sourceConfigId: String,
+        tier: HqTier,
+        downloadSources: Set<String>,
+        automatic: Boolean,
+    ): Boolean = sourceConfigId in downloadSources && !(automatic && tier == HqTier.DOLBY_ATMOS)
+
+    /** [KO] DL-SRC: the best rung a library download could fetch for [youtubeId]; see [libraryCanFetch]. */
+    internal fun libraryBestTier(
+        entries: List<HqVerificationStore.Entry>,
+        youtubeId: String,
+        downloadSources: Set<String>,
+        automatic: Boolean,
+    ): HqTier? = entries
+        .filter { it.youtubeId == youtubeId && libraryCanFetch(it.sourceConfigId, it.verified.tier, downloadSources, automatic) }
+        .minByOrNull { it.verified.tier.rank }
+
+    /** [KO] DL-SRC: the enabled sources other than YouTube that a download may use now. */
+    internal fun downloadSourceIds(): Set<String> =
+        com.music.bitchord.data.sources.SourceRegistry.activeForDownload()
+            .filter { it.kind != com.music.bitchord.data.sources.SourceKind.YOUTUBE }
+            .mapTo(HashSet()) { it.configId }
+
+    /** [KO] DL-SRC: the enabled sources an upgrade search must skip, since nothing they find can be downloaded. */
+    internal fun searchSkipsForDownload(
+        active: List<Pair<String, com.music.bitchord.data.sources.SourceKind>>,
+        downloadSources: Set<String>,
+    ): Set<String> = active
+        .filter { (id, kind) -> kind != com.music.bitchord.data.sources.SourceKind.YOUTUBE && id !in downloadSources }
+        .mapTo(HashSet()) { it.first }
 
     /** A setting changed: drop the old plan so the new switches take effect now. */
     fun onSettingsChanged(context: Context) {
@@ -1196,6 +1266,22 @@ object HqLibraryUpgrade {
             // No download started for this target, so there is no active id to
             // match. The ordinary settle guard would leave it at the head of
             // the plan forever, and every pass would pick it again.
+            settle(
+                context,
+                pending.target.videoId,
+                success = false,
+                requireActive = false,
+                recordFailure = false,
+            )
+            return@withContext
+        }
+        // [KO] DL-SRC: a kept plan may name a pair whose source has since refused downloads.
+        if (!libraryCanFetch(pending.target.sourceConfigId, pending.target.verifiedTier, downloadSourceIds(), automatic = !manualPass)) {
+            TrackLog.w(
+                TAG,
+                "hq-library: '${pending.song.title}' has no source that allows this download now; skipping",
+                pending.target.videoId,
+            )
             settle(
                 context,
                 pending.target.videoId,
@@ -1551,9 +1637,15 @@ object HqLibraryUpgrade {
         includeParked: Boolean = false,
     ): List<PendingTarget> {
         val stored = HqVerificationStore.entries(context)
-        val verified = fetchable(stored) // [KO]
-        if (verified.size < stored.size) {
-            TrackLog.d(TAG, "hq-library: ${stored.size - verified.size} pairs wait for the words check")
+        val heard = fetchable(stored) // [KO]
+        if (heard.size < stored.size) {
+            TrackLog.d(TAG, "hq-library: ${stored.size - heard.size} pairs wait for the words check")
+        }
+        // [KO] DL-SRC: a pair no download can be made from is not planned at all.
+        val downloadSources = downloadSourceIds()
+        val verified = heard.filter { libraryCanFetch(it.sourceConfigId, it.verified.tier, downloadSources, automatic = !manualPass) }
+        if (verified.size < heard.size) {
+            TrackLog.d(TAG, "hq-library: ${heard.size - verified.size} pairs left out: their source allows no downloads now, or Atmos on the automatic pass")
         }
         if (verified.isEmpty()) return emptyList()
         val downloaded = Downloads.savedMetadataSnapshot()

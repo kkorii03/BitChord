@@ -151,7 +151,13 @@ object DownloadHealth {
         if (!inFlight.add(id)) return@withContext null
         try {
             val currentTier = DownloadedQuality.tierOf(meta.downloadFormat, meta.hqTier)
-            val bestTier = HqVerificationStore.bestTier(context, id)
+            // [KO] DL-SRC: only a pair a download could fetch makes this file "lower quality".
+            val bestTier = HqLibraryUpgrade.libraryBestTier(
+                HqVerificationStore.entries(context),
+                id,
+                HqLibraryUpgrade.downloadSourceIds(),
+                automatic = true,
+            )
             val online = online(context)
 
             // [KO] A file saved from a pair whose words were never compared is
