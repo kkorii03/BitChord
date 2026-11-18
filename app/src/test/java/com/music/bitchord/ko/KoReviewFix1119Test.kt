@@ -247,7 +247,9 @@ class KoReviewFix1119Test {
             .substringAfter("private suspend fun PlaybackService.koRescueCachedPrefix(")
         val replace = rescue.indexOf("setUri(upgraded)")
         val pin = rescue.indexOf("StreamChoice.remember(id, stream, substituted = true)")
-        assertTrue("the addon goes in as its own rendition", rescue.indexOf("QualityUpgrade.upgradedUri(") in 0 until replace)
+        // review2 R2-1: the upgraded key now comes from koRescueSlot, which also checks the slot.
+        assertTrue("the addon goes in as its own rendition", rescue.indexOf("val upgraded = koRescueSlot(id, stream)") in 0 until replace)
+        assertTrue(rescue.substringAfter("private fun PlaybackService.koRescueSlot(").contains("QualityUpgrade.upgradedUri("))
         assertTrue("marked before the pin the guard reads", rescue.indexOf("KoCachedPrefixStart.onRescued(id)") in 0 until pin)
     }
 

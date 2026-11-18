@@ -260,10 +260,51 @@ internal object KoCachedPrefixStart {
     fun refusesSplice(videoId: String, ownRendition: Boolean): Boolean =
         !ownRendition && videoId in rescued && StreamChoice.isSubstitute(videoId)
 
+    /**
+     * [KO] review2 R2-1: why the rescue must not use the row's `#hifi` slot, or
+     * null when it may. The key names a slot, not a file: an audition fills it
+     * with its own candidate, and a stream parked there by another upgrade
+     * ([QualityUpgrade.force] precedes every writer) owns what is or will be
+     * under it. Writing the addon into either splices two files into one entry,
+     * which [PlaybackService.swapIn] and [KoLosslessCache] already refuse.
+     * The same URL parked there is this very file, so its bytes are kept.
+     */
+    internal fun slotRefusal(auditioning: Boolean, parkedUrl: String?, rescueUrl: String): String? = when {
+        auditioning -> "an audition is filling its upgraded slot"
+        parkedUrl != null && parkedUrl != rescueUrl -> "another upgrade is parked in its upgraded slot"
+        else -> null
+    }
+
+    /**
+     * [KO] review2 R2-2: rescues declined while an Automix blend ran (the row is
+     * the incoming one and not yet, or only just, the session's), offered again
+     * once when the blend settles ([onBlendSettled], the controller's own
+     * settled event; no timer). [blendOffered] keeps it to one retry per play.
+     */
+    private val afterBlend = ConcurrentHashMap<String, SourceStream>()
+    private val blendOffered = ConcurrentHashMap.newKeySet<String>()
+
+    /** Parks [stream] for [onBlendSettled]; false when this play already used its retry. */
+    fun offerAfterBlend(videoId: String, stream: SourceStream): Boolean {
+        if (!blendOffered.add(videoId)) return false
+        afterBlend[videoId] = stream
+        return true
+    }
+
+    /** The crossfade settled: each parked rescue goes back to the player once. */
+    fun onBlendSettled() {
+        for (videoId in afterBlend.keys.toList()) {
+            val stream = afterBlend.remove(videoId) ?: continue
+            _settled.tryEmit(Settled.Rescue(videoId, stream))
+        }
+    }
+
     /** The audible rows changed: rows no longer audible start afresh next time. */
     fun keepOnly(playing: Set<String>) {
         started.retainAll(playing)
         rescued.retainAll(playing)
+        afterBlend.keys.retainAll(playing)
+        blendOffered.retainAll(playing)
     }
 
     internal fun startedForTest(videoId: String): Boolean = videoId in started
@@ -271,6 +312,8 @@ internal object KoCachedPrefixStart {
     internal fun resetForTest() {
         started.clear()
         rescued.clear()
+        afterBlend.clear()
+        blendOffered.clear()
     }
 }
 
@@ -296,27 +339,25 @@ internal fun PlaybackService.koOnCachedPrefixSettled(event: KoCachedPrefixStart.
  */
 private suspend fun PlaybackService.koRescueCachedPrefix(id: String, stream: SourceStream) {
     val service = this
-    val verified = withContext(Dispatchers.IO) {
-        runCatching { HqVerificationStore.get(service, id, stream.sourceConfigId, stream.trackId) }.getOrNull()
+    val upgraded = koRescueSlot(id, stream) ?: return
+    // [KO] review2 R2-1: a clean `#hifi` entry first, as swapIn and
+    // KoLosslessCache do, asked before [QualityUpgrade.force] overwrites the
+    // record of what filled it. Safe under the old player: it reads the plain key.
+    val filled = QualityUpgrade.forcedStream(Uri.parse(upgraded))?.url == stream.url
+    val (verified, clean) = withContext(Dispatchers.IO) {
+        runCatching { HqVerificationStore.get(service, id, stream.sourceConfigId, stream.trackId) }.getOrNull() to
+            (filled || AudioCache.discardRendition(Uri.parse(upgraded)))
     }
-    val live = player ?: return
-    val item = live.currentMediaItem
-    val uri = item?.localConfiguration?.uri
-    val why = when {
-        item == null || item.mediaId != id -> "it is no longer the current row"
-        uri == null || uri.getQueryParameter("v") != id || QualityUpgrade.cacheTag(uri) != null -> "it plays another rendition"
-        StreamChoice.of(id) != null -> "a stream was pinned meanwhile"
-        live.playerError != null -> "the player already failed"
-        crossfade?.isTransitioning() == true -> "a transition is under way"
-        else -> null
-    }
-    if (why != null || item == null || uri == null) {
-        TrackLog.d("BitChord", "cold-prefix: not moving $id onto the addon: $why", about = id)
+    if (!clean) {
+        TrackLog.d("BitChord", "cold-prefix: not moving $id onto the addon: its upgraded slot is still held", about = id)
         return
     }
+    // The row may have moved, or another writer parked, while off the main thread.
+    if (koRescueSlot(id, stream) != upgraded) return
+    val live = player ?: return
+    val item = live.currentMediaItem ?: return
     val position = live.currentPosition
     val resumeMs = HqSwapPolicy.resumeAtMs(position, null, null, verified?.offsetMs, verified?.rate)
-    val upgraded = QualityUpgrade.upgradedUri(uri.toString())
     KoCachedPrefixStart.onRescued(id)
     QualityUpgrade.force(id, stream)
     HqHostTracker.beginDownload(id, HqHostTracker.hostOf(stream.url)) // ended by cacheWholeRendition below
@@ -338,4 +379,37 @@ private suspend fun PlaybackService.koRescueCachedPrefix(id: String, stream: Sou
     scope.launch(TrackLog.about(id)) {
         AudioCache.cacheWholeRendition(Uri.parse(upgraded), item.mediaMetadata.title?.toString())
     }
+}
+
+/**
+ * The upgraded key the rescue of [id] would play, or null (logged) when the
+ * row cannot move now. Main thread. A refusal while a blend runs is offered
+ * again once when it settles (R2-2); every reason is checked again then.
+ */
+private fun PlaybackService.koRescueSlot(id: String, stream: SourceStream): String? {
+    val live = player ?: return null
+    val item = live.currentMediaItem
+    val uri = item?.localConfiguration?.uri
+    val transitioning = crossfade?.isTransitioning() == true
+    val upgraded = uri?.let { QualityUpgrade.upgradedUri(it.toString()) }
+    val why = when {
+        item == null || item.mediaId != id -> "it is no longer the current row"
+        uri == null || uri.getQueryParameter("v") != id || QualityUpgrade.cacheTag(uri) != null -> "it plays another rendition"
+        StreamChoice.of(id) != null -> "a stream was pinned meanwhile"
+        live.playerError != null -> "the player already failed"
+        transitioning -> "a transition is under way"
+        else -> KoCachedPrefixStart.slotRefusal(
+            auditioning = QualityUpgrade.isAuditioning(id),
+            parkedUrl = upgraded?.let { QualityUpgrade.forcedStream(Uri.parse(it))?.url },
+            rescueUrl = stream.url,
+        )
+    }
+    if (why == null && upgraded != null) return upgraded
+    val again = transitioning && KoCachedPrefixStart.offerAfterBlend(id, stream)
+    TrackLog.d(
+        "BitChord",
+        "cold-prefix: not moving $id onto the addon: $why${if (again) "; offered again when the blend settles" else ""}",
+        about = id,
+    )
+    return null
 }

@@ -2894,6 +2894,7 @@ class PlaybackService : MediaLibraryService() {
                 // A route or PCM-mode change that arrived mid-blend was parked
                 // instead of polling; this settled event is its wake-up.
                 outputReconfigureGate.settledRequest()?.let { requestOutputReconfiguration(rebuild = it) } // [KO] C5a-1
+                com.music.bitchord.ko.KoCachedPrefixStart.onBlendSettled() // [KO] review2 R2-2
                 if (boundedEditState.hasPendingEdits) {
                     scope.launch {
                         applyDeferredBoundedQueueEdit()
