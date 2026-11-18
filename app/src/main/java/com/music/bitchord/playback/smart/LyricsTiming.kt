@@ -346,10 +346,12 @@ object LyricsTiming {
         deniedBy: String? = null,
         /** The sheet is [LyricsSource.GEMINI_TRANSCRIPT]: its lines are the sung words, placed by the heard ones. */
         ownTranscript: Boolean = false,
+        /** [KO] clock1119: the clock a row not playing yet will open with ([nextRowClock]); null reads [playingClock]. */
+        rowClock: Clock? = null,
         // A whole song's words against its sheet is real work, and the screen
         // asks this on its own thread.
     ): Timing? = withContext(Dispatchers.Default) {
-        timingNow(context, videoId, lines, baseAllowed, measuredAllowed, isVideo, audioSource, deniedBy, ownTranscript)
+        timingNow(context, videoId, lines, baseAllowed, measuredAllowed, isVideo, audioSource, deniedBy, ownTranscript, rowClock)
     }
 
     private suspend fun timingNow(
@@ -362,6 +364,7 @@ object LyricsTiming {
         audioSource: String?,
         deniedBy: String?,
         ownTranscript: Boolean,
+        rowClock: Clock?,
     ): Timing? {
         // A missing entry is not "nothing to do": the stream may still be a
         // verified high-quality copy whose clock differs from YouTube's, and
@@ -374,7 +377,7 @@ object LyricsTiming {
         } else {
             null
         }
-        val playing = playingClock(videoId)
+        val playing = rowClock ?: playingClock(videoId)
         // A song check started on the stream can finish after playback moved to
         // the verified file and leave its answer under the stream key (one AI
         // slot, newest wins), so the file-keyed screen found none (11-06
@@ -775,6 +778,21 @@ object LyricsTiming {
             clockForLocalCopy(meta?.hqSourceConfigId, meta?.hqTrackId)
         }
     }
+
+    /**
+     * [KO] clock1119: the clock the queued row [videoId] will open with, for next-prep.
+     * A row built on its stream ([audioSource] the stream key: an unchecked download held
+     * back for its check, log1819 A3) plays the stream, YouTube's clock until a choice
+     * names a copy; [playingClock]'s saved-file fallback (the HQ pair) is for a row playing
+     * that file, and dropped the stream's untagged answer ahead (11-18 Espresso, 11-19
+     * Dance The Night `clock dropped`, applied at the start). A file row or a video: as is.
+     */
+    internal fun nextRowClock(videoId: String, audioSource: String?): Clock =
+        if (audioSource == audioSourceKey(videoId, localFile = false) && !StreamChoice.soundsSubstitute(videoId)) {
+            Clock.YouTube
+        } else {
+            playingClock(videoId)
+        }
 
     /** The clock of the rendition a measurement read; any substitute key is the substitute's. */
     internal fun clockForRendition(
@@ -4260,6 +4278,7 @@ object LyricsTiming {
             audioSource = audioSource,
             // [KO] As the screen, the service and timed() pass it, so the prepared first frame is placed as the screen places it.
             ownTranscript = source == LyricsSource.GEMINI_TRANSCRIPT,
+            rowClock = nextRowClock(song.videoId, audioSource), // [KO] clock1119
         )
     }
 
@@ -4316,6 +4335,7 @@ object LyricsTiming {
                 )
                 result = timing(
                     context, song.videoId, lines, timeable, recordTimed, true, audioSource,
+                    rowClock = nextRowClock(song.videoId, audioSource), // [KO] clock1119
                 )
             } else if (wantsAi(context, song.videoId, lines, audioSource)) {
                 // The words alongside the free measurement, as on the screen: a
@@ -4336,6 +4356,7 @@ object LyricsTiming {
                 )
                 result = timing(
                     context, song.videoId, lines, timeable, recordTimed, true, audioSource,
+                    rowClock = nextRowClock(song.videoId, audioSource), // [KO] clock1119
                 )
             }
         } else if (!songVerified(context, song, lines)) {
@@ -4344,6 +4365,7 @@ object LyricsTiming {
             verifySong(context, song, lines, probe, cancelWithCaller = cancelWithCaller)
             result = timing(
                 context, song.videoId, lines, timeable, recordTimed, false, audioSource,
+                rowClock = nextRowClock(song.videoId, audioSource), // [KO] clock1119
             )
         }
 
@@ -4355,6 +4377,7 @@ object LyricsTiming {
             ensureRefineHeard(context, song.videoId, song, lines, result, audioSource)
             result = timing(
                 context, song.videoId, lines, timeable, recordTimed, query.isVideo, audioSource,
+                rowClock = nextRowClock(song.videoId, audioSource), // [KO] clock1119
             )
         }
         return result

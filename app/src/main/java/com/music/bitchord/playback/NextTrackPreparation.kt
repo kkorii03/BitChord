@@ -1145,6 +1145,11 @@ internal class NextTrackPreparation(
             sourceTimedToVideo = sourceTimedToVideo,
         )
         val recordTimed = timeable && (!found.fromFile || found.source != null) && !sourceTimedToVideo
+        val audioSource = if (query.isVideo) {
+            null
+        } else {
+            LyricsTiming.audioSourceKey(song.videoId, song.localUri != null)
+        }
         return LyricsTiming.timing(
             context = context,
             videoId = song.videoId,
@@ -1154,11 +1159,8 @@ internal class NextTrackPreparation(
             deniedBy = "file-own-timing@next-prep",
             ownTranscript = found.source == LyricsSource.GEMINI_TRANSCRIPT,
             isVideo = query.isVideo,
-            audioSource = if (query.isVideo) {
-                null
-            } else {
-                LyricsTiming.audioSourceKey(song.videoId, song.localUri != null)
-            },
+            audioSource = audioSource,
+            rowClock = LyricsTiming.nextRowClock(song.videoId, audioSource), // [KO] clock1119
         )
     }
 
