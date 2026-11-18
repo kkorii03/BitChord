@@ -368,6 +368,8 @@ class LyricsControllerSavedSheetTest {
         withTimeout(10_000L) { controller.lyricsChecked.first { it } }
         // Before the fix: the VIBE copy.
         assertEquals(fresh.map { it.text }, controller.lyrics.value!!.map { it.text })
+        // Owner 11-18: the wrong copy is gone from the store, so an offline play shows the file's sheet too.
+        withTimeout(10_000L) { while (LyricsOverrideStore.read(context, "video") != null) kotlinx.coroutines.delay(20) }
     }
 
     /**

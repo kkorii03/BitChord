@@ -1861,7 +1861,9 @@ class LyricsController(
     /**
      * [KO] WDYM: the fallback after [showProvidersFirst] skips an automatic copy a higher-ranked
      * provider's file sheet outranks ([com.music.bitchord.ko.KoSavedLyrics.copyPassedOver]). The
-     * file is read only for such a copy; the copy itself is left as it is (offline it still shows).
+     * file is read only for such a copy. The passed-over copy is then dropped from the store, so
+     * offline plays show the file's sheet too (owner 11-18: the wrong QQ copy must not come back
+     * offline); a file sheet the words ever rejected never displaces it.
      */
     private suspend fun passOverLowerCopy(videoId: String, localUri: String, override: LyricsOverrideFile.Stored?) {
         val copy = override ?: return
@@ -1872,10 +1874,12 @@ class LyricsController(
         // The file's sheet the words already turned down this playback: the file branch skips it too.
         if (mismatchReloadedFor == "$videoId|${own.lines.hashCode()}") return
         val fileSource = own.source
+        if (fileSource != null && com.music.bitchord.data.lyrics.LyricsMismatch.isRejected(videoId, fileSource, own.lines)) return
         val fileAnswered = fileSource != null && _lyricsProviderStates.value[fileSource] == LyricsProviderState.FOUND
         savedCopyPassedOver = com.music.bitchord.ko.KoSavedLyrics.copyPassedOver(kind, copySource, fileSource, fileAnswered, lyricsRaceOrder)
         if (savedCopyPassedOver) {
-            TrackLog.i("BitChord", "lyrics: saved ${copySource.label} copy passed over for the file's ${fileSource?.label} sheet", about = videoId)
+            val dropped = dropRejectedCopy(videoId, copy.lines, fromStore = false)
+            TrackLog.i("BitChord", "lyrics: saved ${copySource.label} copy passed over for the file's ${fileSource?.label} sheet dropped=$dropped", about = videoId)
         }
     }
 
