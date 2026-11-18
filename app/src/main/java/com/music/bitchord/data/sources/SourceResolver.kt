@@ -1882,10 +1882,21 @@ object SourceResolver {
                 ranked
             }
             if (requireSharedArtist) {
+                val koCredited = matches // [KO] credit-drop
+                // [KO] credit-drop: credited only through the name index -> the sound check decides, not the filter.
+                val koToSound = com.music.bitchord.ko.creditToSoundCheck(strictOriginal && allowArtistUnverified, matches, unverified) {
+                    TrackMatcher.sharesArtist(matchOn.artist, it.artist)
+                }
+                if (koToSound.isNotEmpty()) {
+                    unverified += koToSound
+                    com.music.bitchord.ko.KoUnverifiedRows.note(source.configId, koToSound) { SourceRegistry.parseTrackKey(it.videoId)?.second ?: it.videoId }
+                    TrackLog.d(TAG, "${source.displayName}: ${koToSound.size} match(es) for '${matchOn.title}' share no credit with '${matchOn.artist}'; offered to the sound check")
+                }
                 matches = matches.filter {
                     it in unverified ||
                         TrackMatcher.sharesArtist(matchOn.artist, it.artist)
                 }
+                com.music.bitchord.ko.creditDropLine(source.displayName, matchOn, koCredited, matches)?.let { TrackLog.d(TAG, it) } // [KO] credit-drop
             }
             // JioSaavn can return different audio under the same title and
             // artist on different releases. With no album on the requested

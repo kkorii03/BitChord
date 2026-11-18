@@ -9,6 +9,7 @@ import com.music.bitchord.data.net.HqRetryPolicy
 import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.download.HqLibraryUpgrade
 import com.music.bitchord.ko.KoHqWarp
+import com.music.bitchord.ko.KoManifestHead
 import com.music.bitchord.ko.KoOpeningClip
 import com.music.bitchord.ko.KoUnverifiedRows
 import com.music.bitchord.ko.KoVersionGuard
@@ -507,7 +508,7 @@ object HqAudioVerify {
         // be discarded as unmeasured.
         if (isPreview(stream.durationSec, target.durationSec)) {
             UnmeasuredMemory.note(sourceId, trackId, "preview ${stream.durationSec}s/${target.durationSec}s")
-            logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
+            logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false, why = "preview")
             return@withContext Outcome.Unavailable()
         }
         // A source row that names an arrangement the song itself does not is
@@ -554,12 +555,9 @@ object HqAudioVerify {
         }
         // [KO] RG2-1: words heard to differ on a row nobody doubted, this run only.
         if (key in unaskedDifferent) return@withContext Outcome.Mismatch
-        // A manifest is a container the decoder here cannot read; it cannot be
-        // proved and must not be swapped in blind.
-        if (StreamContainer.isManifest(stream.url)) {
-            logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
-            return@withContext Outcome.Unavailable()
-        }
+        // [KO] manifest-verify: a manifest is measured on its rejoined opening
+        // (downloadPrefix -> KoManifestHead); one that cannot be read stays
+        // unmeasured there, so it is still never swapped in blind.
 
         // A song whose last attempt was refused is not asked again while its
         // host is still resting. A different, healthy candidate is allowed
@@ -671,14 +669,14 @@ object HqAudioVerify {
                                     manual,
                                 )
                             }
-                            logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
+                            logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false, why = "rate-limited")
                             return@coroutineScope Outcome.Unavailable()
                         }
                         CandidateFetch.Abandoned -> {
                             return@coroutineScope Outcome.Abandoned
                         }
                         CandidateFetch.Failed -> {
-                            logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false)
+                            logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false, why = "fetch-failed")
                             return@coroutineScope Outcome.Unavailable(transient = true)
                         }
                     }
@@ -1463,6 +1461,8 @@ object HqAudioVerify {
         candidate: String? = null,
         bytes: Long? = null,
         measured: Boolean = true,
+        /** [KO] manifest-verify: why an exit before the comparison left it unmeasured. */
+        why: String? = null,
     ) {
         TrackLog.i(
             TAG,
@@ -1470,7 +1470,8 @@ object HqAudioVerify {
                 (if (accepted) "accepted" else if (measured) "rejected" else "unmeasured") +
                 (reference?.let { " reference=$it" } ?: "") +
                 (candidate?.let { " candidate=$it" } ?: "") +
-                (bytes?.let { " bytes=$it" } ?: ""),
+                (bytes?.let { " bytes=$it" } ?: "") +
+                (why?.let { " why=$it" } ?: ""),
             about,
         )
     }
@@ -1779,7 +1780,10 @@ object HqAudioVerify {
         // the stored verdict still use [original].
         val stream = lighterForComparison(original) ?: original
         val needed = HqVerifyPolicy.bytesToFetch(stream.format, FETCH_SECONDS)
-        if (needed <= 0L) return CandidateFetch.Failed
+        if (needed <= 0L) {
+            TrackLog.w(TAG, "decode: hq-verify failed at=bytes format=${stream.format.summary}") // [KO] manifest-verify
+            return CandidateFetch.Failed
+        }
         if (!ensureCandidateDirectory(directory)) {
             TrackLog.w(TAG, "decode: hq-verify failed at=cache-dir")
             return CandidateFetch.Failed
@@ -2397,6 +2401,18 @@ object HqAudioVerify {
         // scheme, so no Telegram row could ever be measured or chosen.
         if (stream.url.startsWith("${TelegramStreamUri.SCHEME}:")) {
             return downloadTelegramPrefix(stream.url, file, limit, decode)
+        }
+        // [KO] manifest-verify: an index is not the audio; its opening segments are rejoined instead.
+        if (StreamContainer.isManifest(stream.url)) {
+            return try {
+                KoManifestHead.fetchOpening(stream.url, stream.headers, file, limit, FETCH_SECONDS, client)
+            } catch (refused: KoManifestHead.Refused) {
+                // The same two refusals a single-file head raises, so the 429 wait and the fresh-URL retry apply.
+                if (HqRetryPolicy.isRateLimited(refused.code) || HqRetryPolicy.isSleepingGateway(refused.code)) {
+                    throw RateLimitedDownload(refused.code, HqRetryPolicy.retryAfterHeader(refused.headers), refused.headers)
+                }
+                throw DownloadRefused(refused.code)
+            }
         }
         val request = Request.Builder()
             .url(stream.url)

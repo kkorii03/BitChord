@@ -21,6 +21,38 @@ internal fun hqSearchLine(
 }
 
 /**
+ * [KO] credit-drop. Names the rows the shared-artist filter of a strict walk
+ * removed, or null when it removed none. That drop was silent, and the walk's
+ * hq-search line still read `verdict=match` with no stream behind it (phone
+ * 11-16 'Reality', 'Play Ugly', 'Will Last Forever': no hq-verify, verify=0ms).
+ */
+internal fun creditDropLine(
+    sourceName: String,
+    target: TrackMatcher.Target,
+    before: List<Song>,
+    after: List<Song>,
+): String? {
+    val dropped = before.filterNot { it in after }
+    if (dropped.isEmpty()) return null
+    return "$sourceName: ${dropped.size} match(es) for '${target.title}' dropped; " +
+        "no credit shared with '${target.artist}': " +
+        dropped.joinToString { "'${it.title}' by '${it.artist}'" }
+}
+
+/**
+ * [KO] credit-drop. The rows the shared-artist filter would drop although the
+ * matcher already took them for the original (an act's name index: 'AKMU' for
+ * '악동뮤지션'). On a walk that may offer rows to the sound comparison they go
+ * there instead of being lost; everywhere else, none.
+ */
+internal fun creditToSoundCheck(
+    allowSoundCheck: Boolean,
+    rows: List<Song>,
+    unverified: Set<Song>,
+    shares: (Song) -> Boolean,
+): List<Song> = if (!allowSoundCheck) emptyList() else rows.filterNot { it in unverified || shares(it) }
+
+/**
  * How the source race ranks the kinds of row it can be offered, lowest
  * first: a normally credited match, then a row still waiting for the sound
  * comparison (a localised credit or a localised title), then a verified copy

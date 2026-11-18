@@ -332,7 +332,8 @@ object DirectSourceGate {
     ): (suspend (SourceStream) -> Boolean)? {
         if (!AppSettings.appContextReady()) return null
         val context = AppSettings.appContext
-        return { stream -> HqAudioVerify.verify(context, videoId, target, stream) != null }
+        // [KO] manifest-verify: a manifest is now measurable, but a direct open is progressive; it stays for the upgrade swap.
+        return { stream -> !StreamContainer.isManifest(stream.url) && HqAudioVerify.verify(context, videoId, target, stream) != null }
     }
 
     internal suspend fun firstAnswer(

@@ -18,6 +18,7 @@ import com.music.bitchord.playback.BatteryPolicy
 import com.music.bitchord.playback.HqHostTracker
 import com.music.bitchord.playback.OriginalVersion
 import com.music.bitchord.playback.StreamChoice
+import com.music.bitchord.playback.StreamContainer
 import com.music.bitchord.playback.smart.HqAudioVerify
 import com.music.bitchord.playback.smart.HqVerificationStore
 import java.util.concurrent.ConcurrentHashMap
@@ -255,7 +256,8 @@ class KoPrefetchQueue(
                             // opening is not on disk, so this comparison uses
                             // only what is already decoded instead of waiting
                             // out the head timeout and the decode gate for it.
-                            HqAudioVerify.verify(
+                            // [KO] manifest-verify: a pin is opened progressively; a manifest waits for the upgrade swap.
+                            !StreamContainer.isManifest(candidate.url) && HqAudioVerify.verify(
                                 context,
                                 next,
                                 target,
