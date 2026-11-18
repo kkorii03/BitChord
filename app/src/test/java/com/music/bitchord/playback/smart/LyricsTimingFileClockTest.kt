@@ -68,6 +68,7 @@ class LyricsTimingFileClockTest {
         hqCacheField.set(HqVerificationStore, null)
         StreamChoice.forget(id)
         Downloads.setSavedMetadata(emptyMap())
+        com.music.bitchord.ko.KoFileSameAsStream.clearForTest()
         directory.deleteRecursively()
     }
 
@@ -192,6 +193,39 @@ class LyricsTimingFileClockTest {
         answer(fileSource, clock = null)
 
         assertEquals(shift800, timing(fileSource)?.base)
+    }
+
+    /**
+     * log1819: 11-19 Dance The Night Z1yDjhXIDSc. The stream played its untagged answer
+     * (`base=ai shift=5ms src=stream`), the check heard the HQ download at offset 0, and the
+     * file played `base=none ... sibling=untagged src=file` until a new hearing 18 s later.
+     */
+    @Test
+    fun `the stream's untagged answer carries onto a file just heard to be the stream`() {
+        fileTookOver()
+        answer(streamSource, clock = null)
+        val uri = "file:///$id.flac"
+        com.music.bitchord.ko.KoFileSameAsStream.measured(
+            id, uri, KoDownloadRecords.fileVersion(context, uri), fresh = true, ok = true, offsetMs = 0L, rate = 1.0,
+        )
+
+        assertEquals(shift800, timing(fileSource)?.base)
+    }
+
+    @Test
+    fun `the stream's untagged answer stays off a file not heard to be the stream`() {
+        fileTookOver()
+        answer(streamSource, clock = null)
+        assertNull(timing(fileSource)?.base)
+
+        // Heard, but another cut: still off.
+        val uri = "file:///$id.flac"
+        com.music.bitchord.ko.KoFileSameAsStream.measured(
+            id, uri, KoDownloadRecords.fileVersion(context, uri), fresh = true, ok = true, offsetMs = 900L, rate = 1.0,
+        )
+        LyricsTiming.resetForTest()
+        storeField.set(LyricsTiming, null)
+        assertNull(timing(fileSource)?.base)
     }
 
     @Test

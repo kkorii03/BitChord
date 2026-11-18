@@ -74,13 +74,51 @@ class KoFileSameAsStreamTest {
         val alt = Clock.Substitute("tg", "42")
         assertFalse(KoFileSameAsStream.carries(Clock.YouTube, alt, playsFile = true, heardSame = true))
         assertFalse(KoFileSameAsStream.carries(alt, Clock.YouTube, playsFile = true, heardSame = true))
-        assertFalse(KoFileSameAsStream.carries(Clock.Unknown, Clock.YouTube, playsFile = true, heardSame = true))
         assertFalse(KoFileSameAsStream.carries(Clock.YouTube, Clock.YouTube, playsFile = false, heardSame = true))
+    }
+
+    @Test
+    fun anUntaggedStreamAnswerCarriesOntoAFileHeardToBeTheStream() {
+        // log1819: 11-18 Espresso kIft-LUHHVA and 11-19 Dance The Night Z1yDjhXIDSc played
+        // the stream's untagged answer (base=ai, playing=youtube), the check heard the file
+        // at offset 1 / 0 ms, and the file played `sibling=untagged` with no sync.
+        val alt = Clock.Substitute("744b174b", "qzdl:1")
+        assertTrue(KoFileSameAsStream.carries(Clock.Unknown, Clock.YouTube, playsFile = true, heardSame = true))
+        // An HQ download plays on its source pair's clock; heard at offset 0 it is the stream.
+        assertTrue(KoFileSameAsStream.carries(Clock.Unknown, alt, playsFile = true, heardSame = true))
+        // Still never without the file playing, the hearing, or a known playing clock.
+        assertFalse(KoFileSameAsStream.carries(Clock.Unknown, Clock.YouTube, playsFile = true, heardSame = false))
+        assertFalse(KoFileSameAsStream.carries(Clock.Unknown, Clock.YouTube, playsFile = false, heardSame = true))
+        assertFalse(KoFileSameAsStream.carries(Clock.Unknown, Clock.Unknown, playsFile = true, heardSame = true))
+    }
+
+    @Test
+    fun theAlignmentsMillisecondGrainIsStillIdentical() {
+        // Espresso: `hq-verify: downloaded file download match=100% offset=1 -> accepted`.
+        KoFileSameAsStream.measured(id, uri, "v1", fresh = true, ok = true, offsetMs = 1L, rate = 1.0)
+        assertTrue(KoFileSameAsStream.heardSame(id, uri) { "v1" })
+        assertTrue(KoFileSameAsStream.identical(-30L, 1.0))
+        assertFalse(KoFileSameAsStream.identical(31L, 1.0))
+        assertFalse(KoFileSameAsStream.identical(null, 1.0))
+    }
+
+    @Test
+    fun theSiblingIsTriedForASubstituteClockOrAFileHeardToBeTheStream() {
+        val alt = Clock.Substitute("tg", "42")
+        // The old rule, unchanged: a substitute on either side maps a tagged answer.
+        assertTrue(KoFileSameAsStream.siblingTried(alt, Clock.YouTube) { false })
+        assertTrue(KoFileSameAsStream.siblingTried(Clock.YouTube, alt) { false })
+        assertFalse(KoFileSameAsStream.siblingTried(Clock.YouTube, Clock.YouTube) { false })
+        // An untagged answer was never tried; now only through the hearing.
+        assertFalse(KoFileSameAsStream.siblingTried(Clock.Unknown, alt) { false })
+        assertTrue(KoFileSameAsStream.siblingTried(Clock.Unknown, alt) { true })
+        assertTrue(KoFileSameAsStream.siblingTried(Clock.Unknown, Clock.YouTube) { true })
     }
 
     @Test
     fun theSiblingCarryAndTheDownloadCheckUseIt() {
         val timing = File("src/main/java/com/music/bitchord/playback/smart/LyricsTiming.kt").readText()
+        assertTrue(timing.contains("KoFileSameAsStream.siblingTried(aiClock, playing)"))
         assertTrue(timing.contains("KoFileSameAsStream.carries(context, videoId, audioSource, aiClock, playing)"))
         val health = File("src/main/java/com/music/bitchord/download/DownloadHealth.kt").readText()
         assertTrue(health.contains("KoFileSameAsStream.measured(id, meta.uri, version, freshlyAccepted,"))
