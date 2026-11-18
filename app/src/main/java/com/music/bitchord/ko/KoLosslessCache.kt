@@ -177,6 +177,8 @@ class KoLosslessCache(
         uri: Uri,
         title: String?,
         releasesHost: Boolean = true,
+        /** [KO] UPG-7: the length the verified head's file stated; a fill of another length is not complete. */
+        expectedLength: Long = -1L,
     ): WholeRenditionResult {
         val cache = cache() ?: return WholeRenditionResult(false, 0L, "no cache")
         val key = keyFactory.buildCacheKey(DataSpec(uri))
@@ -214,6 +216,10 @@ class KoLosslessCache(
                         error.message
                     }
                     if (failure == null) break
+                }
+                // [KO] UPG-7: a head spliced onto another file states another length.
+                if (failure == null && !KoVerifiedHead.lengthAgrees(expectedLength, contentLengthOf(key))) {
+                    failure = "length ${contentLengthOf(key)} is not the verified file's $expectedLength"
                 }
                 val bytes = cache.getCachedSpans(key).filter { it.isCached }.sumOf { it.length }
                 val complete = failure == null && isComplete(key)
@@ -355,7 +361,26 @@ class KoLosslessCache(
         try {
             TrackLog.d(tag, "hq-prefetch: $mediaId start ${stream.format.summary}", about = mediaId)
             val result = try {
-                cacheWholeRenditionDetailed(uri, title)
+                // [KO] UPG-7: start from the head the sound check accepted, then fetch the rest.
+                val seeded = withContext(Dispatchers.IO) { seedFromVerifiedHead(uri, stream, mediaId) }
+                if (seeded == null) {
+                    cacheWholeRenditionDetailed(uri, title)
+                } else {
+                    // The host stays held across the whole-file fallback below.
+                    val fromHead = cacheWholeRenditionDetailed(uri, title, releasesHost = false, expectedLength = seeded)
+                    if (fromHead.complete) {
+                        fromHead
+                    } else {
+                        // Never leave a mixed entry behind: throw it away and fetch the file whole, as before.
+                        TrackLog.d(
+                            tag,
+                            "hq-cache: $mediaId verify head dropped (${fromHead.failure ?: "incomplete"}); fetching whole",
+                            about = mediaId,
+                        )
+                        withContext(Dispatchers.IO) { discardRendition(uri) }
+                        cacheWholeRenditionDetailed(uri, title)
+                    }
+                }
             } catch (cancelled: CancellationException) {
                 TrackLog.d(tag, "hq-prefetch: $mediaId failed cancelled", about = mediaId)
                 throw cancelled
@@ -380,6 +405,73 @@ class KoLosslessCache(
             // again; only a complete copy closes the question.
             if (!complete) losslessPrefetchAttempted.remove(mediaId)
             HqHostTracker.endDownload(mediaId, host)
+        }
+    }
+
+    /**
+     * [KO] UPG-7: lays the accepted verify head of exactly [stream] into [uri]'s
+     * empty entry as one span, so the fill that follows reads only the rest, with
+     * a Range. Runs on IO. Any doubt leaves the entry as it was (the old whole
+     * download); the held file is deleted whatever happens.
+     *
+     * @return the whole file's length the head response stated, for the fill to
+     *   check; null when nothing was laid in.
+     */
+    private fun seedFromVerifiedHead(uri: Uri, stream: SourceStream, mediaId: String): Long? {
+        val cache = cache() ?: return null
+        val held = KoVerifiedHead.take(stream.url, stream.sourceConfigId, stream.trackId)
+        if (held == null) {
+            if (KoVerifiedHead.heldCount() > 0) {
+                TrackLog.d(tag, "hq-cache: $mediaId verify head not used: held for another stream", about = mediaId)
+            }
+            return null
+        }
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        var target: java.io.File? = null
+        try {
+            val cachedBytes = runCatching {
+                cache.getCachedSpans(key).filter { it.isCached }.sumOf { it.length }
+            }.getOrDefault(-1L)
+            val plan = KoVerifiedHead.plan(held.bytes, held.file.length(), held.totalBytes, cachedBytes, contentLengthOf(key))
+            if (plan.length <= 0L) {
+                TrackLog.d(tag, "hq-cache: $mediaId verify head not used: ${plan.why}", about = mediaId)
+                return null
+            }
+            // Non-blocking: a writer already on this entry wins, and the head is dropped.
+            val hole = cache.startReadWriteNonBlocking(key, 0L, plan.length)
+            if (hole == null || hole.isCached) {
+                TrackLog.d(tag, "hq-cache: $mediaId verify head not used: entry busy", about = mediaId)
+                return null
+            }
+            try {
+                if (hole.length < plan.length) {
+                    TrackLog.d(tag, "hq-cache: $mediaId verify head not used: entry not empty", about = mediaId)
+                    return null
+                }
+                val file = cache.startFile(key, 0L, plan.length)
+                target = file
+                if (!KoVerifiedHead.moveInto(held.file, file, plan.length)) {
+                    TrackLog.d(tag, "hq-cache: $mediaId verify head not used: move failed", about = mediaId)
+                    return null
+                }
+                cache.commitFile(file, plan.length)
+                target = null
+            } finally {
+                cache.releaseHoleSpan(hole)
+            }
+            TrackLog.d(
+                tag,
+                "hq-cache: $mediaId adopted from verify ${formatBytes(plan.length)} of " +
+                    "${formatBytes(held.totalBytes)} (${plan.why}); fetching the rest",
+                about = mediaId,
+            )
+            return held.totalBytes
+        } catch (failed: Exception) {
+            TrackLog.d(tag, "hq-cache: $mediaId verify head not used: ${failed.message}", about = mediaId)
+            return null
+        } finally {
+            target?.delete()
+            held.file.delete()
         }
     }
 

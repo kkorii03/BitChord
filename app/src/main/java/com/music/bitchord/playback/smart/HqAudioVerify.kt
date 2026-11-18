@@ -13,6 +13,7 @@ import com.music.bitchord.ko.KoHqWarp
 import com.music.bitchord.ko.KoManifestHead
 import com.music.bitchord.ko.KoOpeningClip
 import com.music.bitchord.ko.KoUnverifiedRows
+import com.music.bitchord.ko.KoVerifiedHead
 import com.music.bitchord.ko.KoVersionGuard
 import com.music.bitchord.ko.KoVerifyHeadUse
 import com.music.bitchord.data.lyrics.ChromaAlignment
@@ -286,6 +287,8 @@ object HqAudioVerify {
         /** [KO] UPG-8: furthest byte the decoder read (-1 off a complete file), and the audio it decoded. */
         val maxRead: Long = -1L,
         val audioMs: Long = -1L,
+        /** [KO] UPG-7: this head, kept for the swap if the check accepts it. */
+        val held: KoVerifiedHead.Entry? = null,
     )
 
     /** Chroma construction time inside one decode, so it can be told apart from the codec. */
@@ -318,6 +321,9 @@ object HqAudioVerify {
         var maxRead: Long = -1L // [KO] UPG-8
         @Volatile
         var audioMs: Long = -1L // [KO] UPG-8
+        /** [KO] UPG-7: the whole file's length, as the head response stated it (-1: unknown). */
+        @Volatile
+        var headTotal: Long = -1L
     }
 
     /**
@@ -878,6 +884,11 @@ object HqAudioVerify {
                     // A downloaded or pre-saved copy may now be replaceable with
                     // this newly proved rung, even if it was already high quality.
                     HqLibraryUpgrade.onVerified(context)
+                    // [KO] UPG-7: the swap of this exact stream may now start from this head.
+                    val heldHead = candidate.held
+                    if (heldHead != null && KoVerifiedHead.accept(heldHead)) {
+                        TrackLog.d(TAG, "hq-verify: kept head ${heldHead.bytes}/${heldHead.totalBytes} bytes for the swap", youtubeId)
+                    }
                     Outcome.Verified(verified)
                 }
             }
@@ -890,6 +901,7 @@ object HqAudioVerify {
             // fresh lock, and the verdict cache still answers it.
             locks.remove(key, lock)
             earlyHearing?.close() // [KO] UPG-5: an answer the verify did not read is dropped
+            KoVerifiedHead.dropPending(stream.url) // [KO] UPG-7: a head this check did not accept is deleted
         }
     }
 
@@ -1054,6 +1066,9 @@ object HqAudioVerify {
     fun onPlaybackStarted() {
         noReference.clear()
         playbackEpoch.getAndSet(PlaybackEpoch()).changed.complete(Unit)
+        KoVerifiedHead.detachAll().takeIf { it.isNotEmpty() }?.let { stale -> // [KO] UPG-7: the old track's heads
+            pendingRetryScope.launch { stale.forEach { it.delete() } }
+        }
         retryPendingRateLimits()
     }
 
@@ -1846,6 +1861,7 @@ object HqAudioVerify {
         ::freshStream,
         keepOpening,
         onOpeningFull,
+        holdHead = true, // [KO] UPG-7: only [verifyOutcome] comes here, and it accepts or drops the head
     )
 
     internal suspend fun candidateFeatures(
@@ -1868,6 +1884,8 @@ object HqAudioVerify {
         keepOpening: Boolean = false,
         /** [KO] UPG-5: told (decoder thread) when the kept opening is full. */
         onOpeningFull: ((KoOpeningClip) -> Unit)? = null,
+        /** [KO] UPG-7: keep the head of [original] for the swap (see [KoVerifiedHead]). */
+        holdHead: Boolean = false,
     ): CandidateFetch {
         // The comparison only needs the recording, not its resolution: the
         // same source row at a lossy tier is a fraction of a 24-bit head, and
@@ -1926,7 +1944,8 @@ object HqAudioVerify {
             }
             val downloadStarted = System.nanoTime()
             val download = try {
-                downloadCandidate(stream, file, needed, client, epoch, decode)
+                // [KO] UPG-7: only this first URL's head is ever kept; a fresh-URL retry is another file.
+                downloadCandidate(stream, file, needed, client, epoch, decode, onHead = { slot.headTotal = it })
             } catch (refused: DownloadRefused) {
                 if (refused.code != 403 && refused.code != 410) throw refused
                 retryWithFreshStream(stream, refused, file, needed, epoch, refreshStream, decode)
@@ -1977,6 +1996,13 @@ object HqAudioVerify {
             // substitute plays as. A lighter tier of the same row is the same
             // recording, so its clock is the one the listener hears.
             SyncTestMode.keepCandidate(original.sourceConfigId, original.trackId, file)
+            // [KO] UPG-7: the head of the very stream the swap plays (never a lighter tier's),
+            // moved out of the delete below; [verifyOutcome] accepts it or drops it.
+            val held = if (holdHead && stream === original && slot.headTotal > 0L) {
+                KoVerifiedHead.offer(file, original.url, original.sourceConfigId, original.trackId, slot.headTotal)
+            } else {
+                null
+            }
             CandidateFetch.Ready(
                 Candidate(
                     features = features,
@@ -1989,6 +2015,7 @@ object HqAudioVerify {
                     opening = slot.opening,
                     maxRead = slot.maxRead,
                     audioMs = slot.audioMs,
+                    held = held,
                 ),
             )
         } catch (cancelled: CancellationException) {
@@ -2251,6 +2278,7 @@ object HqAudioVerify {
         client: OkHttpClient,
         epoch: PlaybackEpoch,
         decode: StreamDecode? = null,
+        onHead: ((Long) -> Unit)? = null, // [KO] UPG-7
     ): DownloadFetch {
         var attempt = 0
         // One candidate download per host at a time. With AutoPlay filling the
@@ -2262,7 +2290,7 @@ object HqAudioVerify {
         while (true) {
             try {
                 val bytes = withCandidateHost(host) {
-                    downloadPrefix(stream, file, limit, client, decode)
+                    downloadPrefix(stream, file, limit, client, decode, onHead)
                 }
                 HqHostTracker.noteSuccess(host)
                 return DownloadFetch.Bytes(bytes)
@@ -2497,6 +2525,8 @@ object HqAudioVerify {
         limit: Long,
         client: OkHttpClient,
         decode: StreamDecode? = null,
+        /** [KO] UPG-7: told the whole file's length (plain HTTP heads only; a rejoined manifest or Telegram head is not a prefix). */
+        onHead: ((Long) -> Unit)? = null,
     ): Long {
         // A Telegram candidate is not an HTTP URL: OkHttp rejected the internal
         // scheme, so no Telegram row could ever be measured or chosen.
@@ -2572,6 +2602,14 @@ object HqAudioVerify {
                     // Never claim more bytes than this fetch will write: the
                     // extractor uses the size to decide where the file ends.
                     val contentLength = body.contentLength()
+                    onHead?.invoke(
+                        KoVerifiedHead.totalOf(
+                            response.code,
+                            contentLength,
+                            response.header("Content-Range"),
+                            response.header("Content-Encoding"),
+                        ),
+                    )
                     val expected = if (contentLength > 0L) minOf(contentLength, limit) else limit
                     body.byteStream().use { input ->
                         if (decode == null) {
