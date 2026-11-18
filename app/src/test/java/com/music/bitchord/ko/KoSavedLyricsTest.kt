@@ -143,4 +143,23 @@ class KoSavedLyricsTest {
         assertFalse(KoSavedLyrics.rejectedCopy(id, Stored(readBack, LyricsSource.VIBE, 0L, Kind.RECHECK)))
         assertFalse(KoSavedLyrics.rejectedCopy("lyr7-other", Stored(readBack, LyricsSource.KUGOU, 0L, Kind.RECHECK)))
     }
+
+    /** WDYM (DK_0jXPuIr0): a lower provider standing in for the saved sheet's missed one is no better sheet. */
+    @Test
+    fun `the saved sheet outranks a lower provider only while its own provider gave nothing`() {
+        val order = listOf(LyricsSource.LRC_RED, LyricsSource.KUGOU, LyricsSource.QQ_MUSIC)
+        assertTrue(KoSavedLyrics.savedOutranks(LyricsSource.LRC_RED, savedAnswered = false, answered = LyricsSource.QQ_MUSIC, order = order))
+        // Its provider answered: the lookup chose between both (word sync first, say), as before.
+        assertFalse(KoSavedLyrics.savedOutranks(LyricsSource.LRC_RED, savedAnswered = true, answered = LyricsSource.QQ_MUSIC, order = order))
+        // A higher or the same provider answering, or a saved sheet of no known or listed provider: the providers decide.
+        assertFalse(KoSavedLyrics.savedOutranks(LyricsSource.KUGOU, savedAnswered = false, answered = LyricsSource.LRC_RED, order = order))
+        assertFalse(KoSavedLyrics.savedOutranks(LyricsSource.KUGOU, savedAnswered = false, answered = LyricsSource.KUGOU, order = order))
+        assertFalse(KoSavedLyrics.savedOutranks(null, savedAnswered = false, answered = LyricsSource.QQ_MUSIC, order = order))
+        assertFalse(KoSavedLyrics.savedOutranks(LyricsSource.VIBE, savedAnswered = false, answered = LyricsSource.QQ_MUSIC, order = order))
+        // The copy QQ wrote over the file's lrc.red sheet gives way to it; the listener's own pick never.
+        assertTrue(KoSavedLyrics.copyPassedOver(Kind.RECHECK, LyricsSource.QQ_MUSIC, LyricsSource.LRC_RED, fileAnswered = false, order = order))
+        assertFalse(KoSavedLyrics.copyPassedOver(Kind.USER, LyricsSource.QQ_MUSIC, LyricsSource.LRC_RED, fileAnswered = false, order = order))
+        assertFalse(KoSavedLyrics.copyPassedOver(Kind.RECHECK, LyricsSource.LRC_RED, LyricsSource.QQ_MUSIC, fileAnswered = false, order = order))
+        assertFalse(KoSavedLyrics.copyPassedOver(Kind.RECHECK, LyricsSource.QQ_MUSIC, null, fileAnswered = false, order = order))
+    }
 }

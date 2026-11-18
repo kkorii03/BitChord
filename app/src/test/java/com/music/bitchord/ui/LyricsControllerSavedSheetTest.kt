@@ -27,6 +27,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.test.resetMain
@@ -321,6 +322,52 @@ class LyricsControllerSavedSheetTest {
         assertEquals(LyricsOverrideFile.Kind.USER, copy.kind)
         assertEquals(LyricsSource.VIBE, copy.source)
         assertEquals(other.map { it.text }, copy.lines.map { it.text })
+    }
+
+    /**
+     * WDYM (11-18, DK_0jXPuIr0): the saved sheet's provider (lrc.red, ranked ahead) missed the MV and
+     * a lower-ranked one (QQ, consensus unknown) answered with a bootleg's sheet. It was shown early,
+     * then saved over the copy ("lyrics-fix: saved=lrc.red -> QQ Music reason=online-refresh").
+     */
+    @Test
+    fun `a lower-ranked provider standing in for the saved sheet's missed provider does not replace it`() = runBlocking {
+        LyricsOverrideStore.write(context, "video", saved, LyricsSource.KUGOU)
+        val shown = java.util.Collections.synchronizedList(mutableListOf<List<String>>())
+        val watch = scope.launch { controller.lyrics.collect { lines -> lines?.let { shown.add(it.map { line -> line.text }) } } }
+        controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, onResult, _, _, _, _, _, _ ->
+            onResult?.invoke(LyricsSource.KUGOU, null, null)
+            LyricsRepository.Result(LyricsSource.VIBE, fresh).also { onResult?.invoke(LyricsSource.VIBE, it, null) }
+        }
+
+        loadDownloaded()
+
+        withTimeout(10_000L) { controller.lyricsChecked.first { it } }
+        delay(300L)
+        watch.cancel()
+        // Before the fix: VIBE's sheet, credited to VIBE, and the copy rewritten to it.
+        assertEquals(saved.map { it.text }, controller.lyrics.value!!.map { it.text })
+        assertNull(controller.lyricsSource.value)
+        assertTrue(shown.none { it == fresh.map { line -> line.text } })
+        val copy = LyricsOverrideStore.read(context, "video")!!
+        assertEquals(LyricsSource.KUGOU, copy.source)
+        assertEquals(saved.map { it.text }, copy.lines.map { it.text })
+    }
+
+    /**
+     * WDYM: the copy that rule came too late for (QQ's, written over the file's lrc.red sheet) gives
+     * way online to the file's own sheet from the higher-ranked provider once every provider misses.
+     */
+    @Test
+    fun `a lower-ranked automatic copy gives way to the file's own sheet when every provider misses`() = runBlocking {
+        controller.fileLyrics = { _, _ -> EmbeddedLyrics.Embedded(fresh, LyricsSource.KUGOU, "video") }
+        LyricsOverrideStore.write(context, "video", other, LyricsSource.VIBE)
+        controller.lyricsLookup = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> null }
+
+        loadDownloaded()
+
+        withTimeout(10_000L) { controller.lyricsChecked.first { it } }
+        // Before the fix: the VIBE copy.
+        assertEquals(fresh.map { it.text }, controller.lyrics.value!!.map { it.text })
     }
 
     /**

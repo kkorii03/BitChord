@@ -118,4 +118,28 @@ class QqMusicTest {
         assertNull(QqMusic.best(listOf(short), "zonk", "Zed", 200_000))
         assertEquals(hit, QqMusic.best(listOf(hit), "zonk", "Zed", 200_000))
     }
+
+    /**
+     * [KO] WDYM (11-18, DK_0jXPuIr0): QQ's own rows for "What Do You Mean?" (names and lengths as its
+     * search answered, no lyrics) against the ~298 s music video. The 205 s release is past the video
+     * overhang, so before the fix the DJ bootleg (257 s) was the one row left and its chorus-only
+     * sheet was shown. A bootleg, like a remix, is another recording.
+     */
+    @Test
+    fun `a DJ bootleg is not the music video's song`() {
+        fun row(id: Long, name: String, seconds: Int, vararg singers: String) =
+            QqMusic.Hit(songId = id, songName = name, singers = singers.map { QqMusic.Singer(it) }, interval = seconds)
+        val rows = listOf(
+            row(1, "What Do You Mean?", 205, "Justin Bieber"),
+            row(2, "What Do You Mean? (Remix)", 204, "Justin Bieber", "Ariana Grande"),
+            row(3, "What Do You Mean (JANJI REMIX)", 244, "Janji", "Justin Bieber"),
+            row(4, "What Do You Mean? (Leonaka Remix)", 255, "LEONAKA", "Justin Bieber"),
+            row(5, "What Do You Mean (Nick Base Bootleg)", 257, "Nick Base", "Justin Bieber"),
+            row(6, "What Do You Mean (Stryv Remix)", 238, "stryv", "Justin Bieber"),
+        )
+        assertNull(QqMusic.best(rows, "What Do You Mean?", "Justin Bieber", 298_000))
+        // The release itself still matches its own length, and a mashup is refused like the bootleg.
+        assertEquals(1L, QqMusic.best(rows, "What Do You Mean?", "Justin Bieber", 205_000)?.songId)
+        assertNull(QqMusic.best(listOf(row(7, "What Do You Mean (Mashup)", 205, "Justin Bieber")), "What Do You Mean?", "Justin Bieber", 205_000))
+    }
 }

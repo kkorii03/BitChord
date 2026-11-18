@@ -214,10 +214,16 @@ internal object RecordingMatch {
         "deluxeversion", "originaltrack", "cleanedit", "cleanversion", "cleanmix", "clean",
     )
 
-    /** Bracket words that make it a different recording, not a different label. */
+    /**
+     * Bracket words that make it a different recording, not a different label.
+     * [KO] WDYM: a DJ's "bootleg" (QQ "What Do You Mean (Nick Base Bootleg)", 257 s) passed every
+     * test against the ~298 s MV DK_0jXPuIr0 (41 s intro) once the 205 s release fell outside the
+     * video overhang, and its chorus-only sheet replaced the saved one; a mashup or medley is no more the record.
+     */
     private val VERSION_WORDS = setOf(
         "live", "remix", "remixed", "mix", "acoustic", "unplugged", "instrumental",
         "karaoke", "cappella", "acapella", "demo", "edit", "version", "cover",
         "sped", "slowed", "reverb", "nightcore", "lofi", "orchestral", "extended",
+        "bootleg", "mashup", "medley",
     )
 }

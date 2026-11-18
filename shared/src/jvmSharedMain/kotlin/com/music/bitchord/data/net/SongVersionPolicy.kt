@@ -180,6 +180,36 @@ object SongVersionPolicy {
     }
 
     /**
+     * Whether a found song version shows that a downloaded video row's file is
+     * the video's sound and should be queued for the MV-sound repair.
+     *
+     * A video row downloaded under its own id holds the video's own stream:
+     * the download only falls back to that id when no song version was found
+     * (WDYM 11-18: DK_0jXPuIr0, whose release Korea's catalogue hides).
+     * [verifiesUnknownDownload] leaves known video rows out, so once the song
+     * version was found the file kept the MV sound for good. Only a video row
+     * whose bytes came from its own id (or from no recorded id) counts; a file
+     * fetched from another upload is already a replacement. A cover never
+     * counts, and nothing is queued when the song version is already saved.
+     */
+    fun repairsDownloadedVideoSound(
+        downloaded: Boolean,
+        isVideo: Boolean?,
+        isCover: Boolean,
+        rowVideoId: String,
+        soundSourceId: String?,
+        resolvedVideoId: String,
+        resolvedAlreadySaved: Boolean,
+    ): Boolean = downloaded &&
+        isVideo == true &&
+        !isCover &&
+        rowVideoId.isNotBlank() &&
+        resolvedVideoId.isNotBlank() &&
+        resolvedVideoId != rowVideoId &&
+        (soundSourceId == null || soundSourceId == rowVideoId) &&
+        !resolvedAlreadySaved
+
+    /**
      * Whether choosing a download for this row has to fetch the song version.
      *
      * A music video's own stream is its video's sound, never what the app plays

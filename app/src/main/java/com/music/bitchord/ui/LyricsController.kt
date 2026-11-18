@@ -122,6 +122,12 @@ class LyricsController(
      * Empty while nothing is being looked up.
      */
     private var lyricsRaceOrder: List<LyricsSource> = emptyList()
+
+    /** [KO] WDYM: the saved sheet's provider, online; a provider ranked below it is not shown early once it missed. */
+    private var savedSheetFrom: LyricsSource? = null
+
+    /** [KO] WDYM: this request shows the file's own sheet instead of a lower-ranked automatic copy ([passOverLowerCopy]). */
+    private var savedCopyPassedOver = false
     private var lyricsTimingJob: Job? = null
     private var aiTimingJob: Job? = null
     private var refineHeardJob: Job? = null
@@ -375,6 +381,8 @@ class LyricsController(
             artistAliases, localUri,
         )
         selectedLyricsSource = null
+        savedSheetFrom = null // [KO] WDYM
+        savedCopyPassedOver = false // [KO] WDYM
         sheetFromStore = false // [KO] U2
         fileLyricsLabel = null
         manualLyricsJobs.values.forEach(Job::cancel)
@@ -497,7 +505,7 @@ class LyricsController(
             // [KO] LYR6: online, a downloaded song's saved sheet is only the fallback when every provider misses.
             val providersFirst = com.music.bitchord.ko.KoSavedLyrics.providersFirst(localUri != null, com.music.bitchord.ko.KoNetworkPolicy.isOffline(app), previewOnly)
             if (providersFirst && showProvidersFirst(videoId, localUri!!, isVideo, override) { lookUp() }) return@launch
-            if (override != null) {
+            if (override != null && !savedCopyPassedOver) { // [KO] WDYM
                 // Chosen already, by the listener or by these same words.
                 sheetFromStore = true // [KO] U2
                 sheetCandidates.clear()
@@ -845,7 +853,8 @@ class LyricsController(
                 LyricsProviderState.TIMEOUT,
                 LyricsProviderState.NETWORK_ERROR,
                 LyricsProviderState.BLOCKED,
-                -> continue
+                // [KO] WDYM: the saved sheet stands in for its provider's miss (KoSavedLyrics.savedOutranks).
+                -> if (source == savedSheetFrom) return else continue
                 else -> blocked = true
             }
         }
@@ -1810,13 +1819,29 @@ class LyricsController(
         val preselected = com.music.bitchord.ko.KoSavedLyrics.preselected(override?.kind, override?.source)
         preselected?.let { selectedLyricsSource = it }
         val file = if (override == null) fileLyrics(app, localUri) else null
+        // [KO] WDYM: an automatic saved sheet the words have not already turned down this playback.
+        val savedLines = override?.lines ?: file?.lines
+        savedSheetFrom = (override?.source ?: file?.source)?.takeIf {
+            preselected == null && savedLines != null &&
+                mismatchReloadedFor != "$videoId|${savedLines.hashCode()}" &&
+                !com.music.bitchord.data.lyrics.LyricsMismatch.isRejected(videoId, it, savedLines)
+        }
         val selected = lookUp() ?: run {
             TrackLog.i("BitChord", "lyrics: providers missed, saved sheet is the fallback saved=${override != null || file != null}", about = videoId)
+            passOverLowerCopy(videoId, localUri, override)
             return false
         }
         // [KO] LYR7-B: the picked provider missed and the lookup's best is another's: the pick's saved copy, not that.
         if (com.music.bitchord.ko.KoSavedLyrics.pickMissed(preselected, selectedLyricsSource, selected.source)) {
             TrackLog.i("BitChord", "lyrics: picked ${preselected?.label} missed, saved pick kept over ${selected.source.label}", about = videoId)
+            return false
+        }
+        val savedFrom = savedSheetFrom
+        val savedAnswered = savedFrom != null && _lyricsProviderStates.value[savedFrom] == LyricsProviderState.FOUND
+        // A tap in the chooser while the lookup ran is the listener's pick, not the lookup's.
+        if (selectedLyricsSource == null && com.music.bitchord.ko.KoSavedLyrics.savedOutranks(savedFrom, savedAnswered, selected.source, lyricsRaceOrder)) {
+            TrackLog.i("BitChord", "lyrics: saved ${savedFrom?.label} kept over ${selected.source.label} (ranked lower, saved provider gave nothing)", about = videoId)
+            passOverLowerCopy(videoId, localUri, override)
             return false
         }
         // [KO] LYR7-C: only now that a provider sheet settles on screen, and only when it is not the saved
@@ -1831,6 +1856,27 @@ class LyricsController(
         val shown = rawLyricsResult ?: return true
         keepSheet(videoId, shown, byHand = shown.source == selectedLyricsSource, reason = "online-refresh", file = file)
         return true
+    }
+
+    /**
+     * [KO] WDYM: the fallback after [showProvidersFirst] skips an automatic copy a higher-ranked
+     * provider's file sheet outranks ([com.music.bitchord.ko.KoSavedLyrics.copyPassedOver]). The
+     * file is read only for such a copy; the copy itself is left as it is (offline it still shows).
+     */
+    private suspend fun passOverLowerCopy(videoId: String, localUri: String, override: LyricsOverrideFile.Stored?) {
+        val copy = override ?: return
+        val kind = copy.kind
+        val copySource = copy.source
+        if (kind != LyricsOverrideFile.Kind.RECHECK || copySource == null) return
+        val own = fileLyrics(app, localUri) ?: return
+        // The file's sheet the words already turned down this playback: the file branch skips it too.
+        if (mismatchReloadedFor == "$videoId|${own.lines.hashCode()}") return
+        val fileSource = own.source
+        val fileAnswered = fileSource != null && _lyricsProviderStates.value[fileSource] == LyricsProviderState.FOUND
+        savedCopyPassedOver = com.music.bitchord.ko.KoSavedLyrics.copyPassedOver(kind, copySource, fileSource, fileAnswered, lyricsRaceOrder)
+        if (savedCopyPassedOver) {
+            TrackLog.i("BitChord", "lyrics: saved ${copySource.label} copy passed over for the file's ${fileSource?.label} sheet", about = videoId)
+        }
     }
 
     /**

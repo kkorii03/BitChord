@@ -270,6 +270,7 @@ internal class SongVersionController(
      */
     private suspend fun onLateVersion(exoPlayer: ExoPlayer, mediaId: String, song: Song, late: Song) {
         if (!com.music.bitchord.ko.KoStoredVersionRows.lateAllowed(context, song, late)) return // [KO] VER6 a saved row keeps itself
+        if (SongVersionPolicy.mayInstallSongVersion(song)) markDownloadedVideoSound(song, late) // [KO] WDYM a known video row's file
         // Past the first-sound budget but still silent (the stream is slow, or
         // music-only's own hold is still waiting): nothing has been heard, so
         // the release simply takes the row, exactly as before audio — under
@@ -534,6 +535,29 @@ internal class SongVersionController(
             "song version: $playId verified as the video's sound; scheduling the song download",
             about = song.videoId,
         )
+    }
+
+    /**
+     * [KO] WDYM 11-18: a downloaded video row whose song version was just found
+     * holds the video's own sound; mark it so the repair fetches the song (see
+     * [SongVersionPolicy.repairsDownloadedVideoSound]). Reads saved records
+     * only and is idempotent through [markVerifiedMvSound].
+     */
+    private fun markDownloadedVideoSound(song: Song, resolved: Song) {
+        val id = song.videoId
+        if (!Downloads.isDownloaded(id)) return
+        val isVideo = song.isVideo || Downloads.savedIsVideoFor(id) == true
+        if (!SongVersionPolicy.repairsDownloadedVideoSound(
+                downloaded = true,
+                isVideo = isVideo,
+                isCover = DownloadedMvPolicy.isCover(id, song.title, song.artist, isVideo),
+                rowVideoId = id,
+                soundSourceId = Downloads.savedSoundSourceFor(id),
+                resolvedVideoId = resolved.videoId,
+                resolvedAlreadySaved = Downloads.isDownloaded(resolved.videoId),
+            )
+        ) return
+        markVerifiedMvSound(song)
     }
 
     /**
@@ -860,6 +884,7 @@ internal class SongVersionController(
             // playing rather than being replaced by a stream that cannot open.
             val streamOnly = cachedUse == SongVersionPolicy.DownloadedFileUse.STREAM_SONG
             if (streamOnly && !localFile) logStreamingSongFile(cached.videoId, song.videoId)
+            if (!verifyUnknownDownload) markDownloadedVideoSound(song, cached) // [KO] WDYM
             installPreResolvedVersion(
                 exoPlayer,
                 mediaId,
@@ -967,6 +992,8 @@ internal class SongVersionController(
                         markVerifiedMvSound(song)
                     } else if (verifyUnknownDownload) {
                         backfillVerifiedSong(song)
+                    } else {
+                        markDownloadedVideoSound(song, resolved) // [KO] WDYM a known video row's file
                     }
                     val resolvedUse = savedFileUse(resolved.videoId, online = !offline)
                     val streamOnly =

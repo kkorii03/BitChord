@@ -6,7 +6,10 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.YouTubeDisplayCleaner
 import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.cover.YouTubeCoverResolver
+import com.music.bitchord.data.innertube.Innertube
+import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.innertube.SearchKind
+import com.music.bitchord.data.net.ProxyPlayback
 import com.music.bitchord.data.lyrics.LyricsMismatch
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
@@ -121,6 +124,24 @@ internal object KoAudioSwitch {
             YtMusicRepository.audioVersionCache[song.videoId] = catalogue
             return catalogue
         }
+        // WDYM 11-18 (DK_0jXPuIr0): Korea's catalogue hides a release that is
+        // region-blocked here, so its pages and album walk never name the
+        // official audio (FCGb0pw_wPU) the US catalogue lists, and the MV's own
+        // sound played. Through the proxy that release plays, so it is asked
+        // once, only after everything above missed, and only through the
+        // same-artist and official-audio gates.
+        TrackMatcher.audioSwitchQueries(row).firstOrNull()?.let { query ->
+            val proxyReady = ProxyPlayback.isConfiguredForPlayback()
+            if (proxyReady) queriesRun++
+            try {
+                proxyCatalogueAudio(query, target, song, proxyReady)?.let { return it }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                failedQueries++
+                Log.w(TAG, "audio switch: proxy catalogue search failed for '${song.title}': ${failure.message}")
+            }
+        }
         // A row whose type never landed is looked up as a video, so the log has
         // to say so: it is not the same miss as a page that held no audio row.
         val shape = (if (videoRowsOnly) " (video rows only)" else "") +
@@ -141,6 +162,51 @@ internal object KoAudioSwitch {
         }
         return song
     }
+
+    /**
+     * The official audio the US catalogue lists for [song], or null. Asked
+     * only when [proxyReady] (the proxy plays music, so a release blocked in
+     * Korea still plays); without it nothing is searched. Only the strict
+     * gates adopt: the same title and act (bestSameArtist) or the exact
+     * official audio of a video (bestOfficialAudioForVideo). No bridge and no
+     * title-unverified adoption, since this page is not the listener's
+     * catalogue. A failed search throws, so the caller keeps the miss
+     * retryable.
+     */
+    internal suspend fun proxyCatalogueAudio(
+        query: String,
+        target: TrackMatcher.Target,
+        song: Song,
+        proxyReady: Boolean,
+        search: suspend (String) -> List<Song> = { usCatalogueSongs(it) },
+    ): Song? {
+        if (!proxyReady || query.isBlank()) return null
+        val candidates = search(query).filterNot { it.isVideo || it.videoId == song.videoId }
+        val match = TrackMatcher.bestSameArtist(candidates, target)
+            ?: TrackMatcher.bestOfficialAudioForVideo(candidates, target)
+            ?: return null
+        LyricsMismatch.wrongSoundNote(match.videoId)?.let { note ->
+            Log.w(TAG, note)
+            return null
+        }
+        if (KoTrackMatcher.restsOnLooseEvidence(match, target)) UnprovenVersions.note(song, match.videoId)
+        Log.d(TAG, "audio switch: '${song.title}' -> '${match.title}' ${match.videoId} (proxy catalogue)")
+        YtMusicRepository.audioVersionCache[song.videoId] = match
+        return match
+    }
+
+    /** One anonymous US Songs page, the one the lyrics reference search reads (RecordingPick). */
+    private suspend fun usCatalogueSongs(query: String): List<Song> =
+        InnertubeParser.parseSearchPage(
+            Innertube.searchAnonymous(
+                query = query,
+                params = SearchFilter.SONGS.params,
+                hl = "en",
+                gl = "US",
+                kind = SearchKind.AUDIO_SWITCH,
+            ),
+            includeVideos = false,
+        ).rows.filterIsInstance<SearchResult.Track>().map { it.song }
 
     /**
      * [rows] with the search screen's covers: a confirmed upload also takes

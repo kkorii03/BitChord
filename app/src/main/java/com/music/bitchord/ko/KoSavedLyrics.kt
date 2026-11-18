@@ -127,6 +127,41 @@ object KoSavedLyrics {
         preselected != null && selectedNow == preselected && answered != preselected
 
     /**
+     * [KO] WDYM: an automatic saved sheet stays over [answered], the lookup's pick online, when its
+     * provider [savedSource] ranks ahead of it in [order] and gave no sheet this time ([savedAnswered]
+     * false: a miss, a timeout, a name or length refusal). The pick is then only the first lower
+     * provider to answer, not a sheet shown better; the words heard still judge the saved one.
+     * DK_0jXPuIr0 (11-18): lrc.red missed the MV, QQ's bootleg row answered (consensus unknown) and
+     * replaced the saved lrc.red sheet. The listener's own pick has [pickMissed].
+     */
+    fun savedOutranks(
+        savedSource: LyricsSource?,
+        savedAnswered: Boolean,
+        answered: LyricsSource,
+        order: List<LyricsSource>,
+    ): Boolean {
+        if (savedSource == null || savedAnswered || savedSource == answered) return false
+        val saved = order.indexOf(savedSource)
+        return saved >= 0 && order.indexOf(answered) > saved
+    }
+
+    /**
+     * [KO] WDYM: online, with no provider sheet shown, whether an automatic copy ([copyKind] RECHECK
+     * from [copySource]) is passed over for the file's own sheet from [fileSource]: the same rank
+     * rule as [savedOutranks], the copy standing where the lookup's pick stood. Repairs the copies
+     * the online refresh wrote before that rule (DK_0jXPuIr0: QQ's bootleg copy over the file's lrc.red).
+     */
+    fun copyPassedOver(
+        copyKind: LyricsOverrideFile.Kind,
+        copySource: LyricsSource?,
+        fileSource: LyricsSource?,
+        fileAnswered: Boolean,
+        order: List<LyricsSource>,
+    ): Boolean =
+        copyKind == LyricsOverrideFile.Kind.RECHECK && copySource != null &&
+            savedOutranks(fileSource, fileAnswered, copySource, order)
+
+    /**
      * [KO] LYR7-A: an automatic copy the words heard have already proved is another song's. The
      * online refresh saves a provider's sheet before any words are heard; once they reject it,
      * it must not come back as the saved fallback, here or on the lock screen. A listener's own

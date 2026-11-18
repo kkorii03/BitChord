@@ -504,7 +504,7 @@ internal fun KoSongActionsSheet(
             val context = LocalContext.current
             val coverChannels by com.music.bitchord.data.settings.AppSettings.coverChannels.collectAsStateWithLifecycle()
             val designated = channelId in coverChannels
-            ActionRow(
+            if (offersCoverChannelMark(song, designated)) ActionRow(
                 icon = SfIcons.RecordVoiceOver,
                 label = stringResource(if (designated) R.string.cover_channel_unset else R.string.cover_channel_set),
                 tint = if (designated) palette.accent else null,
