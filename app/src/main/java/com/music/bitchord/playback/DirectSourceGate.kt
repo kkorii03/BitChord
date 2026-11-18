@@ -246,6 +246,19 @@ object DirectSourceGate {
         com.music.bitchord.ko.KoDirectLead.lookup(videoId, target, KoDirectHqAhead.proofForTest ?: proofOf(videoId, target)) { youTubeLength(videoId) }
 
     private fun start(videoId: String, target: TrackMatcher.Target): Lookup? {
+        // [KO] direct-lead: a plain-id read (the mix analysis's head, held at the
+        // gate since the song started) has no title to search with. Phone 11-19
+        // 01:54: it was the window's first lookup, `no addon served ''`, and as
+        // a table entry it could have handed its empty answer to the titled
+        // lookup starting beside it. It only joins: the titled lookup, or the lead.
+        if (target.title.isBlank()) {
+            lookups[videoId]?.let { return it }
+            if (com.music.bitchord.ko.KoDirectLead.reusable(videoId) == null) return null
+            return Lookup(
+                work = scope.async(TrackLog.about(videoId)) { com.music.bitchord.ko.KoDirectLead.reused(videoId) },
+                startedAtMs = android.os.SystemClock.elapsedRealtime(),
+            )
+        }
         val proof = KoDirectHqAhead.proofForTest ?: proofOf(videoId, target) // [KO] hq-ahead
         // [KO] hq-ahead: the next track, not yet audible, also asks Telegram/JioSaavn.
         val ahead = open.value.let { it.next == videoId && videoId !in it.playing }

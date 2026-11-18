@@ -101,18 +101,37 @@ internal object KoDirectLead {
     }
 
     /** The row streams its own YouTube id and nothing already settles it. */
-    internal fun eligible(nextId: String, streamedId: String?): Boolean =
-        streamedId == nextId &&
-            BatteryPolicy.cachePrefetchBytesAllowed(
-                metered = AppSettings.meteredConnection.value == true,
-                lowPower = AppSettings.lowPower.value,
-            ) &&
-            nextId !in Downloads.saved.value &&
-            !OriginalVersion.isPinned(nextId) &&
-            !StreamChoice.isSubstitute(nextId) &&
-            !StreamChoice.substitutesRefused(nextId) &&
-            nextId !in QualityUpgrade.refused &&
-            SourceResolver.directAddons().any { !SourceResolver.SourceCooldown.isResting(it.configId) }
+    internal fun eligible(nextId: String, streamedId: String?): Boolean = skipReason(nextId, streamedId) == null
+
+    /** Why [eligible] is false, for the phone log; null when the lead may run. */
+    internal fun skipReason(nextId: String, streamedId: String?): String? {
+        val metered = AppSettings.meteredConnection.value == true
+        val lowPower = AppSettings.lowPower.value
+        return when {
+            streamedId != nextId -> "streams ${streamedId ?: "no YouTube id"}"
+            !BatteryPolicy.cachePrefetchBytesAllowed(metered = metered, lowPower = lowPower) ->
+                if (lowPower) "saving power" else "metered connection"
+            nextId in Downloads.saved.value -> "saved"
+            OriginalVersion.isPinned(nextId) -> "kept on its original upload"
+            StreamChoice.isSubstitute(nextId) -> "already on a substitute"
+            StreamChoice.substitutesRefused(nextId) -> "substitutes refused"
+            nextId in QualityUpgrade.refused -> "upgrades refused"
+            SourceResolver.directAddons().none { !SourceResolver.SourceCooldown.isResting(it.configId) } ->
+                "no addon awake"
+            else -> null
+        }
+    }
+
+    /** The last skip logged, so the five-second tick says each reason once per pair. */
+    private var skipped: Triple<String, String, String>? = null
+
+    @Synchronized
+    private fun noteSkip(currentId: String, nextId: String, why: String, remainingMs: Long) {
+        val now = Triple(currentId, nextId, why)
+        if (skipped == now) return
+        skipped = now
+        TrackLog.d(TAG, "direct-lead: $nextId skipped ($why) ${remainingMs}ms before the transition", about = nextId)
+    }
 
     /** One playing tick, gate active, before the window: [nextId] streams [streamedId]. */
     fun onTick(
@@ -123,10 +142,12 @@ internal object KoDirectLead {
         remainingMs: Long,
         target: () -> TrackMatcher.Target,
     ) {
-        if (!inLead(remainingMs) || !eligible(nextId, streamedId)) return
+        if (!inLead(remainingMs)) return
+        skipReason(nextId, streamedId)?.let { return noteSkip(currentId, nextId, it, remainingMs) }
         if (!due(currentId, nextId, remainingMs)) return
         val wanted = target()
-        if (wanted.title.isBlank() || wanted.isVideo) return
+        if (wanted.title.isBlank()) return noteSkip(currentId, nextId, "no title", remainingMs)
+        if (wanted.isVideo) return noteSkip(currentId, nextId, "a video", remainingMs)
         TrackLog.d(TAG, "direct-lead: looking up $nextId ${remainingMs}ms before the transition", about = nextId)
         synchronized(this) {
             ledAtNs = System.nanoTime()
@@ -245,6 +266,7 @@ internal object KoDirectLead {
         job?.cancel()
         job = null
         pair = null
+        skipped = null
     }
 
     private const val TAG = "BitChord"
