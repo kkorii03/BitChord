@@ -220,8 +220,16 @@ object AudioDecoder {
         val decoded = decodeRaw(source, startSeconds, endSeconds, abort, label) { buffer, info, channels, _ ->
             toStereo(buffer, info, channels, left, right)
         } ?: return null
-        return StereoPcm(flatten(left), flatten(right), decoded.first) to decoded.second
+        // One channel at a time, its chunks let go before the other is joined:
+        // both chunk lists plus both joined copies peaked at four channel-sized
+        // arrays (~35 MB for a 45 s 48 kHz window), now three. [KO] oom2
+        val joinedLeft = flattenReleasing(left)
+        return StereoPcm(joinedLeft, flattenReleasing(right), decoded.first) to decoded.second
     }
+
+    /** [flatten], then empties [chunks] so they are garbage before the next large allocation. [KO] oom2 */
+    internal fun flattenReleasing(chunks: MutableList<FloatArray>): FloatArray =
+        flatten(chunks).also { chunks.clear() }
 
     /**
      * As [decodeRegion], but handing each decoded mono chunk to [onChunk] instead
