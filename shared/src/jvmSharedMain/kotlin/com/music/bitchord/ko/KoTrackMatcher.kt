@@ -536,14 +536,31 @@ internal object KoTrackMatcher {
      *
      * This is a search grade, not a replacement verdict: callers must still
      * have the sound comparison accept the row before it may play.
+     *
+     * [KO] ostartist: a credit that is only a soundtrack/compilation label
+     * ("Original Soundtrack", "Various Artists", "드라마 OST") on either side
+     * names nobody, so it is unknown here rather than different — at the
+     * tighter [GENERIC_CREDIT_DRIFT_SEC] window.
      */
     fun isArtistUnverifiedOriginal(
         candidate: Song,
         target: Target,
         maxDriftSec: Int = ARTIST_UNVERIFIED_DRIFT_SEC,
     ): Boolean {
+        if (!artistUnverifiedApartFromRuntime(candidate, target)) return false
+        val wantedSec = target.durationSec ?: return false
+        val gotSec = secondsOf(candidate.durationText) ?: return false
+        return abs(wantedSec - gotSec) <= artistUnverifiedWindow(target, candidate, maxDriftSec)
+    }
+
+    /** [isArtistUnverifiedOriginal] with every check but the runtime window. */
+    private fun artistUnverifiedApartFromRuntime(candidate: Song, target: Target): Boolean {
         if (target.artist.isBlank() || candidate.artist.isBlank()) return false
-        if (!artistScriptsDiffer(target.artist, candidate.artist)) return false
+        if (!artistScriptsDiffer(target.artist, candidate.artist) &&
+            !eitherGenericCredit(target.artist, candidate.artist)
+        ) {
+            return false
+        }
         // A channel or release identity that proves the same act is a normal
         // match, not an unverified one.
         if (namesTheSameArtist(target.artist, candidate.artist) ||
@@ -560,11 +577,45 @@ internal object KoTrackMatcher {
         val albumMarks = albumVersionMarkers(candidate.albumName)
         val effectiveVersions = got.versions + (albumMarks intersect NOVOCAL_TAKES) +
             (albumMarks intersect wanted.versions)
-        if (wanted.versions != effectiveVersions) return false
-        val wantedSec = target.durationSec ?: return false
-        val gotSec = secondsOf(candidate.durationText) ?: return false
-        return abs(wantedSec - gotSec) <= maxDriftSec
+        return wanted.versions == effectiveVersions
     }
+
+    /** The runtime window for [isArtistUnverifiedOriginal]: [GENERIC_CREDIT_DRIFT_SEC] for a label credit. */
+    private fun artistUnverifiedWindow(target: Target, candidate: Song, maxDriftSec: Int): Int =
+        if (eitherGenericCredit(target.artist, candidate.artist)) {
+            minOf(maxDriftSec, GENERIC_CREDIT_DRIFT_SEC)
+        } else {
+            maxDriftSec
+        }
+
+    private fun eitherGenericCredit(wanted: String, got: String): Boolean =
+        isGenericCredit(wanted) || isGenericCredit(got)
+
+    /**
+     * [KO] ostartist: whether [credit] is nothing but a soundtrack or
+     * compilation label — every word generic, one of them the label itself.
+     * "Joker OST" or "Hildur Guðnadóttir & Original Soundtrack" still name
+     * something and stay ordinary credits.
+     */
+    internal fun isGenericCredit(credit: String): Boolean {
+        val words = wordsOf(credit)
+        return words.isNotEmpty() && words.all { it in GENERIC_CREDIT_WORDS } &&
+            words.any { it in GENERIC_CREDIT_LABELS }
+    }
+
+    private val GENERIC_CREDIT_LABELS = setOf("soundtrack", "soundtracks", "ost", "사운드트랙", "various", "여러")
+    private val GENERIC_CREDIT_WORDS = GENERIC_CREDIT_LABELS + setOf(
+        "original", "motion", "picture", "pictures", "movie", "film", "television", "tv", "series",
+        "drama", "the", "artist", "artists", "오리지널", "영화", "드라마", "아티스트",
+    )
+
+    /**
+     * The runtime window for a row whose credit is a label: the matcher's
+     * tightest "runtime stands in for a credit" window
+     * (TrackMatcher.CREDIT_OVERRIDE_SEC, private upstream), not the three
+     * seconds a localised but real credit gets.
+     */
+    private const val GENERIC_CREDIT_DRIFT_SEC = 2
 
     /**
      * Whether the two credits are written in scripts that share no letters at
@@ -848,15 +899,13 @@ internal object KoTrackMatcher {
                         // Title and take may agree while only the runtime is
                         // out. Report the term that actually rejected the row
                         // instead of calling a localised credit an artist miss.
-                        if (artistScriptsDiffer(target.artist, candidate.artist) &&
+                        if ((artistScriptsDiffer(target.artist, candidate.artist) ||
+                                eitherGenericCredit(target.artist, candidate.artist)) &&
                             strictLength && target.durationSec != null
                         ) {
-                            val gotSec = secondsOf(candidate.durationText) ?: return "duration"
-                            if (abs(target.durationSec - gotSec) > artistUnverifiedDriftSec &&
-                                isArtistUnverifiedOriginal(candidate, target, Int.MAX_VALUE)
-                            ) {
-                                return "duration"
-                            }
+                            secondsOf(candidate.durationText) ?: return "duration"
+                            // Not unverified at its window, yet unverified apart from the runtime.
+                            if (artistUnverifiedApartFromRuntime(candidate, target)) return "duration"
                         }
                     }
                     return "artist"
@@ -874,14 +923,11 @@ internal object KoTrackMatcher {
                     return "artist-unverified"
                 }
                 if (strictLength && target.durationSec != null &&
-                    artistScriptsDiffer(target.artist, candidate.artist)
+                    (artistScriptsDiffer(target.artist, candidate.artist) ||
+                        eitherGenericCredit(target.artist, candidate.artist))
                 ) {
-                    val gotSec = secondsOf(candidate.durationText) ?: return "duration"
-                    if (abs(target.durationSec - gotSec) > artistUnverifiedDriftSec &&
-                        isArtistUnverifiedOriginal(candidate, target, Int.MAX_VALUE)
-                    ) {
-                        return "duration"
-                    }
+                    secondsOf(candidate.durationText) ?: return "duration"
+                    if (artistUnverifiedApartFromRuntime(candidate, target)) return "duration"
                 }
             }
             return "artist"
