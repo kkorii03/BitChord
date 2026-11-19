@@ -682,7 +682,7 @@ class PrecisionAudioSink(
             port.positionUs = position - port.streamOffsetUs
             port.positionNanos = System.nanoTime()
         }
-        return resumeCeiling.position(position, System.nanoTime(), playbackParameters.speed, allowed = !silenceSkipper.enabled && port.outArm == null && port.inArm == null) // [KO] resume-clock
+        return resumeCeiling.position(position, System.nanoTime(), playbackParameters.speed, allowed = !silenceSkipper.enabled && port.outArm == null && port.inArm == null, drained = resumeCeiling.heldBackUs > 0L && !hasPendingData()) // [KO] resume-clock, midsilence
     }
 
     override fun play() {

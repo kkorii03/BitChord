@@ -97,11 +97,22 @@ class KoResumeCeiling(private val log: (String) -> Unit = {}) {
      * The position to report for the sink's reading [rawUs] at [nowNanos], playing at [speed].
      * [allowed] false is a stretch where the position legitimately outruns the clock (silence
      * skipping, an Automix loop splice): passed through, and nothing learned from it.
+     * [drained] true is a sink that has played every frame written to it.
      */
-    fun position(rawUs: Long, nowNanos: Long, speed: Float, allowed: Boolean = true): Long {
+    fun position(rawUs: Long, nowNanos: Long, speed: Float, allowed: Boolean = true, drained: Boolean = false): Long {
         if (!allowed) {
             if (armed) clear("not tracked")
             lineUs = UNSET
+            return rawUs
+        }
+        // [KO] midsilence (11-19 15:47, Centuries 24/96 FLAC on cellular, JBL Tour Pro 3): a hold
+        // says the sound is still that far behind the reading, so the sink must still have it to
+        // play. Once the sink has played everything, the hold is wrong, and Media3 reads it as
+        // audio in hand: `pos=107553 buffered=110976 loading=false` = the 3441 ms hold, its
+        // "< 0.5 s left: drop the back buffer" rescue never ran and the track went silent
+        // until a stuck-player error. Released, and not carried into the rebuffer's resume.
+        if (drained && armed) {
+            clear("sink drained")
             return rawUs
         }
         val rate = if (speed.isFinite() && speed > 0f) speed.toDouble().coerceIn(MIN_SPEED, MAX_SPEED) else lastSpeed
