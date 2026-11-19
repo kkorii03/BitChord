@@ -1926,16 +1926,27 @@ class LyricsController(
             if (generation != lyricsGeneration || timingLines !== lines) return@launch
             // What the app measured this sheet at; the guard above proves these are its lines.
             val measured = _lyricsTiming.value.matchPercent
+            // [KO] matchpct: only the words' own fit of this sheet says it is sung here. The shown
+            // percent may be a chroma/HQ match, which times the recording and says nothing of the
+            // words (WDYM DK_0jXPuIr0: chroma 100% kept a QQ bootleg sheet from every word verdict).
+            val wordsFit = LyricsTiming.measuredFitFor(app, request.videoId, lines)
+            if (generation != lyricsGeneration || timingLines !== lines) return@launch
             // Every refresh lands here: only new words, a new sheet or a new
             // candidate are worth the sums below. A late provider's sheet is a
             // new candidate, and the old key let it go unjudged (QYh6mYIJG2Y).
             // The measure too: a timing landing mid-judgement is judged again by its own call (n4uG9ym6kKA).
-            val judged = "$key|${heard.size}|${sheetCandidates.size}|$measured"
+            val judged = "$key|${heard.size}|${sheetCandidates.size}|$measured|$wordsFit"
             if (sheetJudgedFor == judged) return@launch
             sheetJudgedFor = judged
+            if (heard.size >= com.music.bitchord.data.lyrics.LyricsMismatch.MIN_HEARD_WORDS &&
+                (measured ?: 0) >= com.music.bitchord.data.lyrics.LyricsMismatch.MEASURED_KEEPS_PERCENT &&
+                (wordsFit ?: 0) < com.music.bitchord.data.lyrics.LyricsMismatch.MEASURED_KEEPS_PERCENT
+            ) {
+                TrackLog.i("BitChord", "sheet-judge: match=$measured% times the recording, words fit=${wordsFit ?: "-"}: heard=${heard.size} decide", request.videoId)
+            }
             val others = sheetCandidates.values.filter { it.lines != lines && it.lines.any { line -> line.timeMs > 0 } }
             val better = withContext(Dispatchers.Default) {
-                com.music.bitchord.playback.smart.SheetChoice.better(lines, others, heard, measured)
+                com.music.bitchord.playback.smart.SheetChoice.better(lines, others, heard, wordsFit)
             }
             // A timing published while the fits were summed (n4uG9ym6kKA: 75% landed, the
             // judgement still held none) is judged by the call refreshTiming makes after it.
@@ -1952,7 +1963,7 @@ class LyricsController(
             // Lining a long sheet up with a long transcript is a full DP table;
             // it must not run on the main thread while the screen is drawing.
             val verdict = withContext(Dispatchers.Default) {
-                com.music.bitchord.data.lyrics.LyricsMismatch.judgeSheet(lines, heard, knownFit = measured)
+                com.music.bitchord.data.lyrics.LyricsMismatch.judgeSheet(lines, heard, knownFit = wordsFit)
             }
             if (generation != lyricsGeneration || timingLines !== lines) return@launch
             if (!verdict.rejected) return@launch
