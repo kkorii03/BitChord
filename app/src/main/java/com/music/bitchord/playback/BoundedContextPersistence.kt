@@ -30,7 +30,37 @@ object BoundedContextPersistence {
         val song: Song,
         val canonicalIndex: Int? = null,
         val cycleId: Long? = null,
+        // [KO] shuf500: the canonical row's contextEntryKey when the song
+        // version controller put another recording (music video -> song) in
+        // this anchored row. Without it every save after the first swap was
+        // refused, and a restore replayed the frozen opening of the shuffle.
+        val versionOf: String? = null,
     )
+
+    /** [KO] shuf500: whether [entry] may stand at its anchor in [canonical]. */
+    private fun matchesAnchor(entry: Entry, expected: Song): Boolean {
+        val key = expected.contextEntryKey()
+        return entry.song.contextEntryKey() == key || entry.versionOf == key
+    }
+
+    /** Logged once per run of refused saves, so a refusal is never silent again. */
+    private var refusing = false
+
+    private fun noteEncoded(state: State, encoded: String?) {
+        val refused = encoded == null
+        val first = synchronized(this) {
+            val wasRefusing = refusing
+            refusing = refused
+            refused && !wasRefusing
+        }
+        if (first) {
+            com.music.bitchord.data.TrackLog.w(
+                "BitChord",
+                "queue: bounded snapshot refused n=${state.entries.size} at=${state.currentIndex} " +
+                    "canonical=${state.context.songs.size}",
+            )
+        }
+    }
 
     data class State(
         val context: ContextSnapshot,
@@ -90,7 +120,7 @@ object BoundedContextPersistence {
             pending = null
             next to generation
         }
-        val encoded = encode(state) ?: return
+        val encoded = encode(state).also { noteEncoded(state, it) } ?: return
         synchronized(this) {
             if (startedAt != generation) return
             write(state, encoded).apply()
@@ -102,7 +132,7 @@ object BoundedContextPersistence {
             generation += 1
             pending = null
         }
-        val encoded = encode(state) ?: return
+        val encoded = encode(state).also { noteEncoded(state, it) } ?: return
         synchronized(this) { write(state, encoded).commit() }
     }
 
@@ -420,18 +450,20 @@ object BoundedContextPersistence {
         val song: StoredSong,
         val canonicalIndex: Int?,
         val cycleId: Long?,
+        val versionOf: String? = null, // [KO] shuf500
     ) {
         fun toEntry(contextSongs: List<Song>): Entry? {
             val resolvedSong = song.toSong() ?: return null
             val index = canonicalIndex
+            val entry = Entry(resolvedSong, canonicalIndex, cycleId, versionOf)
             if (index != null) {
                 if (index !in contextSongs.indices) return null
-                if (resolvedSong.contextEntryKey() != contextSongs[index].contextEntryKey()) return null
+                if (!matchesAnchor(entry, contextSongs[index])) return null
                 if (cycleId == null || cycleId < 0L) return null
             } else if (cycleId != null) {
                 return null
             }
-            return Entry(resolvedSong, canonicalIndex, cycleId)
+            return entry
         }
 
         companion object {
@@ -439,6 +471,7 @@ object BoundedContextPersistence {
                 song = StoredSong.from(entry.song),
                 canonicalIndex = entry.canonicalIndex,
                 cycleId = entry.cycleId,
+                versionOf = entry.versionOf,
             )
         }
     }
@@ -620,8 +653,7 @@ object BoundedContextPersistence {
                     (cycleId !in knownCycles && index >= state.currentIndex)
                 ) return null
                 if (!anchors.add(canonicalIndex to cycleId)) return null
-                val expected = canonical[canonicalIndex]
-                if (entry.song.contextEntryKey() != expected.contextEntryKey()) return null
+                if (!matchesAnchor(entry, canonical[canonicalIndex])) return null
             }
         }
 

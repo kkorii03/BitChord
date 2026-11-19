@@ -120,7 +120,6 @@ import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.BoundedContextRequests
 import com.music.bitchord.playback.DirectSourceGate
-import com.music.bitchord.playback.contextEntryKey
 import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.ui.screens.CACHE_FOLDER_BROWSE_ID
 import com.music.bitchord.data.LocalGroup
@@ -152,6 +151,7 @@ import com.music.bitchord.ko.ui.koSmartPlaylistState
 import com.music.bitchord.ko.ui.koInstallEventHooks
 import com.music.bitchord.ko.ui.localMusicLoadState
 import com.music.bitchord.ko.ui.mergeDetailContinuation
+import com.music.bitchord.ko.ui.koMirroredDetailRows
 import com.music.bitchord.ko.ui.retrySearchAllowed
 import com.music.bitchord.ko.ui.reuseCachedSearchPage
 import com.music.bitchord.ko.ui.searchPageState
@@ -3416,18 +3416,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             fillIn(browseId, snapshot.continuationToken, page.thumbnailUrl)
         }
         val existing = (page.songs as? UiState.Success)?.data ?: return
-        val known = existing.mapTo(HashSet()) { it.contextEntryKey() }
-        val added = snapshot.songs
-            .filter { known.add(it.contextEntryKey()) }
-            .withArtwork(page.thumbnailUrl)
+        // [KO] shuf500: a downloaded-copy preview is replaced by the registry,
+        // not joined with it (its keys never matched: 554 + 64 = 618 rows).
+        val rows = koMirroredDetailRows(existing, page.songsArePreview, snapshot.songs)
+            ?.withArtwork(page.thumbnailUrl)
         // Never move the page's token backwards: a page whose own fill-in is
         // ahead of the service would otherwise hand a later tap a token for
         // songs it already has, which the registry rejects as a duplicate page.
         val continuation = if (snapshot.songs.size >= existing.size) snapshot.continuationToken else page.continuation
-        if (added.isEmpty() && page.continuation == continuation) return
+        if (rows == null && page.continuation == continuation) return
         _detailStack.value = stack.toMutableList().also {
             it[index] = page.copy(
-                songs = UiState.Success(existing + added),
+                songs = UiState.Success(rows ?: existing),
+                songsArePreview = page.songsArePreview && rows == null,
                 continuation = continuation,
             )
         }

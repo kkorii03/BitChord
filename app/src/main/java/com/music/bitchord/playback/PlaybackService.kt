@@ -9736,10 +9736,16 @@ class PlaybackService : MediaLibraryService() {
         if (range.isEmpty()) return
         val entries = range.map { index ->
             val item = player.getMediaItemAt(index)
+            val canonicalIndex = if (item.queueTier == QueueTier.CONTEXT) item.canonicalIndex else null
+            val song = item.toSong()
             BoundedContextPersistence.Entry(
-                song = item.toSong(),
-                canonicalIndex = if (item.queueTier == QueueTier.CONTEXT) item.canonicalIndex else null,
+                song = song,
+                canonicalIndex = canonicalIndex,
                 cycleId = if (item.queueTier == QueueTier.CONTEXT) item.contextCycleId else null,
+                // [KO] shuf500: a row the song version controller swapped keeps
+                // its anchor; say which canonical row it stands for.
+                versionOf = canonicalIndex?.let { context.songs.getOrNull(it) }?.contextEntryKey()
+                    ?.takeIf { it != song.contextEntryKey() },
             )
         }
         val state = BoundedContextPersistence.State(
@@ -10060,6 +10066,15 @@ class PlaybackService : MediaLibraryService() {
         boundedEditState = BoundedQueueEdits.invalidateContext(boundedEditState)
         persistedQueueStart = 0
         exoPlayer.setMediaItems(items, projected.currentIndex, projected.positionMs)
+        // [KO] shuf500: the bounded restore left no trail, so a frozen
+        // snapshot looked like a shuffle that kept starting the same way.
+        TrackLog.i(
+            "BitChord",
+            "queue: bounded restore n=${items.size} at=${projected.currentIndex} " +
+                "canonical=${restoredContext.songs.size} current=$restoredCurrent " +
+                "shuffled=${restoredWindow.isShuffleEnabled} " +
+                "versions=${projected.entries.count { it.versionOf != null }}",
+        )
         startBoundedContinuationLoading(contextToken)
         return QueueRestore.RESTORED
     }

@@ -6,6 +6,24 @@ import com.music.bitchord.data.model.UiState
 import com.music.bitchord.playback.contextEntryKey
 
 /**
+ * The rows an open detail page shows once the service's canonical registry is
+ * mirrored into it, or null when nothing changes.
+ *
+ * A page still showing its downloaded copy ([preview]) has rows with no
+ * setVideoId, so their keys never match the registry's `videoId@setVideoId`
+ * and a union listed every downloaded song twice (shuf500: 554 + 64 = 618).
+ * The registry is the real listing, so it replaces the stand-in. Otherwise
+ * the registry's new rows are appended by key, which keeps a song the
+ * playlist itself lists twice (two setVideoIds, two keys).
+ */
+internal fun koMirroredDetailRows(existing: List<Song>, preview: Boolean, mirrored: List<Song>): List<Song>? {
+    if (preview && mirrored.isNotEmpty()) return mirrored
+    val known = existing.mapTo(HashSet()) { it.contextEntryKey() }
+    val added = mirrored.filter { known.add(it.contextEntryKey()) }
+    return if (added.isEmpty()) null else existing + added
+}
+
+/**
  * One continuation page folded into an open detail page, or null when it adds
  * nothing new (the feed looped back) or the page is still loading.
  *
