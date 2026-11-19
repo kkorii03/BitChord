@@ -259,6 +259,9 @@ class LyricsController(
      */
     private val requestGate = LyricsRequestGate()
 
+    /** [KO] herolyr: an upgrade put this track's sheet up; the track's own miss must not clear it. */
+    private var lateSheetShown = false
+
     init {
         // Kept lyrics a background check has since bettered (word timing where
         // only lines were kept), or a transcription that finished after its
@@ -271,6 +274,7 @@ class LyricsController(
                     !sheetFromStore // [KO] U2
                 ) {
                     publishLyrics(result)
+                    if (rawLyricsResult === result) lateSheetShown = true // [KO] herolyr
                 }
             }
         }
@@ -402,6 +406,7 @@ class LyricsController(
             _lyricsSource.value = null
         }
         rawLyricsResult = null
+        lateSheetShown = false // [KO] herolyr
         timingLines = null
         timingBaseAllowed = false
         timingMeasureAllowed = true
@@ -634,13 +639,23 @@ class LyricsController(
             if (previewOnly) return@launch
             // [KO] LYR6: the providers were asked first and all missed; asking again would only miss again.
             val selected = if (providersFirst) null else lookUp()
-            publishLyrics(selected, force = selectedLyricsSource != null)
+            // [KO] herolyr: another lookup's late sheet landed while this one waited; its miss keeps it.
+            val keptLate = com.music.bitchord.ko.KoLateSheet.keepsLateSheet(
+                missed = selected == null,
+                pickedByHand = selectedLyricsSource != null,
+                lateSheetShown = lateSheetShown && rawLyricsResult != null && _lyrics.value != null,
+            )
+            if (keptLate) {
+                TrackLog.i("BitChord", "lyrics: lookup missed, late ${rawLyricsResult?.source?.label} sheet kept", about = videoId)
+            } else {
+                publishLyrics(selected, force = selectedLyricsSource != null)
+            }
             _lyricsChecked.value = true
             // A miss is not a final answer: a source may have been down or the
             // phone offline. Forget the claim so a later look at the same
             // track (a settings change, reopening the panel) asks again,
             // instead of being dropped as a duplicate for the whole session.
-            if (selected == null) requestGate.release()
+            if (selected == null && !keptLate) requestGate.release()
         }
     }
 

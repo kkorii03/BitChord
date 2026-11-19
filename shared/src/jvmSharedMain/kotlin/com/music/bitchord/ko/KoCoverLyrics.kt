@@ -46,6 +46,40 @@ internal object KoCoverLyrics {
     }
 
     /**
+     * [KO] herolyr: the names the resolved original is retried under, in order.
+     *
+     * YouTube Music lists many Korean songs by an English title ("히어로" by LUCY
+     * as "Hero", "개화" as "Flowering"), and the title search takes that row as
+     * the original, while Bugs, VIBE and Melon file the song under its Hangul
+     * title (phone 11-19 oZ4Tr4bINNY, pip-QThrNwE: "Hero"/"lucy" missed everywhere
+     * and the 12 s deadline ended the lookup). So a Hangul row title the resolved
+     * one does not share is also asked under the resolved artist. A Latin resolved
+     * title goes second: there the Hangul title is likely the catalogue's own. A
+     * Japanese or Chinese one ("晩餐歌" for "만찬가") goes first, as before: the
+     * Hangul is then only a spelling of the original. The resolved artist stays in
+     * both names, so this is no looser than the resolved name itself.
+     */
+    fun resolvedNames(rowTitle: String, resolved: OriginalNames.Name?): List<Pair<String, String>> {
+        val name = resolvedFirst(artistKnown = false, resolved = resolved) ?: return emptyList()
+        val row = rowTitle.trim()
+        if (row.isEmpty() || name.second.isEmpty() || !OriginalNames.hasHangul(row) ||
+            OriginalNames.hasHangul(name.first) || row.equals(name.first, ignoreCase = true)
+        ) {
+            return listOf(name)
+        }
+        val ownTitle = row to name.second
+        return if (name.first.any(::isHanOrKana)) listOf(name, ownTitle) else listOf(ownTitle, name)
+    }
+
+    private fun isHanOrKana(char: Char): Boolean = when (Character.UnicodeScript.of(char.code)) {
+        Character.UnicodeScript.HAN,
+        Character.UnicodeScript.HIRAGANA,
+        Character.UnicodeScript.KATAKANA,
+        -> true
+        else -> false
+    }
+
+    /**
      * The name variants worth a retry. With the artist known, all of them, as
      * before. Without it, only the title-only ones: every other variant names
      * the singer or the channel, which the first round already asked.
@@ -63,7 +97,8 @@ internal object KoCoverLyrics {
      *    is sharper than any title-only search, which can find another song of
      *    the same name (11-07 5nxb792c-b4). The resolved original is itself a
      *    title-only catalogue guess, so it comes after (review RG6 COV6-A).
-     * 2. The original [resolve] gives for the title, waited for at most [waitMs].
+     * 2. The original [resolve] gives for the title, waited for at most [waitMs],
+     *    also under [rowTitle] when that is the Hangul title ([resolvedNames]).
      * 3. The title-only [variants] ([variantsToRetry]); never the singer's names.
      *
      * [onResolved] hears what step 2 got, and whether it was cut off by [waitMs].
@@ -76,14 +111,13 @@ internal object KoCoverLyrics {
         retry: suspend (Pair<String, String>) -> R?,
         waitMs: Long = RESOLVED_WAIT_MS,
         onResolved: (resolved: OriginalNames.Name?, late: Boolean) -> Unit = { _, _ -> },
+        rowTitle: String = "",
     ): R? {
         for (alternative in alternatives) retry(alternative)?.let { return it }
         var answered = false
         val resolved = withTimeoutOrNull(waitMs) { resolve().also { answered = true } }
         onResolved(resolved, !answered)
-        resolvedFirst(artistKnown = false, resolved = resolved)?.let { name ->
-            retry(name)?.let { return it }
-        }
+        for (name in resolvedNames(rowTitle, resolved)) retry(name)?.let { return it }
         for (variant in variantsToRetry(variants, artistKnown = false)) {
             retry(variant.title to variant.artist)?.let { return it }
         }

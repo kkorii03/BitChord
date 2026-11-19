@@ -197,6 +197,11 @@ object LyricsRepository {
                 }
             }
         }
+        // [KO] herolyr: the session's transcript is the one the words refused: not this recording's lyrics.
+        if (heard != null && LyricsMismatch.isRejected(videoId, heard.source, heard.lines)) {
+            TrackLog.i(TAG, "lyrics: transcription refused by the heard words earlier -> not shown again", about = videoId)
+            return null
+        }
         return heard?.also {
             answers.put(key, Answer(it))
             kotlinx.coroutines.withContext(Dispatchers.IO) { LyricsDiskCache.write(key, it) }
@@ -413,6 +418,13 @@ object LyricsRepository {
                         // Only answers go on disk: "nothing found" may only
                         // mean the phone was offline.
                         if (it != null) LyricsDiskCache.write(key, it)
+                        // [KO] herolyr: a sheet for a song another lookup missed goes to the screen.
+                        if (com.music.bitchord.ko.KoLateSheet.answered(videoId, it != null) && it != null &&
+                            !soundRejects(videoId, it, heardNow(videoId))
+                        ) {
+                            TrackLog.i(TAG, "lyrics: late sheet from ${it.source.label} after a miss -> offered to the screen", about = videoId)
+                            _upgrades.tryEmit(videoId to it)
+                        }
                     }
                 }
                 started.invokeOnCompletion { inFlight.remove(key, lookup) }
@@ -684,6 +696,7 @@ object LyricsRepository {
     private fun saveLateTranscription(videoId: String, key: String, late: Result) {
         val kept = LyricsDiskCache.read(key)?.result
         if (kept != null && kept.source != LyricsSource.GEMINI_TRANSCRIPT) return
+        if (LyricsMismatch.isRejected(videoId, late.source, late.lines)) return // [KO] herolyr
         TrackLog.i(TAG, "lyrics: late sheet kept after the ${transcribeLimitMs}ms limit", about = videoId)
         answers.put(key, Answer(late))
         LyricsDiskCache.write(key, late)
@@ -868,6 +881,7 @@ object LyricsRepository {
                     val line = com.music.bitchord.ko.KoCoverLyrics.logLine(title, artist, resolved, late)
                     TrackLog.i(TAG, line, about = videoId)
                 },
+                rowTitle = title, // [KO] herolyr
             )?.let { return it }
             retryCatalogOriginal()?.let { return it }
             return deadlineResult()
@@ -993,7 +1007,11 @@ object LyricsRepository {
         result: Result,
         heard: List<LyricsWordAlign.Heard>,
     ): Boolean {
-        if (result.source == LyricsSource.GEMINI_TRANSCRIPT) return false
+        // [KO] herolyr: not judged by the words, but one the screen's words already refused stays refused
+        // (11-19 Sltk38pDXV8: rejected, reloaded, and the kept transcript was locked again 3 ms later).
+        if (result.source == LyricsSource.GEMINI_TRANSCRIPT) {
+            return LyricsMismatch.isRejected(videoId, result.source, result.lines)
+        }
         if (heard.size < LyricsMismatch.MIN_HEARD_WORDS) return false
         if (LyricsMismatch.isRejected(videoId, result.source, result.lines)) return true
         if (LyricsMismatch.sameWordsRejected(videoId, result.lines)) {
