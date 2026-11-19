@@ -1680,7 +1680,7 @@ internal object KoTrackMatcher {
         val languageTake = isLanguageVersion(takeText)
         return words.filter {
             (it in VERSION_WORDS && it !in NEUTRAL_SUFFIX_WORDS && it !in PART_WORDS) ||
-                (languageTake && it in VERSION_LANGUAGES)
+                (languageTake && (it in VERSION_LANGUAGES || it in LANGUAGE_ALIASES))
         }
     }
 
@@ -1973,9 +1973,10 @@ internal object KoTrackMatcher {
             // class kept them in the core ("첫사랑♡" != "첫사랑"). NON_ALNUM is
             // the same letters-and-digits rule the Latin core uses; the kana
             // long-vowel mark is a letter but was never part of the identity.
-            coreText.replace(NON_ALNUM, "").replace("ー", "")
+            CORE_PART_NUMBER.replace(coreText) { "part${partNumberOf(it.groupValues[1]) ?: it.groupValues[1]}" }
+                .replace(NON_ALNUM, "").replace("ー", "")
         } else {
-            words.joinToString("")
+            canonicalPartWords(words).joinToString("")
         }
 
         val altWords = mutableListOf<List<String>>()
@@ -2173,6 +2174,11 @@ internal object KoTrackMatcher {
         }
         OWNERS_VERSION.find(normalize(segment))?.let { owned ->
             versions += "${owned.groupValues[1].ifEmpty { owned.groupValues[2] }}'s version"
+        }
+        // "(2023 Version)" is a new recording of the song; a remaster note
+        // with a year ("Remastered 2011 Version") is the same performance (11-19).
+        if (words.none { it.startsWith("remaster") }) {
+            YEAR_VERSION.find(normalize(segment))?.let { versions += "${it.groupValues[1]} version" }
         }
         // A named soundtrack label inside a dropped tail names the release,
         // not the take: "Joker OST Korean" keeps its language marker while
@@ -2418,12 +2424,13 @@ internal object KoTrackMatcher {
     private val VERSION_LANGUAGES = mapOf(
         "korean" to "korean", "한국어" to "korean", "韓国語" to "korean", "韓語" to "korean",
         "english" to "english", "영어" to "english", "英語" to "english",
-        "japanese" to "japanese", "일본어" to "japanese", "日本語" to "japanese",
+        "japanese" to "japanese", "일본어" to "japanese", "일어" to "japanese", "日本語" to "japanese",
         "chinese" to "chinese", "중국어" to "chinese", "中国語" to "chinese",
+        "spanish" to "spanish",
     )
 
-    /** Packaging around a language marker: "Version", "Ver.". */
-    private val LANGUAGE_PACKAGING = setOf("version", "ver")
+    /** Packaging around a language marker: "Version", "Ver.", "버전". */
+    private val LANGUAGE_PACKAGING = setOf("version", "ver", "버전", "버젼")
 
     /**
      * Language abbreviations a catalogue prints as a take.
@@ -2431,7 +2438,13 @@ internal object KoTrackMatcher {
      * Each folds to the canonical key [VERSION_LANGUAGES] uses, so "Song
      * (Eng)" and "Song (English Ver.)" are the same take.
      */
-    private val LANGUAGE_ALIASES = mapOf("eng" to "english")
+    private val LANGUAGE_ALIASES = mapOf(
+        "eng" to "english",
+        // "(Jpn ver)", "(JP Ver.)", "(KR Ver.)", "(CN Ver.)" (11-19).
+        "jpn" to "japanese", "jp" to "japanese",
+        "kor" to "korean", "kr" to "korean",
+        "chn" to "chinese", "cn" to "chinese",
+    )
 
     /**
      * Arrangement shorthand the shared take vocabulary does not carry. A
@@ -2443,11 +2456,15 @@ internal object KoTrackMatcher {
         "inst", "band", "piano", "mr",
         // "we can't be friends (wait for your love) – string version" is its own recording (11-18).
         "string", "strings", "orchestra", "quartet",
+        // Same length as the original, so only the aside tells them apart (11-19).
+        "stripped", "commentary", "cello", "violin", "guitar", "harp", "ukulele", "jazz",
+        "피아노", "첼로", "바이올린", "어쿠스틱",
     )
 
     /** One key for the spellings of one take, so "(Strings)" meets "- String Version". */
     private val TAKE_ALIASES = mapOf(
         "strings" to "string",
+        "피아노" to "piano", "첼로" to "cello", "바이올린" to "violin", "어쿠스틱" to "acoustic",
         "rerecorded" to "re-recorded", "rerecord" to "re-recorded", "rerecording" to "re-recorded",
     )
 
@@ -2466,17 +2483,55 @@ internal object KoTrackMatcher {
     private fun isPartNumbering(text: String): Boolean {
         val words = wordsOf(text)
         if (words.size < 2 || words.first() !in PART_WORDS) return false
-        return words.drop(1).all { it.all(Char::isDigit) }
+        return words.drop(1).all { partNumberOf(it) != null }
     }
 
-    /** `part1` for "Part 1"/"Pt. 1", so both spellings are one version key. */
+    /** `part1` for "Part 1"/"Pt. 1"/"Part I", so every spelling is one version key. */
     private fun partNumberKey(words: List<String>): String? {
         val at = words.indexOfFirst { it in PART_WORDS }
         if (at < 0) return null
-        val number = words.drop(at + 1).takeWhile { it.all(Char::isDigit) }.firstOrNull()
-            ?: return null
+        val number = words.getOrNull(at + 1)?.let(::partNumberOf) ?: return null
         return "part$number"
     }
+
+    /** A part's number from "2", "02" or "II"; null for any other word. */
+    private fun partNumberOf(word: String): Int? =
+        if (word.isNotEmpty() && word.all(Char::isDigit)) word.toIntOrNull() else ROMAN_PARTS[word]
+
+    /**
+     * "Rock & Roll Part II" and "Rock and Roll Pt. 2" are one title: the part
+     * number stays in the core (so Part 1 never meets Part 2) in one spelling.
+     */
+    private fun canonicalPartWords(words: List<String>): List<String> {
+        if (words.none { it in PART_WORDS }) return words
+        val out = ArrayList<String>(words.size)
+        var at = 0
+        while (at < words.size) {
+            val number = words.getOrNull(at + 1)?.takeIf { words[at] in PART_WORDS }?.let(::partNumberOf)
+            if (number != null) {
+                out += "part"
+                out += number.toString()
+                at += 2
+            } else {
+                out += words[at]
+                at++
+            }
+        }
+        return out
+    }
+
+    private val ROMAN_PARTS = mapOf(
+        "i" to 1, "ii" to 2, "iii" to 3, "iv" to 4, "v" to 5,
+        "vi" to 6, "vii" to 7, "viii" to 8, "ix" to 9, "x" to 10,
+    )
+
+    /** The CJK-core form of [canonicalPartWords]: "사랑 Part II" and "사랑 Part.2" fold to `part2`. */
+    private val CORE_PART_NUMBER =
+        Regex("""(?<![\p{L}\p{N}])(?:part|pt)[.\s]*(\d+|viii|vii|vi|iv|ix|v|x|iii|ii|i)(?![\p{L}\p{N}])""")
+
+    /** "2023 Version", "2023 Ver.": a dated recording of the song. */
+    private val YEAR_VERSION =
+        Regex("""(?<![\p{L}\p{N}])((?:19|20)\d{2})\s*ver(?:sion)?(?![\p{L}\p{N}])""")
 
     /**
      * Packaging words that follow a soundtrack label without naming a take.
