@@ -223,6 +223,43 @@ class KoSoundtrackCreditTest {
         }
     }
 
+    /**
+     * [KO] lookupfix (review of tribute): the sleeve was cut at every mark while the credit is cut
+     * as [KoTrackMatcher.artistNames] cuts it, so names with punctuation never met their own
+     * tribute album ("destinys child" vs "destiny child", "jayz" vs "jay", "pnk" vs "nk").
+     */
+    @Test
+    fun `a tribute album names the act however its punctuation is cut`() {
+        listOf(
+            Triple("Say My Name", "Destiny's Child", "Songs of Destiny's Child"),
+            Triple("Empire State of Mind", "Jay-Z", "We Love Jay-Z"),
+            Triple("Thunderstruck", "AC/DC", "Songs of AC/DC"),
+            Triple("So What", "P!nk", "We Love P!nk"),
+            Triple("Empire State of Mind", "Jay Z", "Songs of Jay-Z"),
+            Triple("Shake It Off", "Taylor Swift", "Taylor Swift's Songs, Sung by Friends"),
+        ).forEach { (title, act, album) ->
+            val wanted = target(title, act, 200)
+            val tribute = row(title, "Various Artists", 200, album = album)
+            assertFalse("$act / $album", TrackMatcher.isArtistUnverifiedOriginal(tribute, wanted))
+            assertEquals("$act / $album", "version", verdict(tribute, wanted))
+        }
+        // A shorter name inside a longer one is not the act.
+        val jay = target("Empire State of Mind", "Jay-Z", 200)
+        assertTrue(TrackMatcher.isArtistUnverifiedOriginal(row("Empire State of Mind", "Various Artists", 200, album = "Songs of Jay"), jay))
+    }
+
+    @Test
+    fun `the target's own release by id is not a tribute whatever its name`() {
+        val own = TrackMatcher.Target("Smile", "Jimmy Durante", durationSec = 190, album = "Jimmy Durante Sings", albumId = "MPREb_own")
+        val sameRelease = row("Smile", "Various Artists", 191, album = "Songs of Jimmy Durante").copy(albumId = "MPREb_own")
+        assertFalse(KoTrackMatcher.isLabelTributeOf(sameRelease, own))
+        assertFalse(KoTrackMatcher.isCoverOf(sameRelease, own))
+        // Another release by that name is still a tribute.
+        val other = row("Smile", "Various Artists", 191, album = "Songs of Jimmy Durante").copy(albumId = "MPREb_other")
+        assertTrue(KoTrackMatcher.isLabelTributeOf(other, own))
+        assertFalse(TrackMatcher.isArtistUnverifiedOriginal(other, own))
+    }
+
     @Test
     fun `AutoPlay reads the same tribute words`() {
         val seed = row("Song", "Artist", 200)

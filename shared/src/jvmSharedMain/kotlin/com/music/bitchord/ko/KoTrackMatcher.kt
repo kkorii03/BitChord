@@ -437,17 +437,38 @@ internal object KoTrackMatcher {
         val albumText = normalize(album)
         if (isSoundtrackCredit(albumText) || "사운드트랙" in albumText) return false
         if (target.album?.let { normalize(it) } == albumText) return false
-        val words = releaseWords(albumText)
-        return artistNames(target.artist).any { containsRun(words, it) || containsRun(words, withoutArticle(it)) }
+        // [KO] lookupfix: the target's own release by id, whatever its name is printed as.
+        if (sharesRelease(target, candidate)) return false
+        val forms = releaseWordForms(albumText)
+        // The credit cut as [artistNames] cuts it, and whole ("AC/DC" -> acdc, which the separators split),
+        // also with its own "'s" read as a possessive, as the sleeve's is.
+        val credit = normalize(target.artist)
+        val names = artistNames(target.artist) +
+            listOf(nameWords(credit), nameWords(credit.replace(POSSESSIVE, ""))).filter { it.isNotEmpty() }
+        return names.any { name ->
+            forms.any { words -> containsRun(words, name) || containsRun(words, withoutArticle(name)) }
+        }
     }
 
-    /** [nameWords] of a release title, with a possessive "'s" read as the name. */
-    private fun releaseWords(text: String): List<String> =
+    /**
+     * [KO] lookupfix: a release title's words, cut the ways a credit is cut so
+     * the two agree. As [nameWords] cuts them ("Destiny's Child" -> destinys
+     * child, "Jay-Z" -> jayz, "P!nk" -> pnk), the same with a possessive "'s"
+     * read as the name ("Taylor Swift's Songs" -> swift), and split at every
+     * mark ("Jay-Z" -> jay, for a "Jay Z" credit; "AC/DC" -> ac dc).
+     */
+    private fun releaseWordForms(text: String): List<List<String>> = listOf(
+        nameWords(text),
+        nameWords(text.replace(POSSESSIVE, "")),
         text.split(RELEASE_WORD_SPLIT)
             .map { it.removeSuffix("'s").removeSuffix("’s").replace(NON_ALNUM, "") }
-            .filter { it.length > 1 }
+            .filter { it.length > 1 },
+    ).distinct()
 
     private val RELEASE_WORD_SPLIT = Regex("""[^\p{L}\p{N}'’]+""")
+
+    /** A possessive "'s" closing a word, before any trailing mark ("Swift's:"). */
+    private val POSSESSIVE = Regex("""['’]s(?=[^\p{L}\p{N}\s]*(\s|$))""")
 
     /**
      * Whether [candidate] and [target] name the same recording: the title

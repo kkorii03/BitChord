@@ -817,26 +817,44 @@ object LyricsRepository {
             nameTitle: String,
             nameArtist: String,
             nameSources: Set<LyricsSource>,
+            nameOrder: List<LyricsSource> = ordered,
+            cancelled: ((LyricsSource) -> Unit)? = onSourceCancelled,
         ): Result? = keepIfBetter(
             beforeLookupDeadline(deadline) {
                 lyricsFor(
-                    videoId, nameTitle, nameArtist, durationMs, album, nameSources, ordered,
-                    prioritizeSyllableSync, isrc, onSourceStarted, watchedResult, onSourceCancelled,
+                    videoId, nameTitle, nameArtist, durationMs, album, nameSources, nameOrder,
+                    prioritizeSyllableSync, isrc, onSourceStarted, watchedResult, cancelled,
                     language,
                 )
             },
         )
+        // [KO] lookupfix: the sources keyed on the video that a cut first round
+        // stopped mid-question. Later rounds ask by name only, so without this
+        // their answer was lost for good; they ride along with the next round.
+        var owedByVideo: Set<LyricsSource> = emptySet()
         val first = if (artistKnown) {
             tryName(primary.title, primary.artist, sources)
         } else {
             // [KO] lyricsmiss: the singer's name may not take the resolved original's time.
             val capMs = com.music.bitchord.ko.KoCoverLyrics.firstRoundMs(deadline.totalMs)
+            val cutShort = java.util.concurrent.ConcurrentHashMap.newKeySet<LyricsSource>()
             com.music.bitchord.ko.KoCoverLyrics.cappedFirstRound(
                 capMs = capMs,
-                round = { tryName(primary.title, primary.artist, sources) },
+                round = {
+                    tryName(primary.title, primary.artist, sources, cancelled = { source ->
+                        cutShort.add(source)
+                        onSourceCancelled?.invoke(source)
+                    })
+                },
                 onCut = {
+                    owedByVideo = com.music.bitchord.ko.KoCoverLyrics.owedAfterCut(sources intersect KEYED_ON_VIDEO, cutShort)
                     keepIfBetter(bestSeen()).also { kept ->
-                        TrackLog.i(TAG, com.music.bitchord.ko.KoCoverLyrics.cutLine(capMs, kept != null), about = videoId)
+                        val line = com.music.bitchord.ko.KoCoverLyrics.cutLine(
+                            capMs,
+                            kept = com.music.bitchord.ko.KoCoverLyrics.keptKind(synced = kept != null, plain = fallback != null),
+                            owed = owedByVideo,
+                        )
+                        TrackLog.i(TAG, line, about = videoId)
                     }
                 },
             )
@@ -846,11 +864,23 @@ object LyricsRepository {
         // The sources keyed on the video rather than on a name were already
         // asked: they do not change with the name the search is made under.
         val byName = sources - KEYED_ON_VIDEO
-        if (byName.isEmpty()) return deadlineResult()
+        // [KO] lookupfix: what a cut round still owes, once, behind the names (they were already too slow once).
+        fun takeOwed(): Set<LyricsSource> = owedByVideo.also { owedByVideo = emptySet() }
+        suspend fun askOwed(): Result? {
+            val owed = takeOwed()
+            if (owed.isEmpty() || deadline.expired()) return null
+            return tryName(primary.title, primary.artist, owed)
+        }
+        if (byName.isEmpty()) return askOwed() ?: deadlineResult()
         val tried = mutableSetOf(primary.title to primary.artist)
         suspend fun retry(name: Pair<String, String>): Result? {
             if (!tried.add(name)) return null
-            return tryName(name.first, name.second, byName)
+            val owed = takeOwed()
+            if (owed.isEmpty()) return tryName(name.first, name.second, byName)
+            return tryName(
+                name.first, name.second, byName + owed,
+                nameOrder = com.music.bitchord.ko.KoCoverLyrics.owedLast(ordered, owed),
+            )
         }
         suspend fun aheadName(): OriginalNames.Name? {
             val ahead = nameAhead ?: return null
@@ -899,6 +929,7 @@ object LyricsRepository {
                 rowTitle = title, // [KO] herolyr
             )?.let { return it }
             retryCatalogOriginal()?.let { return it }
+            askOwed()?.let { return it } // [KO] lookupfix: no later round took them along
             return deadlineResult()
         }
         // A cover's other reading — the swapped artist/song order — is sharper
