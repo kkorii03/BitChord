@@ -11,8 +11,10 @@ import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ko.KoDirectHqAhead // [KO] hq-ahead
 import com.music.bitchord.playback.smart.HqAudioVerify
+import kotlinx.coroutines.CancellationException // [KO] gatecancel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.currentCoroutineContext // [KO] gatecancel
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job // [KO] hq-ahead
@@ -123,13 +125,26 @@ object DirectSourceGate {
      * it starts. Once it is audible (its waiters must not hold its first note)
      * or no longer next (the queue moved), it stops, and that song goes the
      * ordinary way: YouTube first, the second look after the first sound. See
-     * [com.music.bitchord.ko.KoDirectHqAhead]. The addon half is left as it
-     * always was.
+     * [com.music.bitchord.ko.KoDirectHqAhead].
+     *
+     * [KO] gatecancel (review AHEAD-2): a lookup started for a row that was
+     * playing or next stops whole once the row is neither (skipped, removed,
+     * reordered away): its addon search and proof download were left running
+     * for songs nobody hears, and the song the listener stopped on queued its
+     * own head download behind them on the one addon host. Taken out of the
+     * table before it is cancelled, so a return to that song starts a fresh
+     * lookup instead of joining a cancelled one. A row going next -> playing
+     * stays admitted and loses nothing; an [ungated] lookup is never stopped.
      */
     private fun dropAheadNotAdmitted() {
         val now = open.value
         lookups.forEach { (id, lookup) ->
             if (now.next != id || id in now.playing) lookup.ahead?.cancel()
+            if (lookup.admitted && !now.admits(id) && lookups.remove(id, lookup)) {
+                lookup.work.cancel()
+                lookup.answer.cancel()
+                TrackLog.d(TAG, "direct: stopped the lookup for $id; it is no longer playing or next", about = id)
+            }
         }
         KoDirectHqAhead.stopKeptProofsExcept(now.playing) // OPT1: a proof kept for a song no longer audible stops
         com.music.bitchord.ko.KoNextUrlAhead.keepOnly(now.playing + listOfNotNull(now.next)) // [KO] UPG-speed 2
@@ -218,12 +233,14 @@ object DirectSourceGate {
     /**
      * [ahead]: cancels the lookup's high-quality half ([KO] hq-ahead); null when it has none.
      * [answer]: what [lookup]'s waiters take, when [work] runs on past it ([KO] late-window).
+     * [admitted]: started, not [ungated], for a row playing or next; stopped when it is neither ([KO] gatecancel).
      */
     private class Lookup(
         val work: Deferred<SourceStream?>,
         val startedAtMs: Long,
         val ahead: Job? = null,
         val answer: Deferred<SourceStream?> = work,
+        val admitted: Boolean = false,
     )
 
     private val lookups = ConcurrentHashMap<String, Lookup>()
@@ -240,8 +257,21 @@ object DirectSourceGate {
     suspend fun lookup(videoId: String, target: TrackMatcher.Target): SourceStream? {
         val lookup = start(videoId, target) ?: return null
         val waited = android.os.SystemClock.elapsedRealtime() - lookup.startedAtMs
-        return withTimeoutOrNull(LOOKUP_TIMEOUT_MS - waited) { lookup.answer.await() }
+        return answerOf(lookup.answer, LOOKUP_TIMEOUT_MS - waited)
     }
+
+    /**
+     * [KO] gatecancel: [work]'s answer within [limitMs]; a lookup stopped under a
+     * waiter that is itself still running ([dropAheadNotAdmitted], or the second
+     * look giving it up) is no answer, never a cancellation of the waiter's own.
+     */
+    private suspend fun answerOf(work: Deferred<SourceStream?>, limitMs: Long? = null): SourceStream? =
+        try {
+            if (limitMs == null) work.await() else withTimeoutOrNull(limitMs) { work.await() }
+        } catch (stopped: CancellationException) {
+            if (currentCoroutineContext()[Job]?.isActive == false) throw stopped
+            null
+        }
 
     /**
      * Starts the addon lookup without waiting, so a track that is already
@@ -327,6 +357,7 @@ object DirectSourceGate {
             startedAtMs = android.os.SystemClock.elapsedRealtime(),
             ahead = aheadOf,
             answer = answer,
+            admitted = bypass.get() != true && open.value.admits(videoId), // [KO] gatecancel
         )
         val running = lookups.putIfAbsent(videoId, fresh)
         if (running != null) {
@@ -398,7 +429,7 @@ object DirectSourceGate {
         fallback: Deferred<Result<String>>,
         videoId: String? = null,
     ): FirstAnswer? = select {
-        direct.onAwait { it?.let(FirstAnswer::Addon) }
+        direct.onJoin { answerOf(direct)?.let(FirstAnswer::Addon) } // [KO] gatecancel: a stopped lookup is no answer
         fallback.onAwait { result ->
             if (result.isSuccess) FirstAnswer.YouTube(result.getOrThrow())
             else lastResort(videoId, direct)?.let(FirstAnswer::Addon)
@@ -424,11 +455,11 @@ object DirectSourceGate {
      * The lookup itself runs on for the second look, as always.
      */
     internal suspend fun lastResort(videoId: String?, work: Deferred<SourceStream?>): SourceStream? {
-        if (work.isCompleted) return work.await()
+        if (work.isCompleted) return answerOf(work) // [KO] gatecancel: a stopped lookup is no answer
         val now = android.os.SystemClock.elapsedRealtime()
         val started = videoId?.let { lookups[it]?.startedAtMs } ?: now
         val left = (LAST_RESORT_TIMEOUT_MS - (now - started)).coerceAtLeast(1L)
-        return withTimeoutOrNull(left) { work.await() }
+        return answerOf(work, left)
     }
 
     /**
