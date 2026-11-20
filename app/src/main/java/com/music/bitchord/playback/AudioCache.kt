@@ -1434,6 +1434,42 @@ object AudioCache {
     }
 
     /**
+     * [KO] w1120-battery: a whole entry of [videoId] that the same source file
+     * filled (source row, codec and the probed length all agree), so a download
+     * copies it off disk instead of fetching it again; see
+     * [com.music.bitchord.ko.KoSourceCopy]. Null: fetch.
+     */
+    suspend fun sourceCopyOf(
+        videoId: String,
+        configId: String?,
+        trackId: String?,
+        codec: String?,
+        totalBytes: Long?,
+    ): CompleteCopy? {
+        if (openedCache == null || videoId.isBlank()) return null
+        val identity = sourceIdentity(configId, trackId, codec) ?: return null
+        if (totalBytes == null || totalBytes <= 0L) return null
+        return withContext(Dispatchers.IO) {
+            val entries = keysOf(videoId).mapNotNull { key ->
+                runCatching {
+                    val meta = cache.getContentMetadata(key)
+                    com.music.bitchord.ko.KoSourceCopy.Entry(
+                        key = key,
+                        servedSource = meta.get(META_SERVED_SOURCE, null as String?),
+                        length = ContentMetadata.getContentLength(meta),
+                        complete = isComplete(key),
+                        refused = isRefusedCopy(key),
+                    )
+                }.getOrNull()
+            }
+            val key = com.music.bitchord.ko.KoSourceCopy.pick(entries, identity, totalBytes)
+                ?: return@withContext null
+            val (extension, mime) = containerOf(key) ?: return@withContext null
+            CompleteCopy(key, totalBytes, extension, mime)
+        }
+    }
+
+    /**
      * Drops every entry an addon or module filled ([Origin.OTHER]), and every
      * copy Automix downloaded for analysis alone that playback never read,
      * except the ones belonging to [keep] — the tracks around the playhead,
