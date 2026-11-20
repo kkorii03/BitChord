@@ -73,6 +73,15 @@ object TrackLog {
     var headerLines: () -> List<String> = { emptyList() }
 
     /**
+     * Run first on every [write], on the writing thread, so a check can ride
+     * on lines other threads write anyway instead of a timer: the phone's
+     * main-thread hang report. Must be cheap when there is nothing to say,
+     * and must tolerate the lines it writes coming back through here.
+     */
+    @Volatile
+    var beforeWrite: (() -> Unit)? = null
+
+    /**
      * The rotating file this log is written through, when the platform has
      * given it a directory. Null on the desktop until its own log is wired up,
      * and in a plain JVM test of the reader-side code.
@@ -140,6 +149,11 @@ object TrackLog {
         error: Throwable?,
         about: String? = working.get(),
     ) {
+        try {
+            beforeWrite?.invoke()
+        } catch (_: Exception) {
+            // A diagnostic hook never costs the line being written.
+        }
         // [KO] sync-diag: logcat lines name their song, so an emulator run can say
         // which song every sync step (Deepgram answer, measurement) belonged to.
         echo?.invoke(level, tag, if (about == null || message.contains(about)) message else "[$about] $message", error)

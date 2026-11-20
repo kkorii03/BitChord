@@ -73,9 +73,16 @@ internal object ExitReasonsKo {
             )
             if (exit.reason == ApplicationExitInfo.REASON_ANR) {
                 runCatching {
-                    exit.traceInputStream?.bufferedReader()?.use { reader ->
-                        mainThreadTraceLines(reader.lineSequence(), MAX_ANR_TRACE_LINES)
-                            .forEach { line -> TrackLog.i(TAG, "exit-anr: $line") }
+                    // Say which case a missing stack is: Android attached no trace,
+                    // or attached one this parser found no main thread in.
+                    val stream = exit.traceInputStream
+                    if (stream == null) {
+                        TrackLog.w(TAG, "exit-anr: no trace attached")
+                    } else {
+                        stream.bufferedReader().use { reader ->
+                            anrTraceLines(reader.lineSequence(), MAX_ANR_TRACE_LINES)
+                                .forEach { line -> TrackLog.i(TAG, line) }
+                        }
                     }
                 }.onFailure {
                     TrackLog.w(TAG, "exit-reason: ANR trace unreadable: ${it.message}")
@@ -156,6 +163,27 @@ internal fun mainThreadTraceLines(lines: Sequence<String>, maxLines: Int = 40): 
     }
     return out
 }
+
+/**
+ * The `exit-anr:` lines for one ANR trace: the main thread's section, or one
+ * line saying the trace had none, with its size and first line so the next
+ * reader can tell an empty trace from one in a format this parser misses.
+ */
+internal fun anrTraceLines(lines: Sequence<String>, maxLines: Int = 40): List<String> {
+    var count = 0
+    var chars = 0L
+    var first: String? = null
+    val counted = lines.onEach { line ->
+        count++
+        chars += line.length + 1
+        if (first == null && line.isNotBlank()) first = line.trim().take(ANR_FIRST_LINE_CHARS)
+    }
+    val main = mainThreadTraceLines(counted, maxLines)
+    if (main.isNotEmpty()) return main.map { "exit-anr: $it" }
+    return listOf("exit-anr: no main section (lines=$count chars=$chars first=${first ?: "-"})")
+}
+
+private const val ANR_FIRST_LINE_CHARS = 80
 
 /** Per-thread formatter: [SimpleDateFormat] is not safe to share. */
 private val EXIT_CLOCK = ThreadLocal.withInitial {
