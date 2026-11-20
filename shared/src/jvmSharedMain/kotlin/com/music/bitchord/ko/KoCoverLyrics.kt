@@ -55,9 +55,31 @@ internal object KoCoverLyrics {
         return if (ended) found else onCut()
     }
 
+    /**
+     * [KO] lookupfix: what a cut first round kept: `synced`, `plain` (an
+     * unsynced sheet, held as the fallback while later names look for a synced
+     * one) or `n`. The old `kept=y|n` said `n` for a kept plain sheet.
+     */
+    fun keptKind(synced: Boolean, plain: Boolean): String = when {
+        synced -> "synced"
+        plain -> "plain"
+        else -> "n"
+    }
+
+    /**
+     * [KO] lookupfix: the sources keyed on the video ([videoKeyed]) that the cut
+     * stopped before they answered ([cutShort]). Later rounds ask by name and
+     * leave these out, so they are owed one more question.
+     */
+    fun <S> owedAfterCut(videoKeyed: Set<S>, cutShort: Set<S>): Set<S> = videoKeyed.filterTo(LinkedHashSet()) { it in cutShort }
+
+    /** [order] with the [owed] sources moved to its end: they were too slow once, the names go first. */
+    fun <S> owedLast(order: List<S>, owed: Set<S>): List<S> = order.filterNot { it in owed } + order.filter { it in owed }
+
     /** The log line of a cut first round. No lyric text. */
-    fun cutLine(capMs: Long, kept: Boolean): String =
-        "cover-lyrics: first round cut after ${capMs}ms (singer's name), kept=" + if (kept) "y" else "n"
+    fun cutLine(capMs: Long, kept: String, owed: Set<*> = emptySet<Any>()): String =
+        "cover-lyrics: first round cut after ${capMs}ms (singer's name), kept=$kept" +
+            if (owed.isEmpty()) "" else ", asked again later: " + owed.joinToString(",")
 
     /**
      * The original the title resolved to, as a name to retry. Null when the

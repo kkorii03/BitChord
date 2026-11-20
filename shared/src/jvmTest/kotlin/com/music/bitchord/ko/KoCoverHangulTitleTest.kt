@@ -101,8 +101,52 @@ class KoCoverHangulTitleTest {
         assertNull(KoCoverLyrics.cappedFirstRound(50L, round = { kotlinx.coroutines.delay(60_000L); "late" }, onCut = { null }))
         assertEquals(
             "cover-lyrics: first round cut after 6000ms (singer's name), kept=n",
-            KoCoverLyrics.cutLine(6_000L, kept = false),
+            KoCoverLyrics.cutLine(6_000L, kept = "n"),
         )
+    }
+
+    /**
+     * [KO] lookupfix (review of lyricsmiss): the cut also stopped the sources keyed on the video
+     * (YouTube's own captions and lyrics), which later rounds never ask again, and its log said
+     * `kept=n` while a plain sheet was kept as the fallback.
+     */
+    @Test
+    fun aCutRoundOwesTheVideoSourcesItStoppedAndSaysWhatItKept() {
+        assertEquals("synced", KoCoverLyrics.keptKind(synced = true, plain = true))
+        assertEquals("plain", KoCoverLyrics.keptKind(synced = false, plain = true))
+        assertEquals("n", KoCoverLyrics.keptKind(synced = false, plain = false))
+        // Only the video-keyed sources the cut stopped are owed; one that answered (or a name source) is not.
+        val owed = KoCoverLyrics.owedAfterCut(setOf("YT_TRANSCRIPT", "YT_MUSIC"), setOf("YT_TRANSCRIPT", "LRCLIB"))
+        assertEquals(setOf("YT_TRANSCRIPT"), owed)
+        assertEquals(emptySet<String>(), KoCoverLyrics.owedAfterCut(setOf("YT_MUSIC"), emptySet<String>()))
+        // Owed sources go behind the names, which keep their order.
+        assertEquals(
+            listOf("LRCLIB", "BUGS", "YT_TRANSCRIPT"),
+            KoCoverLyrics.owedLast(listOf("YT_TRANSCRIPT", "LRCLIB", "BUGS"), owed),
+        )
+        assertEquals(
+            "cover-lyrics: first round cut after 6000ms (singer's name), kept=plain, asked again later: YT_TRANSCRIPT",
+            KoCoverLyrics.cutLine(6_000L, kept = "plain", owed = owed),
+        )
+    }
+
+    /** The repository's search uses the helpers above on the cut path (no provider seam to fake a slow source). */
+    @Test
+    fun theSearchAsksTheOwedVideoSourcesAgain() {
+        val root = java.io.File(".").canonicalFile
+        val source = listOf("shared/", "").map {
+            java.io.File(root, "${it}src/jvmSharedMain/kotlin/com/music/bitchord/data/lyrics/LyricsRepository.kt")
+        }.first { it.exists() }.readText()
+        val rounds = source.substringAfter("private suspend fun searchRounds(").substringBefore("/** Sources that look a track up by its video id")
+        val onCut = rounds.substringAfter("onCut = {").substringBefore("if (first != null) return first")
+        kotlin.test.assertTrue("KoCoverLyrics.owedAfterCut(sources intersect KEYED_ON_VIDEO, cutShort)" in onCut)
+        kotlin.test.assertTrue("keptKind(synced = kept != null, plain = fallback != null)" in onCut)
+        val retry = rounds.substringAfter("suspend fun retry(").substringBefore("suspend fun aheadName(")
+        kotlin.test.assertTrue("byName + owed" in retry, "a later round must take the owed sources along")
+        val coverPath = rounds.substringAfter("if (!artistKnown) {").substringBefore("// A cover's other reading")
+        val asked = coverPath.indexOf("askOwed()")
+        kotlin.test.assertTrue(asked >= 0 && asked < coverPath.lastIndexOf("return deadlineResult()"), "nothing asks them before giving up")
+        kotlin.test.assertTrue("if (byName.isEmpty()) return askOwed() ?: deadlineResult()" in rounds)
     }
 
     @Test
