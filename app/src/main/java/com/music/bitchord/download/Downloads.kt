@@ -834,13 +834,27 @@ object Downloads {
      *
      * Named for what it asserts rather than what it does, so a caller that has
      * *not* established the file is missing has no business calling it.
+     *
+     * [KO] u1121 LIBRARY-1: only while the record still names [failedUri]. A
+     * replacement that landed elsewhere (lossy -> FLAC, a staged row) left a
+     * queued item on the deleted old uri; forgetting by id dropped the record
+     * of the new, valid file. True when the record was forgotten.
      */
-    fun forgetMissing(videoId: String) {
+    fun forgetMissing(videoId: String, failedUri: String?): Boolean {
         open()
-        if (videoId !in _saved.value) return
+        val recorded = _saved.value[videoId] ?: return false
+        if (!forgetsMissing(recorded, failedUri)) {
+            Log.d(TAG, "$videoId could not open $failedUri; its record names $recorded, keeping the download")
+            return false
+        }
         Log.d(TAG, "$videoId could not be opened; forgetting the download")
         forget(videoId)
+        return true
     }
+
+    /** [forgetMissing]'s rule: the failed read must be of the file the record names. */
+    internal fun forgetsMissing(recorded: String, failedUri: String?): Boolean =
+        failedUri != null && recorded == failedUri
 
     // ---- Releases -----------------------------------------------------------
 

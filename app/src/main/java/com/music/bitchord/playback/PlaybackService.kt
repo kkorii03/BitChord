@@ -2,6 +2,7 @@ package com.music.bitchord.playback
 
 import com.music.bitchord.ko.koTryAutoplayRefillBeforeStopping
 import com.music.bitchord.ko.koOnCachedPrefixSettled // [KO] fix1119 F1
+import com.music.bitchord.ko.koOnSavedFileReplaced // [KO] u1121 LIBRARY-3
 import com.music.bitchord.ko.koCatchUpStandbyQueue // [KO] review V-3
 import com.music.bitchord.ko.koSwapFromStillCurrent // [KO] review V-4
 import com.music.bitchord.ko.KoSilenceReresolve // [KO] SW7ps-1
@@ -2751,6 +2752,7 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         scope.launch { com.music.bitchord.ko.KoCachedPrefixStart.settled.collect { koOnCachedPrefixSettled(it) } } // [KO] fix1119 F1
+        scope.launch { com.music.bitchord.ko.downloads.KoDownloadPipeline.replaced.collect { koOnSavedFileReplaced(it) } } // [KO] u1121 LIBRARY-3
 
         mediaSession = MediaLibrarySession.Builder(
             this,
@@ -6755,7 +6757,7 @@ class PlaybackService : MediaLibraryService() {
             )
             return false
         }
-        Downloads.forgetMissing(mediaId)
+        val forgot = Downloads.forgetMissing(mediaId, uri?.toString()) // [KO] u1121 LIBRARY-1
         if (restreamed.localConfiguration?.uri == uri) {
             TrackLog.w(
                 "BitChord",
@@ -6767,7 +6769,8 @@ class PlaybackService : MediaLibraryService() {
 
         TrackLog.w(
             "BitChord",
-            "$mediaId was downloaded but $uri is gone; streaming it instead",
+            if (forgot) "$mediaId was downloaded but $uri is gone; streaming it instead"
+            else "$mediaId: $uri is gone; record kept, reopening ${restreamed.localConfiguration?.uri}", // [KO] u1121
             about = mediaId,
         )
         // Not claimed as [retryingMediaId], unlike the seek-and-prepare retry

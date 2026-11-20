@@ -26,6 +26,7 @@ import com.music.bitchord.download.SavedSongMetadata
 import com.music.bitchord.download.downloadBadge
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.HqHostTracker
+import kotlinx.coroutines.flow.asSharedFlow
 
 /** The fork's download pipeline pieces that are not tied to the upstream flow. */
 internal object KoDownloadPipeline {
@@ -237,7 +238,38 @@ internal object KoDownloadPipeline {
         val suspects: List<String>,
         /** Per id: where the old file's bytes came from, read before the new record ([repairReplacesUpload]). */
         val origins: Map<String, FileOrigin> = emptyMap(),
+        /** [KO] u1121 LIBRARY-3: per id, the old file's verified pair (source, track); null for YouTube's bytes. */
+        val pairs: Map<String, Pair<String, String?>?> = emptyMap(),
     )
+
+    /**
+     * [KO] u1121 LIBRARY-3: a saved file of [ids] now lives at [newUri]; [oldUris]
+     * named the files it replaced. Collected by the playback service
+     * ([com.music.bitchord.ko.koOnSavedFileReplaced]), which moves a player still
+     * reading an old file onto the new one: the record, the song check and the
+     * lyric clock already describe the new file.
+     */
+    data class FileReplaced(
+        val ids: Set<String>,
+        val oldUris: Set<String>,
+        val newUri: String,
+        val oldPairs: Map<String, Pair<String, String?>?>,
+    ) {
+        /** The pair the old file of [id] was verified as; an alias id takes the one pair all ids shared. */
+        fun oldPairOf(id: String): Pair<String, String?>? =
+            if (id in oldPairs) oldPairs[id] else oldPairs.values.distinct().singleOrNull()
+    }
+
+    private val _replaced = kotlinx.coroutines.flow.MutableSharedFlow<FileReplaced>(
+        extraBufferCapacity = 8,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+    val replaced: kotlinx.coroutines.flow.SharedFlow<FileReplaced> = _replaced.asSharedFlow()
+
+    /** Whether the playing item [playingId], reading [playingUri], is still on a file [event] replaced. */
+    fun movesPlayer(event: FileReplaced, playingId: String?, playingUri: String?): Boolean =
+        playingId != null && playingId in event.ids &&
+            playingUri != null && playingUri != event.newUri && playingUri in event.oldUris
 
     /** What the record of one id says about the upload its file was fetched from. */
     data class FileOrigin(
@@ -267,7 +299,10 @@ internal object KoDownloadPipeline {
             old != null && (old == uri.toString() || old in previousUris)
         }
         val origins = ids.mapNotNull { id -> KoDownloadRecords.fileOriginFor(id)?.let { id to it } }.toMap()
-        return PreviousRecordState(previousUris, previousSuspects, origins)
+        val pairs = ids.mapNotNull { id ->
+            metadata[id]?.let { meta -> id to meta.hqSourceConfigId?.takeIf { it.isNotBlank() }?.let { it to meta.hqTrackId } }
+        }.toMap()
+        return PreviousRecordState(previousUris, previousSuspects, origins, pairs)
     }
 
     /**
@@ -426,6 +461,10 @@ internal object KoDownloadPipeline {
                         }
                     },
                 )
+            }
+            // [KO] u1121 LIBRARY-3: a player still reading the old file moves onto this one.
+            if (previous.uris.any { it != uri.toString() }) {
+                _replaced.tryEmit(FileReplaced(ids + staleIds, previous.uris, uri.toString(), previous.pairs))
             }
             if (context != null) {
                 previous.uris.forEach { old ->
