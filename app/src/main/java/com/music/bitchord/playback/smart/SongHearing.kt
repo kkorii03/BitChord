@@ -262,9 +262,12 @@ internal object SongHearing {
             // The farm's GET can take its whole timeout: only words not kept wait on it.
             if (!farmAsked) {
                 farmAsked = true
-                if (keepFromFarm(app, song, language)) {
-                    // [KO] coverahead: the farm's file may be the Korean words of a cover asked for in ja.
-                    language = sungLanguage(language, song)
+                val gotFarm = keepFromFarm(app, song, language)
+                // [KO] coverahead: the farm's file may be the Korean words of a cover asked for in ja,
+                // kept by this ask or by another hearing that took the farm's one answer.
+                val sung = sungLanguage(language, song)
+                if (gotFarm || sung != language) {
+                    language = sung
                     continue
                 }
             }
@@ -347,9 +350,13 @@ internal object SongHearing {
         var language = sungLanguage(language, song) // [KO] coverahead
         var saved = longestSaved(app, song, recording, language)
         // A whole song leaves the farm nothing to add, so its GET is not waited on.
-        if (saved?.whole != true && keepFromFarm(app, song, language)) {
-            language = sungLanguage(language, song) // [KO] coverahead
-            saved = longestSaved(app, song, recording, language)
+        if (saved?.whole != true) {
+            val gotFarm = keepFromFarm(app, song, language)
+            val sung = sungLanguage(language, song) // [KO] coverahead: another hearing may have kept it
+            if (gotFarm || sung != language) {
+                language = sung
+                saved = longestSaved(app, song, recording, language)
+            }
         }
         return saved?.let(::heardFrom)
     }
@@ -515,8 +522,7 @@ internal object SongHearing {
         val recording = (if (raw != null) recordingKey(raw.fromFile, LyricsTiming.clockForSongAudio(song, raw)) else recordingKey(song))
             ?: return null
         val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
-        val heardIn = if (answered) sungLanguage(language, song) else language // [KO] coverahead
-        val saved = covering(kept.filterNot { exact && it.rough }, recording, heardIn, untilSeconds) ?: return null
+        val saved = farmKept(kept, recording, language, song, exact, untilSeconds) ?: return null
         TrackLog.d(
             TAG,
             if (answered) "song-hear: the farm answered a second ask, ${saved.words.size} words"
@@ -525,6 +531,20 @@ internal object SongHearing {
         )
         return heardFrom(saved)
     }
+
+    /**
+     * [farmAgain]'s kept words, looked up in the language the cover is sung in whoever's GET
+     * the farm answered: [KO] coverahead review, a second hearing waiting on the same ask-ahead
+     * gets null from [AlignFarm.answer] while the farm's Korean file is already on disk.
+     */
+    internal fun farmKept(
+        kept: List<Saved>,
+        recording: String,
+        language: String,
+        song: Song,
+        exact: Boolean,
+        untilSeconds: Double,
+    ): Saved? = covering(kept.filterNot { exact && it.rough }, recording, sungLanguage(language, song), untilSeconds)
 
     private suspend fun send(
         bytes: ByteArray,
