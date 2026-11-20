@@ -4326,6 +4326,7 @@ object LyricsTiming {
         cancelWithCaller: Boolean = false,
     ): Timing? {
         val query = CoverTitles.lyricsQuery(song)
+        com.music.bitchord.ko.KoSungLanguage.noteRow(song) // [KO] coverlang: placeWithAi below sees only the query
         val timeable = !fromFile || query.isVideo
         val recordTimed = timeable && (!fromFile || source != null) &&
             !timedToVideo(source)
