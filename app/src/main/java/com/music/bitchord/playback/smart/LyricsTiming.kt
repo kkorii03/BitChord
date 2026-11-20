@@ -1905,7 +1905,7 @@ object LyricsTiming {
         if (hearingBusy(videoId)) return@withContext false
         refitNotWaiting(videoId)
         val texts = lines.filter { it.text.isNotBlank() }.map { it.text }
-        val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
+        val language = hearingLanguage(song, texts) // [KO] coverlang
         songSyncGate.withLock {
             val entry = store(context).get(videoId) ?: Entry()
             // The listener's own ask stands.
@@ -2032,9 +2032,7 @@ object LyricsTiming {
         lines: List<LyricLine>,
         untilSeconds: Double,
     ): RefineHeard? {
-        val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(
-            lines.filter { it.text.isNotBlank() }.map { it.text },
-        )
+        val language = hearingLanguage(song, lines.filter { it.text.isNotBlank() }.map { it.text }) // [KO] coverlang
         if (!hearingWantedNow(song.videoId)) return null
         // The move stands on these words, so a rough opening is not enough to refine from.
         val heard = hearThrough429(context, song, untilSeconds, untilSeconds, language, exact = true) ?: return null
@@ -3476,7 +3474,6 @@ object LyricsTiming {
             TrackLog.d(TAG, "Deepgram skipped ($deepgramSkip)", videoId)
         }
         if (deepgramWanted && com.music.bitchord.data.lyrics.Deepgram.usable) {
-            val language = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
             // A file cut from another upload is heard from the file, not this id's stream.
             val song = Song(
                 videoId = videoId,
@@ -3486,6 +3483,7 @@ object LyricsTiming {
                 isVideo = isVideo,
                 localUri = fileOfAnotherUpload(videoId),
             )
+            val language = hearingLanguage(song, texts) // [KO] coverlang
             // A playing video also hears its opening with the song check's quick request
             // (Groq when it can answer), beside the whole-song request below, which still
             // runs and replaces it. That request alone answered 8-184 s in on 11-08's phone
@@ -4726,7 +4724,7 @@ object LyricsTiming {
             .filter { lines[it].text.isNotBlank() }
         if (indices.size < MIN_AI_LINES) return SongAsk(null, "", untilSeconds)
         val texts = indices.map { lines[it].text }
-        val sheetLanguage = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
+        val sheetLanguage = hearingLanguage(song, texts) // [KO] coverlang
         // A mixed sheet's one retry listens in its other script; still one request, still 2 per lyrics text.
         val retryLanguage = if (retry) com.music.bitchord.data.lyrics.Deepgram.retryLanguageFor(texts, sheetLanguage) else null
         val language = retryLanguage ?: sheetLanguage
@@ -4943,6 +4941,20 @@ object LyricsTiming {
             return null
         }
         return answer
+    }
+
+    /**
+     * [KO] coverlang: the language [song]'s sheet [texts] is listened to in. The sheet's
+     * script, except a Korean-titled cover with a Japanese/Chinese sheet, heard in Korean
+     * ([com.music.bitchord.ko.KoSungLanguage.listenLanguage]): forced into the sheet's
+     * language, Whisper wrote Japanese close enough to the original's that the wrong sheet
+     * was applied at 75% (phone 11-19 17:59 Sltk38pDXV8).
+     */
+    private fun hearingLanguage(song: Song, texts: List<String>): String {
+        val sheet = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
+        val heard = com.music.bitchord.ko.KoSungLanguage.listenLanguage(sheet, song)
+        if (heard != sheet) TrackLog.d(TAG, "song-hear: Korean-titled cover heard in $heard, not the sheet's $sheet", song.videoId)
+        return heard
     }
 
     /** [SongHearing.hear] under [SongSyncRetry]. A 429 back means the retries ran out, [songQuietUntilMs] holding the wait. */

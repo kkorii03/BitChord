@@ -909,8 +909,15 @@ object KoLyricsTranslation {
      * lyrics source has anything for. An empty list when nothing is sung;
      * null when Gemini isn't set up, refused or didn't answer usably.
      */
-    suspend fun transcribeVideo(videoId: String, durationMs: Long, audioWav: ByteArray? = null): List<LyricLine>? {
+    suspend fun transcribeVideo(
+        videoId: String,
+        durationMs: Long,
+        audioWav: ByteArray? = null,
+        /** The row's title: a Korean one adds [KoSungLanguage.transcribeHint] (coverlang). */
+        rowTitle: String = "",
+    ): List<LyricLine>? {
         if (!geminiKeyUsable || videoId.isBlank()) return null
+        val hint = KoSungLanguage.transcribeHint(rowTitle)
         fun body(quick: Boolean) = buildJsonObject {
             putJsonObject("systemInstruction") {
                 putJsonArray("parts") { add(buildJsonObject { put("text", TRANSCRIBE_INSTRUCTION) }) }
@@ -921,6 +928,7 @@ object KoLyricsTranslation {
                     putJsonArray("parts") {
                         add(mediaPart(videoId, audioWav, quick))
                         add(buildJsonObject { put("text", "Video length: ${clock(durationMs)}") })
+                        if (hint != null) add(buildJsonObject { put("text", hint) })
                     }
                 })
             }

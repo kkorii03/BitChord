@@ -750,7 +750,8 @@ object LyricsTranslation {
         videoId: String,
         durationMs: Long,
         audioWav: ByteArray? = null,
-    ): List<LyricLine>? = KoLyricsTranslation.transcribeVideo(videoId, durationMs, audioWav) // [KO] ai-lyrics
+        rowTitle: String = "",
+    ): List<LyricLine>? = KoLyricsTranslation.transcribeVideo(videoId, durationMs, audioWav, rowTitle) // [KO] ai-lyrics, coverlang
 
     internal fun parseTranscript(text: String, durationMs: Long): List<LyricLine>? =
         KoLyricsTranslation.parseTranscript(text, durationMs) // [KO] ai-lyrics
