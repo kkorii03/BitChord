@@ -984,7 +984,16 @@ class LyricsController(
      * Deepgram-only setup had no action for the rest of playback even after
      * the copy finished caching. Recomputed only on that event, never polled.
      */
-    private fun aiTimingAvailable(request: LyricsRequest, lines: List<LyricLine>?): Boolean {
+    private suspend fun aiTimingAvailable(request: LyricsRequest, lines: List<LyricLine>?): Boolean =
+        aiTimingWithoutAudio(request, lines)
+            // The cache's monitor is held by loaders across disk writes: never wait on it on main.
+            ?: withContext(Dispatchers.IO) { VideoAudio.audioReadyForTiming(request.videoId) }
+
+    /**
+     * [aiTimingAvailable] when the audio term cannot change the answer, or null when
+     * it can (a Deepgram-only setup). Reads no cache, so it is safe on the main thread.
+     */
+    private fun aiTimingWithoutAudio(request: LyricsRequest, lines: List<LyricLine>?): Boolean? {
         val texts = lines.orEmpty().map { it.text }
         // Answer the same as [LyricsAiGuard.manualTimingAvailable] without
         // reading the audio cache when there is nothing either engine could do.
@@ -992,15 +1001,19 @@ class LyricsController(
         val gemini = LyricsTranslation.geminiKeyUsable
         val deepgram = com.music.bitchord.data.lyrics.Deepgram.usable
         if (!gemini && !deepgram) return false
-        return LyricsAiGuard.manualTimingAvailable(
+        fun available(audio: Boolean) = LyricsAiGuard.manualTimingAvailable(
             geminiUsable = gemini,
             deepgramUsable = deepgram,
-            audioAvailable = VideoAudio.audioReadyForTiming(request.videoId),
+            audioAvailable = audio,
             durationMs = request.durationMs,
             title = request.title,
             artist = request.artist,
             lyricsTexts = texts,
         )
+        // The audio term only ever turns the action on.
+        if (available(audio = false)) return true
+        if (!available(audio = true)) return false
+        return null
     }
 
     /**
@@ -1054,7 +1067,8 @@ class LyricsController(
             // engine for those cases — offering the action would only end in
             // aiFailed. No engine can move fewer than three sung lines, and a
             // track too long or short to decode inline has no Deepgram sound.
-            aiAvailable = request != null && aiTimingAvailable(request, lines),
+            // When the answer hangs on the audio on disk, it is read off main below.
+            aiAvailable = request != null && aiTimingWithoutAudio(request, lines) == true,
         )
         val hasRequest = request != null
         if (!timed || !hasRequest || lines == null) {
@@ -1064,6 +1078,14 @@ class LyricsController(
                     "lines=${lines != null}",
                 request?.videoId,
             )
+            if (request != null && aiTimingWithoutAudio(request, lines) == null) {
+                // Cancelled with the next startTiming, like the timing pass.
+                lyricsTimingJob = scope.launch(timingFailureHandler) {
+                    if (aiTimingAvailable(request, lines) && currentLyricsRequest?.videoId == request.videoId) {
+                        _lyricsTiming.update { it.copy(aiAvailable = true) }
+                    }
+                }
+            }
             return
         }
         val generation = lyricsGeneration
@@ -1108,7 +1130,8 @@ class LyricsController(
             // is not hidden for the whole playback. Only ever turns it on: a
             // completion cannot make a usable copy unusable.
             launch {
-                AudioCache.watchRenditionCompletion(request.videoId)
+                // Reads the cache's keys and adds a listener: both wait on its monitor.
+                withContext(Dispatchers.IO) { AudioCache.watchRenditionCompletion(request.videoId) }
                 // A completion may have landed between the initial readiness
                 // check and this collector subscribing. Read the current state
                 // once here so that event is not lost; afterwards every
@@ -1316,7 +1339,8 @@ class LyricsController(
                             )
                         ) return false
                     }
-                    if (!LyricsTiming.worthMeasuring(context, request.videoId)) return true
+                    // Reads the copy on disk ([VersionAudioAligner.renditionToMeasure]): off main.
+                    if (!withContext(Dispatchers.IO) { LyricsTiming.worthMeasuring(context, request.videoId) }) return true
                     attempts++
                     return measureThen(
                         measure = {
@@ -1543,7 +1567,8 @@ class LyricsController(
         )
         val names = (listOf(title to artist) + alternatives).distinct()
         earlyMeasureJob = scope.launch {
-            if (LyricsTiming.worthMeasuring(context, videoId)) {
+            // Reads the copy on disk ([VersionAudioAligner.renditionToMeasure]): off main.
+            if (withContext(Dispatchers.IO) { LyricsTiming.worthMeasuring(context, videoId) }) {
                 LyricsTiming.measure(context, video, names, durationMs)
             }
         }
@@ -1569,7 +1594,8 @@ class LyricsController(
         earlyHearingJob?.cancel()
         if (!isVideo) return
         val context = app
-        earlyHearingJob = scope.launch {
+        // IO: its first step reads the copy on disk, which waits on the cache's monitor.
+        earlyHearingJob = scope.launch(Dispatchers.IO) {
             LyricsTiming.hearVideoAtStart(context, videoId, title, artist, streamed = localUri == null, lyricsLookup = lyricsLookup)
         }
     }
