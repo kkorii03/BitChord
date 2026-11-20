@@ -1779,28 +1779,32 @@ object LyricsTiming {
         return lock.withLock {
             if (refineHeardKnown(context, videoId, lines, timing, audioSource)) return@withLock false
             // [KO] TR7 T1: a file replaced during a listen makes its words the old bytes'.
-            val generation = songSyncGenerationOf(videoId)
+            var generation = songSyncGenerationOf(videoId)
             val before = store(context).get(videoId)
             val hadWords = before?.refineHeardKey == key && before.refineHeardWords.isNotEmpty()
             var heardAnchor: RefineSnapshot? = null
             if (!hadWords) {
-                // The whole song at once when it is all on disk: the ninety seconds
-                // first would pay for the same sound twice.
                 val whole = extendSeconds(song)
-                val firstUntil = if (VideoAudio.secondsOnDisk(song) >= whole) whole else VideoAudio.SONG_CHECK_SECONDS
-                val heard = hearForRefine(context, song, lines, firstUntil)
-                    ?: return@withLock false
-                heardAnchor = saveRefineHeard(
-                    context,
-                    videoId,
-                    before,
-                    key,
-                    heard.words,
-                    heard.clock,
-                    heard.seconds,
-                    extended = false,
-                    startedGeneration = generation,
-                ) ?: return@withLock false
+                val heardOnce = refineListenOnce(context, videoId, generation, before) { started, from ->
+                    // The whole song at once when it is all on disk: the ninety seconds
+                    // first would pay for the same sound twice.
+                    val firstUntil = if (VideoAudio.secondsOnDisk(song) >= whole) whole else VideoAudio.SONG_CHECK_SECONDS
+                    val heard = hearForRefine(context, song, lines, firstUntil)
+                        ?: return@refineListenOnce null
+                    saveRefineHeard(
+                        context,
+                        videoId,
+                        from,
+                        key,
+                        heard.words,
+                        heard.clock,
+                        heard.seconds,
+                        extended = false,
+                        startedGeneration = started,
+                    )
+                } ?: return@withLock false
+                heardAnchor = heardOnce.first
+                generation = heardOnce.second
             }
             // Anchor the refine to the entry from before the listen, with our
             // own words write folded in. A newer correction saved during the
@@ -1995,6 +1999,28 @@ object LyricsTiming {
             return null
         }
         return RefineSnapshot(withHeard(before ?: Entry()))
+    }
+
+    /**
+     * [KO] fix1120: [listen] under [generation], and once more when [resetSongCheck] replaced
+     * the file while it listened. The drop above stands (those words are the old bytes'); the
+     * one re-listen runs at once because the reset comes after the new file is in place, so the
+     * song still gets its words this play (phone 11-20 itBbxKe6Z50: a wrong recording repaired
+     * mid-listen stayed sync=none). No loop: a second drop waits for the next playback.
+     * Returns the snapshot with the generation it was saved under.
+     */
+    internal suspend fun refineListenOnce(
+        context: Context,
+        videoId: String,
+        generation: Long,
+        before: Entry?,
+        listen: suspend (started: Long, before: Entry?) -> RefineSnapshot?,
+    ): Pair<RefineSnapshot, Long>? {
+        listen(generation, before)?.let { return it to generation }
+        val now = songSyncGenerationOf(videoId)
+        if (now == generation) return null
+        TrackLog.i(TAG, "lyrics-refine: listening once more on the replaced file", videoId)
+        return listen(now, store(context).get(videoId))?.let { it to now }
     }
 
     private class RefineHeard(val words: List<SavedWord>, val clock: Clock, val seconds: Double)

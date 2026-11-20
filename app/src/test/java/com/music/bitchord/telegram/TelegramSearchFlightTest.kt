@@ -76,6 +76,45 @@ class TelegramSearchFlightTest {
         assertEquals(1, requests.get())
     }
 
+    /**
+     * Phone 11-20 15:40: the walk gave Telegram 15 s and moved on, but the TDLib search
+     * was still blocked in its own 15 s wait, so the lease and the client stayed open
+     * with nobody asking. The walk's timeout must end the hung request and the lease now.
+     */
+    @Test
+    fun `a walk that times out ends a hung search and its lease at once`() = runBlocking {
+        val requestStarted = CountDownLatch(1)
+        val interrupted = CountDownLatch(1)
+
+        TelegramClientManager.installSearchTestHooks(
+            awaitReady = {},
+            request = { _, _ ->
+                requestStarted.countDown()
+                try {
+                    // A TDLib answer that never comes on a dead network.
+                    CountDownLatch(1).await(20, TimeUnit.SECONDS)
+                } catch (e: InterruptedException) {
+                    interrupted.countDown()
+                    throw e
+                }
+                TdApi.FoundMessages(0, emptyArray<TdApi.Message>(), "")
+            },
+        )
+        TelegramClientManager.setSelectedChatIds(chats)
+
+        val walk = launch(Dispatchers.IO) {
+            kotlinx.coroutines.withTimeoutOrNull(300) { TelegramClientManager.searchTracks("hung", 10) }
+        }
+        assertTrue(requestStarted.await(5, TimeUnit.SECONDS))
+        assertTrue("the search holds the client while it runs", TelegramClientManager.searchGateOpenForTest())
+        walk.join()
+
+        assertTrue("the walk's timeout must interrupt the hung TDLib wait", interrupted.await(3, TimeUnit.SECONDS))
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+        while (TelegramClientManager.searchGateOpenForTest() && System.nanoTime() < deadline) Thread.sleep(20)
+        assertFalse("a timed-out search kept the Telegram client open", TelegramClientManager.searchGateOpenForTest())
+    }
+
     @Test
     fun `an exhausted global search does not fall back for other chats' rows`() = runBlocking {
         val perChatRequests = AtomicInteger()
