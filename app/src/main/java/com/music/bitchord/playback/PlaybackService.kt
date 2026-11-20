@@ -10529,7 +10529,8 @@ class PlaybackService : MediaLibraryService() {
             addItem(exoPlayer.currentMediaItem)
             if (crossfade?.isTransitioning() == true) addItem(spare?.currentMediaItem)
         }
-        if (DirectSourceGate.onPlaying(audible)) AudioCache.cancelDirect()
+        val upcoming = exoPlayer.nextMediaItemIndex.takeIf { it != C.INDEX_UNSET }?.let { exoPlayer.getMediaItemAt(it).mediaId } // [KO] gatecancel: a dropped blend keeps its next row
+        if (DirectSourceGate.onPlaying(audible, upcoming)) AudioCache.cancelDirect()
         koCheckNextDownloadAhead(exoPlayer, lastSeekAt) // [KO] dl-check-ahead: an unchecked saved next track is heard before it plays
         if (!DirectSourceGate.isActive() || !exoPlayer.isPlaying) return
         if (SystemClock.elapsedRealtime() - lastSeekAt < SEEK_SETTLE_MS) return

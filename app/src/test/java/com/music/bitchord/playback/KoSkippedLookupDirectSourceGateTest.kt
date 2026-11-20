@@ -129,6 +129,51 @@ class KoSkippedLookupDirectSourceGateTest {
         assertFalse(addon.stopped("Keep November").isCompleted)
     }
 
+    /**
+     * Review of the fix: an Automix/crossfade blend dropped before its handoff
+     * (arm timeout on slow cellular, a seek, a swap) shrinks the audible set
+     * back to the outgoing song while the incoming one is still the player's
+     * next. Its lookup must survive and be joined when the window reopens; a
+     * skip afterwards still stops it.
+     */
+    @Test
+    fun aBlendDroppedBeforeItsHandoffKeepsTheNextRowsLookup() = runBlocking<Unit> {
+        DirectSourceGate.onPlaying(setOf("gc-a2"))
+        DirectSourceGate.openNext("gc-b2")
+        val b = DirectSourceGate.startLookup("gc-b2", target("Blend Bravo"))
+        assertNotNull(b)
+        withTimeout(3_000) { addon.searching("Blend Bravo").await() }
+
+        DirectSourceGate.onPlaying(setOf("gc-a2", "gc-b2"), upcoming = "gc-b2") // arming: both audible
+        DirectSourceGate.onPlaying(setOf("gc-a2"), upcoming = "gc-b2") // dropped before the handoff
+
+        assertTrue("a dropped blend's next row keeps its lookup", b!!.isActive)
+        assertTrue(DirectSourceGate.stillLooking("gc-b2") === b)
+        DirectSourceGate.openNext("gc-b2") // the sampler's next tick reopens the window
+        assertTrue("the reopened window joins it", DirectSourceGate.startLookup("gc-b2", target("Blend Bravo")) === b)
+        assertFalse(addon.stopped("Blend Bravo").isCompleted)
+
+        DirectSourceGate.onPlaying(setOf("gc-c2"), upcoming = "gc-d2") // a skip still stops it
+        assertTrue(b.isCancelled)
+        assertNull(DirectSourceGate.stillLooking("gc-b2"))
+    }
+
+    /** A blend dropped because its incoming row left the queue: that row is no longer next, so it stops. */
+    @Test
+    fun aDroppedBlendWhoseRowLeftTheQueueStillStops() = runBlocking<Unit> {
+        DirectSourceGate.onPlaying(setOf("gc-a3"))
+        DirectSourceGate.openNext("gc-b3")
+        val b = DirectSourceGate.startLookup("gc-b3", target("Gone Bravo"))
+        assertNotNull(b)
+        withTimeout(3_000) { addon.searching("Gone Bravo").await() }
+
+        DirectSourceGate.onPlaying(setOf("gc-a3", "gc-b3"), upcoming = "gc-b3")
+        DirectSourceGate.onPlaying(setOf("gc-a3"), upcoming = "gc-x3")
+
+        assertTrue(b!!.isCancelled)
+        assertNull(DirectSourceGate.stillLooking("gc-b3"))
+    }
+
     /** A Cast or Wear resolve plays items this phone is not on; its lookup is never the gate's to stop. */
     @Test
     fun anUngatedLookupIsNeverStopped() = runBlocking<Unit> {
@@ -210,7 +255,7 @@ class KoSkippedLookupDirectSourceGateTest {
             request: StreamRequest?,
         ): List<Song> {
             // The resolver may normalise the query (case, punctuation): match the title loosely.
-            val key = listOf("Skip Alpha", "Skip Bravo", "Skip Charlie", "Skip Next", "Keep November", "Cast Oscar")
+            val key = listOf("Skip Alpha", "Skip Bravo", "Skip Charlie", "Skip Next", "Keep November", "Cast Oscar", "Blend Bravo", "Gone Bravo")
                 .firstOrNull { query.contains(it, ignoreCase = true) } ?: query
             searching(key).complete(Unit)
             if (asked.add(key)) {

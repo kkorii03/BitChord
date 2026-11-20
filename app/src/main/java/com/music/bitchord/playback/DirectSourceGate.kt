@@ -100,13 +100,22 @@ object DirectSourceGate {
      * other player's. Main thread. A change closes the window on whatever was
      * next, so a skip never inherits the previous track's read-ahead.
      *
+     * [KO] gatecancel: [upcoming] is the session player's next item. A blend
+     * dropped before its handoff (arm timeout, a seek, a swap) shrinks the
+     * audible set back to the outgoing track while the incoming one is still
+     * the player's next. The window still closes as before, but that row's
+     * lookup and proof download are not stopped: the window reopening joins
+     * them instead of starting both again from zero.
+     *
      * @return whether anything changed.
      */
-    fun onPlaying(mediaIds: Set<String>): Boolean {
+    fun onPlaying(mediaIds: Set<String>, upcoming: String? = null): Boolean {
         val now = open.value
         if (now.playing == mediaIds) return false
+        val shrankBack = mediaIds.isNotEmpty() && now.playing.containsAll(mediaIds)
+        val stillNext = upcoming?.takeIf { shrankBack && (it == now.next || it in now.playing) }
         open.value = Open(mediaIds, now.next?.takeIf { it in mediaIds })
-        dropAheadNotAdmitted() // [KO] hq-ahead
+        dropAheadNotAdmitted(stillNext) // [KO] hq-ahead
         return true
     }
 
@@ -134,13 +143,18 @@ object DirectSourceGate {
      * own head download behind them on the one addon host. Taken out of the
      * table before it is cancelled, so a return to that song starts a fresh
      * lookup instead of joining a cancelled one. A row going next -> playing
-     * stays admitted and loses nothing; an [ungated] lookup is never stopped.
+     * stays admitted and loses nothing; an [ungated] lookup is never stopped,
+     * nor is [stillNext], the player's next row after a dropped blend.
      */
     private fun dropAheadNotAdmitted() {
+        dropAheadNotAdmitted(stillNext = null)
+    }
+
+    private fun dropAheadNotAdmitted(stillNext: String?) {
         val now = open.value
         lookups.forEach { (id, lookup) ->
             if (now.next != id || id in now.playing) lookup.ahead?.cancel()
-            if (lookup.admitted && !now.admits(id) && lookups.remove(id, lookup)) {
+            if (lookup.admitted && !now.admits(id) && id != stillNext && lookups.remove(id, lookup)) {
                 lookup.work.cancel()
                 lookup.answer.cancel()
                 TrackLog.d(TAG, "direct: stopped the lookup for $id; it is no longer playing or next", about = id)
