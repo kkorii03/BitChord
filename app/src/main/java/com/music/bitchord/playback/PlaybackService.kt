@@ -783,6 +783,7 @@ class PlaybackService : MediaLibraryService() {
             requestOutputReconfiguration()
         }
         override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) {
+            val chosenBefore = AudioRouting.selectedId.value // [KO] btroute
             // A chosen output that has been unplugged is no longer a choice.
             // Left set, its id matches nothing — and ids are reused, so it
             // would eventually match whatever device the framework hands that
@@ -790,9 +791,28 @@ class PlaybackService : MediaLibraryService() {
             if (removedDevices.any { it.id == AudioRouting.selectedId.value }) {
                 AudioRouting.forget()
             }
+            pauseIfFallingToSpeaker(removedDevices, chosenBefore) // [KO] btroute
             markAudioTrackReason("route-removed")
             requestOutputReconfiguration()
         }
+    }
+
+    /**
+     * [KO] btroute: headphones gone and the music would carry on out of the
+     * phone's speaker. Not left to Media3's noisy broadcast alone: an output
+     * rebuild at the same moment hands it to the player being released (11-20
+     * 17:20, 9 s on the speaker). Runs before the rebuild is asked for, so the
+     * rebuild copies the pause. See [com.music.bitchord.ko.KoHeadphoneResumePolicy.pausesOnRouteLoss].
+     */
+    private fun pauseIfFallingToSpeaker(removed: Array<AudioDeviceInfo>, chosenBefore: Int?) {
+        val active = player ?: return
+        if (!active.playWhenReady) return
+        val remaining = runCatching { audioManager?.getDevices(AudioManager.GET_DEVICES_OUTPUTS) }.getOrNull() ?: return
+        val was = AudioRouting.activeOf(remaining + removed, chosenBefore)?.let { AudioRouting.kindOf(it.type) }
+        val now = resolveActiveRouteKind(resolveActiveOutputDevice())
+        if (!com.music.bitchord.ko.KoHeadphoneResumePolicy.pausesOnRouteLoss(active.playWhenReady, was, now)) return
+        TrackLog.i("BitChord", "route-lost: $was output gone, would play on $now; paused", about = active.currentMediaItem?.mediaId)
+        active.playWhenReady = false
     }
 
     /**
