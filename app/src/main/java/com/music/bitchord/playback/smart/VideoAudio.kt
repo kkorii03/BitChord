@@ -258,9 +258,13 @@ object VideoAudio {
     internal fun referenceReady(song: Song, untilSeconds: Double): Boolean {
         val local = song.localUri?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
         val key = songCacheKey(song, untilSeconds)
+        // [KO] U1121 VERIFY-1/2: only a whole window of YouTube's own sound is a reference. An
+        // abandoned read's partial no longer counts, and the window already read answers the
+        // read first, so a substitute filed there decides whatever else is on disk.
+        recent.get(songKey(key))?.let { return isYouTubeOpening(song, it) }
         return referenceReady(
-            cachedOpening = pickOpening(recent.get(songKey(key)), recent.get(partialKey(key)), true) != null,
-            copy = VersionAudioAligner.renditionToMeasure(song.videoId),
+            cachedOpening = false,
+            copy = VersionAudioAligner.renditionToMeasure(song.videoId)?.takeIf { isYouTubeCopy(song.videoId, it) },
             isLocalFile = local != null && LocalAudioSource.isLocal(local),
             untilSeconds = untilSeconds,
             durationMs = song.durationMillis(),
@@ -276,6 +280,21 @@ object VideoAudio {
         durationMs: Long,
     ): Boolean =
         cachedOpening || isLocalFile || hasOpeningOnDisk(copy, untilSeconds, durationMs)
+
+    /**
+     * [KO] U1121 VERIFY-1: whether [audio] is YouTube's own sound of [song], the
+     * only thing the quality comparison may call its YouTube reference. The same
+     * clock test the kept words pass ([SongHearing.keptYouTubeWords]): a blocked
+     * video's addon copy or a `#hifi` upgrade compared with itself measured
+     * match 100 offset 0 and was stored as verified.
+     */
+    internal fun isYouTubeOpening(song: Song, audio: SongAudio): Boolean =
+        LyricsTiming.clockForSongAudio(song, audio) == LyricsTiming.Clock.YouTube
+
+    /** [isYouTubeOpening] for a cache copy not read yet. */
+    internal fun isYouTubeCopy(videoId: String, copy: AudioCache.Rendition): Boolean =
+        LyricsTiming.clockForRendition(videoId, copy.key, copy.origin == AudioCache.Origin.YOUTUBE) ==
+            LyricsTiming.Clock.YouTube
 
     /**
      * Whether a read that stopped before its window may still be kept.

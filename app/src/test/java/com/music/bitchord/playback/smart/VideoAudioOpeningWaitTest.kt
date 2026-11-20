@@ -196,6 +196,46 @@ class VideoAudioOpeningWaitTest {
         )
     }
 
+    private fun song(id: String) = com.music.bitchord.data.model.Song(
+        videoId = id,
+        title = "t",
+        artist = "",
+        thumbnailUrl = null,
+        isVideo = false,
+    )
+
+    private fun heard(key: String?, recordedYouTube: Boolean = false) =
+        VideoAudio.SongAudio(ByteArray(0), key, fromFile = false, renditionYouTube = recordedYouTube)
+
+    /**
+     * U1121 VERIFY-1: a blocked video starts on its addon stream, cached as
+     * `#hifi`; with no YouTube opening the song check listens to that copy, and
+     * the quality comparison took it as YouTube's and measured the stream with
+     * itself (match 100, offset 0, stored verified).
+     */
+    @Test
+    fun `the copy that plays instead is not YouTube's opening`() {
+        assertFalse(VideoAudio.isYouTubeOpening(song("u1121-a"), heard("u1121-a#hifi")))
+        assertFalse(VideoAudio.isYouTubeOpening(song("u1121-b"), heard("u1121-b#hifi-1", recordedYouTube = true)))
+        // An addon's #alt copy, or one with no origin record, stays a stranger.
+        assertFalse(VideoAudio.isYouTubeOpening(song("u1121-c"), heard("u1121-c#alt-noatmos")))
+        assertFalse(VideoAudio.isYouTubeCopy("u1121-d", AudioCache.Rendition("u1121-d#hifi-2", 9_000_000L, 9_000_000L)))
+    }
+
+    @Test
+    fun `YouTube's own bytes stay the reference under either key`() {
+        assertTrue(VideoAudio.isYouTubeOpening(song("u1121-e"), heard("u1121-e")))
+        // A source ranked above YouTube files YouTube's stream under #alt; the origin record says so.
+        assertTrue(VideoAudio.isYouTubeOpening(song("u1121-f"), heard("u1121-f#alt", recordedYouTube = true)))
+        assertTrue(
+            VideoAudio.isYouTubeCopy(
+                "u1121-g",
+                AudioCache.Rendition("u1121-g#alt-noatmos", 9_000_000L, 2_000_000L, AudioCache.Origin.YOUTUBE),
+            ),
+        )
+        assertTrue(VideoAudio.isYouTubeCopy("u1121-h", AudioCache.Rendition("u1121-h", 9_000_000L, 2_000_000L)))
+    }
+
     @Test
     fun `a copy that holds the whole window is ready`() {
         assertTrue(

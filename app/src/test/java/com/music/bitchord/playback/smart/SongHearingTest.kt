@@ -158,6 +158,17 @@ class SongHearingTest {
     }
 
     @Test
+    fun aShortTracksWholeYouTubeCopyIsMeasuredOverALargerUpgrade() {
+        // U1121 VERIFY-1: a 45 s interlude is under the 800 KB floor as Opus; the #hifi copy won and measured itself.
+        val whole = com.music.bitchord.playback.AudioCache.Rendition("abc", 500_000L, 500_000L)
+        val upgrade = com.music.bitchord.playback.AudioCache.Rendition("abc#hifi-1", 7_000_000L, 7_000_000L)
+        assertEquals(whole, VersionAudioAligner.chooseMeasurementCopy(listOf(whole, upgrade)))
+        // Unchanged: a partial same-source copy under the floor still gives way.
+        val partial = com.music.bitchord.playback.AudioCache.Rendition("abc", 5_000_000L, 500_000L)
+        assertEquals(upgrade, VersionAudioAligner.chooseMeasurementCopy(listOf(partial, upgrade)))
+    }
+
+    @Test
     fun aRequestInTheAirAnswersWindowsItReaches() {
         assertEquals(true, SongHearing.flightAnswers(90.0, 40.0))
         assertEquals(true, SongHearing.flightAnswers(420.0, 90.0))
