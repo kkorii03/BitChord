@@ -8613,7 +8613,9 @@ class PlaybackService : MediaLibraryService() {
         // the stall [AudioCache]'s key factory documents. Free to wait for: the
         // old stream is still playing.
         delay(AUDITION_RELEASE_MS)
-        TrackLog.d("BitChord", AudioCache.cachedSummary(Uri.parse(upgradedUri)))
+        // getCachedSpans waits on the cache's monitor, which a loader holds across its
+        // disk writes: off the main thread, or a log line can freeze a skip (11-20 ANR).
+        TrackLog.d("BitChord", withContext(Dispatchers.IO) { AudioCache.cachedSummary(Uri.parse(upgradedUri)) })
         return warmedThrough
     }
 
