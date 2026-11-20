@@ -703,8 +703,9 @@ internal class NextTrackPreparation(
             aiUsable = Deepgram.usable,
             currentPlayedMs = playedMs,
             remainingMs = if (deadlineHit || syncCut) 0L else leftNow,
-            hasTiming = timing != null,
+            hasTiming = NextPrepLog.syncAnswered(timing), // [KO] N2: base=none is not `applied`
             failure = syncFailure,
+            baseNone = timing != null && !NextPrepLog.syncAnswered(timing),
         )
         val lyricsLabel = found?.source?.name?.lowercase(Locale.ROOT)
             ?: if (Step.LYRICS !in triedThisRun) {

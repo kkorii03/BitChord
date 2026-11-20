@@ -29,6 +29,16 @@ internal object NextPrepLog {
     }
 
     /**
+     * N2 (11-20 Memories iKraCjaTBVk, Fansa Wsi4TX36zs8): whether the sync step's
+     * timing answers anything, in the summary's words below: a base (ai or
+     * measured) or a heard-words refine. A timing whose base-choice chose
+     * base=none, with no refine, logged `sync=applied` while the summary said
+     * `sync=none`. The listener's own offset is not the step's answer.
+     */
+    fun syncAnswered(timing: LyricsTiming.Timing?): Boolean =
+        timing != null && (timing.base != null || timing.refineMs != 0L || timing.refineSlopePerMin != 0.0)
+
+    /**
      * The per-track summary's lyrics fact for a row this bundle prepared, in
      * the lyrics screen's own words ([LyricsSource.label], [TrackDiagnostics.syncLabel]),
      * so a track played with no lyrics screen still reports what was found

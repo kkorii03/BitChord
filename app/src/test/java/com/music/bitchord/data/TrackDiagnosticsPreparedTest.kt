@@ -4,6 +4,7 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.playback.NextPrepLog
 import com.music.bitchord.playback.smart.LyricsTiming
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -103,6 +104,39 @@ class TrackDiagnosticsPreparedTest {
             "the track summary must fall back to next-prep's fact",
             summary.contains("TrackDiagnostics.summaryLyricsFor(song.videoId)"),
         )
+    }
+
+    @Test
+    fun `a timing whose base-choice chose none is not an applied sync`() {
+        // N2: 11-20 Memories iKraCjaTBVk and Fansa Wsi4TX36zs8 logged `base-apply: base=none`
+        // and then `next-prep ... sync=applied` / `result=answered`.
+        assertFalse(NextPrepLog.syncAnswered(null))
+        assertFalse(NextPrepLog.syncAnswered(LyricsTiming.Timing(base = null, manualMs = 0L)))
+        assertFalse(NextPrepLog.syncAnswered(LyricsTiming.Timing(base = null, manualMs = 250L)))
+        assertTrue(NextPrepLog.syncAnswered(LyricsTiming.Timing(LyricsTiming.Adjustment.Shift(-400L, byAi = false), 0L)))
+        assertTrue(NextPrepLog.syncAnswered(LyricsTiming.Timing(LyricsTiming.Adjustment.Shift(800L, byAi = true), 0L)))
+        assertTrue(NextPrepLog.syncAnswered(LyricsTiming.Timing(base = null, manualMs = 0L, refineMs = -698L)))
+        assertTrue(NextPrepLog.syncAnswered(LyricsTiming.Timing(base = null, manualMs = 0L, refineSlopePerMin = 120.0)))
+        val prep = source("app/src/main/java/com/music/bitchord/playback/NextTrackPreparation.kt")
+        assertTrue(prep.contains("hasTiming = NextPrepLog.syncAnswered(timing)"))
+        assertTrue(prep.contains("baseNone = timing != null && !NextPrepLog.syncAnswered(timing)"))
+        assertFalse("the old flag counted any timing as applied", prep.contains("hasTiming = timing != null"))
+    }
+
+    @Test
+    fun `the service's own current-song lyric load records its fact for the summary`() {
+        // N4: 11-20 Dance Hall etyHAg3sADA: next-prep ran on its deadline (lyrics=off), the
+        // service's own load then found VIBE and a measured base, and the summary said lyrics=none.
+        val loaded = LyricsTiming.Timing(LyricsTiming.Adjustment.Shift(-400L, byAi = false), 0L)
+        TrackDiagnostics.notePreparedLyrics("svcLoad0001", NextPrepLog.summaryFacts(LyricsSource.LRCLIB, true, loaded)!!)
+        assertEquals(LyricsSource.LRCLIB.label, TrackDiagnostics.summaryLyricsFor("svcLoad0001")?.provider)
+        assertEquals("measured", TrackDiagnostics.summaryLyricsFor("svcLoad0001")?.sync)
+
+        val service = source("app/src/main/java/com/music/bitchord/playback/PlaybackService.kt")
+        val publish = service.substringAfter("suspend fun publish(sheet: com.music.bitchord.ko.KoLockSheet.Sheet)")
+            .substringBefore("publish(first)")
+        assertTrue("the service's load must note what it found", publish.contains("TrackDiagnostics.notePreparedLyrics(currentSong.videoId"))
+        assertTrue(publish.contains("NextPrepLog.summaryFacts(sheet.source"))
     }
 
     private fun source(path: String): String {

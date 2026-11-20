@@ -266,6 +266,12 @@ object NextPrepPolicy {
         val hasTiming: Boolean = false,
         /** The engine-stage failure, when the path was actually attempted and failed. */
         val failure: SyncFailure? = null,
+        /**
+         * N2: the path ran and came back with a timing that answers nothing:
+         * base-choice chose base=none and no refine moved the lines. It is
+         * reported as a no-answer (`base-none`), never as `applied`.
+         */
+        val baseNone: Boolean = false,
     )
 
     /**
@@ -291,8 +297,12 @@ object NextPrepPolicy {
         // Read when the line is written, often just after the next song started:
         // a step that actually ran and failed says how it failed, not this.
         facts.failure == null && !aiGateOpen(facts.currentPlayedMs) -> "ai-too-early"
+        facts.baseNone -> "base-none"
         else -> "no-answer"
     }
+
+    /** The path ran and the engines answered nothing to apply (a failure still names itself). */
+    private fun ranWithoutAnswer(reason: String?): Boolean = reason == "no-answer" || reason == "base-none"
 
     /** The exact `sync=` value for the next-prep line. */
     fun syncStatus(facts: SyncFacts): String =
@@ -308,7 +318,7 @@ object NextPrepPolicy {
      */
     fun syncResult(facts: SyncFacts): String = when {
         facts.hasTiming -> "answered"
-        syncSkipReason(facts) != "no-answer" -> "skipped:${syncSkipReason(facts)}"
+        !ranWithoutAnswer(syncSkipReason(facts)) -> "skipped:${syncSkipReason(facts)}"
         facts.failure != null -> "failed:${facts.failure.token}"
         else -> "no-answer"
     }
@@ -316,8 +326,9 @@ object NextPrepPolicy {
     /** The `reason=` half of the `next-prep sync:` line. */
     fun syncResultReason(facts: SyncFacts): String = when {
         facts.hasTiming -> "applied"
-        syncSkipReason(facts) != "no-answer" -> syncSkipReason(facts)!!
+        !ranWithoutAnswer(syncSkipReason(facts)) -> syncSkipReason(facts)!!
         facts.failure != null -> facts.failure.token
+        facts.baseNone -> "base-none"
         else -> "none"
     }
 
