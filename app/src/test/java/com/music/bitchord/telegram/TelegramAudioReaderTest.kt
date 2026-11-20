@@ -308,6 +308,79 @@ class TelegramAudioReaderTest {
         }
     }
 
+    // Review 11-20 (TELEGRAM-1): the FLAC length probe opens a reader for 4 KiB, but
+    // the window ignored the reader's end and asked TDLib for 4 MiB; the synchronous
+    // DownloadFile then answered only when all 4 MiB were on disk.
+    @Test
+    fun `a bounded reader asks TDLib for no more than its own range`() {
+        val transport = WindowTransport(size = 8L * 1024 * 1024)
+        try {
+            val reader = TelegramAudioReader.openWithTransport(
+                trackId = TRACK_ID,
+                requestedPosition = 0,
+                requestedLength = 4096,
+                reason = TelegramAudioReader.REASON_VERIFY,
+                transport = transport,
+            )
+            val head = ByteArray(4096)
+            assertEquals(4096, reader.read(head, 0, head.size))
+            assertEquals(listOf(4096L), transport.limits)
+            reader.close()
+        } finally {
+            transport.cleanup()
+        }
+    }
+
+    @Test
+    fun `an unbounded reader still fetches a 4 MiB window ahead`() {
+        val transport = WindowTransport(size = 8L * 1024 * 1024)
+        try {
+            val reader = TelegramAudioReader.openWithTransport(
+                trackId = TRACK_ID,
+                requestedPosition = 0,
+                requestedLength = -1,
+                reason = TelegramAudioReader.REASON_PLAY,
+                transport = transport,
+            )
+            assertEquals(4096, reader.read(ByteArray(4096), 0, 4096))
+            assertEquals(listOf(4L * 1024 * 1024), transport.limits)
+            reader.close()
+        } finally {
+            transport.cleanup()
+        }
+    }
+
+    /** Reports a large file, keeps a small one on disk, and records each DownloadFile limit. */
+    private class WindowTransport(private val size: Long) : TelegramFileTransport {
+        private val file = File.createTempFile("telegram-window-", ".bin").apply { writeBytes(ByteArray(8192)) }
+        val limits = java.util.Collections.synchronizedList(mutableListOf<Long>())
+
+        @Volatile
+        private var downloadedEnd = 0L
+
+        override fun resolveTrack(trackId: String) = TelegramTrack(
+            id = TRACK_ID, chatId = 1L, messageId = 2L, fileId = 7,
+            size = size, title = "Title", artist = "Artist",
+            durationSec = 0, format = "flac", mimeType = "audio/flac",
+            fileName = "Artist - Title.flac",
+        )
+        override fun fileInfo(fileId: Int) = TelegramFileInfo(size, file.absolutePath)
+        override fun downloadedPrefixSize(fileId: Int, offset: Long) =
+            (downloadedEnd - offset).coerceAtLeast(0L)
+        override fun download(fileId: Int, priority: Int, offset: Long, limit: Long) {
+            limits += limit
+            downloadedEnd = offset + limit
+        }
+        override fun localPath(fileId: Int): String = file.absolutePath
+        override fun isChatSelected(chatId: Long) = true
+        override fun cancelDownload(fileId: Int) = Unit
+        override fun nowMillis(): Long = System.nanoTime() / 1_000_000
+
+        fun cleanup() {
+            file.delete()
+        }
+    }
+
     private fun open(
         transport: FakeTransport,
         reason: String = TelegramAudioReader.REASON_PLAY,
