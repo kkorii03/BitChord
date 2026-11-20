@@ -221,7 +221,11 @@ internal object AlignFarm {
         }
         val how = (if (pending != null) " asked ahead" else "") + " for=$language"
         return withContext(Dispatchers.IO) { savedFrom(bytes, password) }
-            ?.also { TrackLog.i(TAG, "align-farm: ${it.words.size} words lang=${it.language}$how", videoId) }
+            ?.also {
+                TrackLog.i(TAG, "align-farm: ${it.words.size} words lang=${it.language}$how", videoId)
+                // [KO] coverahead: a Korean file says a cover with a Japanese sheet is sung in Korean.
+                com.music.bitchord.ko.KoSungLanguage.noteFarm(videoId, it.language)
+            }
     }
 
     private fun secretOf(app: Context): String? =

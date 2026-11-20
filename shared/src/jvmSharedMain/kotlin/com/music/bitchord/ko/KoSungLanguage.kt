@@ -35,42 +35,80 @@ object KoSungLanguage {
 
     /**
      * The language [song]'s sheet is listened to in. A cover whose title is
-     * Korean is heard in Korean when its sheet reads as Japanese or Chinese: a
+     * Korean, or whose align-farm file is Korean ([noteFarm]), is heard in
+     * Korean when its sheet reads as Japanese or Chinese: a
      * Korean-language cover of a J-pop/C-pop song is the case, and that sheet is
      * the original's, so only Korean words can tell it is not what is sung. A
      * Korean sheet, an English/Latin one (Korean covers of English songs are
      * mostly sung in English) and every non-cover row keep the sheet's language.
      */
     fun listenLanguage(sheetLanguage: String, song: Song): String =
-        if ((sheetLanguage == "ja" || sheetLanguage == "zh") && (koreanCover(song) || noted(song.videoId))) {
+        if ((sheetLanguage == "ja" || sheetLanguage == "zh") && (koreanTitled(song) || farmKorean(song))) {
             "ko"
         } else {
             sheetLanguage
         }
 
+    /** Why [listenLanguage] moved [song] to Korean, for the log: its title, or the farm's words. */
+    fun evidence(song: Song): String = if (koreanTitled(song)) "Korean-titled" else "farm-Korean"
+
     private fun koreanCover(song: Song): Boolean = titleSaysKorean(song.title) && CoverTitles.isCover(song)
 
+    private fun koreanTitled(song: Song): Boolean = koreanCover(song) || noted(song.videoId)
+
     /**
-     * Video ids whose queue row is a Korean-titled cover, noted where the real row is
-     * at hand ([noteRow]). The screen's song check, refit and AI timing build their
+     * [KO] coverahead: a cover whose align-farm file is Korean. The farm places a Korean
+     * sheet's words with a Korean model (bench/farm/farm.py), so its "ko" says the upload
+     * was sung and scored in Korean. Phone 11-20 vc224, 오화요 covers with a Latin or
+     * Japanese title: Last Stardust WANYQ3JC298 `align-farm: 100 words lang=ko asked ahead
+     * for=ja`, then 4 MB sent in ja, 67%, refused; Fansa vRjfYdwM5L4 the same, 43%
+     * (its emulator run applied a Korean sheet at 94% in ko). A row not known as a cover
+     * keeps the sheet's language: a farm file is one scored sheet, not the singing itself.
+     */
+    private fun farmKorean(song: Song): Boolean =
+        synchronized(farmSaidKorean) { farmSaidKorean.containsKey(song.videoId) } &&
+            (CoverTitles.isCover(song) || notedCover(song.videoId))
+
+    /**
+     * Video ids of cover rows, noted where the real row is at hand ([noteRow]), true for
+     * a Korean title. The screen's song check, refit and AI timing build their
      * Song from the lyrics query alone (title "스노우 하레이션", artist "μ's",
      * isVideo false), which no longer reads as a cover; the id carries it to them.
      * A video's title is fixed, so an entry never goes stale; bounded, oldest out.
      */
-    private val koreanCovers = object : LinkedHashMap<String, Unit>(16, 0.75f, true) {
+    private val covers = object : LinkedHashMap<String, Boolean>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) = size > NOTED_MAX
+    }
+
+    /** Video ids whose align-farm file came back in Korean this run ([noteFarm]); bounded, oldest out. */
+    private val farmSaidKorean = object : LinkedHashMap<String, Unit>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Unit>?) = size > NOTED_MAX
     }
     private const val NOTED_MAX = 64
 
-    /** Notes [row] (a queue row as the player has it) when it is a Korean-titled cover. */
+    /** Notes [row] (a queue row as the player has it) when it is a cover, and whether its title is Korean. */
     fun noteRow(row: Song) {
-        if (row.videoId.isBlank() || !koreanCover(row)) return
-        synchronized(koreanCovers) { koreanCovers[row.videoId] = Unit }
+        if (row.videoId.isBlank() || !CoverTitles.isCover(row)) return
+        val korean = titleSaysKorean(row.title)
+        synchronized(covers) { covers[row.videoId] = korean }
     }
 
-    private fun noted(videoId: String): Boolean = synchronized(koreanCovers) { koreanCovers.containsKey(videoId) }
+    /** Notes the language of [videoId]'s align-farm file, as the farm's answer arrives. */
+    fun noteFarm(videoId: String, language: String) {
+        if (videoId.isBlank()) return
+        synchronized(farmSaidKorean) {
+            if (language == "ko") farmSaidKorean[videoId] = Unit else farmSaidKorean.remove(videoId)
+        }
+    }
 
-    internal fun forgetNotedForTest() = synchronized(koreanCovers) { koreanCovers.clear() }
+    private fun noted(videoId: String): Boolean = synchronized(covers) { covers[videoId] == true }
+
+    private fun notedCover(videoId: String): Boolean = synchronized(covers) { covers.containsKey(videoId) }
+
+    internal fun forgetNotedForTest() {
+        synchronized(covers) { covers.clear() }
+        synchronized(farmSaidKorean) { farmSaidKorean.clear() }
+    }
 
     /**
      * Told to Gemini beside the video when its title is Korean. Not "it is

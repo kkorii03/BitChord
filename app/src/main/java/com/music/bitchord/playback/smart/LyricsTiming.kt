@@ -4954,7 +4954,7 @@ object LyricsTiming {
     private fun hearingLanguage(song: Song, texts: List<String>): String {
         val sheet = com.music.bitchord.data.lyrics.Deepgram.languageFor(texts)
         val heard = com.music.bitchord.ko.KoSungLanguage.listenLanguage(sheet, song)
-        if (heard != sheet) TrackLog.d(TAG, "song-hear: Korean-titled cover heard in $heard, not the sheet's $sheet", song.videoId)
+        if (heard != sheet) TrackLog.d(TAG, "song-hear: ${com.music.bitchord.ko.KoSungLanguage.evidence(song)} cover heard in $heard, not the sheet's $sheet", song.videoId)
         return heard
     }
 
