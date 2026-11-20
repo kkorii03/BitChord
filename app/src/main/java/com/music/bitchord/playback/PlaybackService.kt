@@ -7130,7 +7130,8 @@ class PlaybackService : MediaLibraryService() {
         stream: SourceStream,
         title: String?,
         verified: HqVerificationStore.Verified,
-    ): Boolean = koSwapLosslessMidSong(mediaId, uri, stream, title, verified) // [KO] hq-lossless
+        parkedBefore: SourceStream? = null, // [KO] swap missed 1
+    ): Boolean = koSwapLosslessMidSong(mediaId, uri, stream, title, verified, parkedBefore) // [KO] hq-lossless
 
     private fun hqSwapDecision(
         mediaId: String,
@@ -7323,11 +7324,12 @@ class PlaybackService : MediaLibraryService() {
                                 verified = answer
                             }
                         }
+                        val parkedBefore = QualityUpgrade.forced[mediaId] // [KO] swap missed 1: who filled the slot, before the forget empties it
                         QualityUpgrade.forget(mediaId)
                         if (verified != null && targetTitle != null && uri != null &&
                             HqQuality.isLosslessTier(shelved.format)
                         ) {
-                            if (swapLosslessMidSong(mediaId, uri, shelved, targetTitle, verified)) {
+                            if (swapLosslessMidSong(mediaId, uri, shelved, targetTitle, verified, parkedBefore)) {
                                 return@launch
                             }
                             prefetchLosslessForNextPlay(mediaId, uri, shelved, targetTitle)
@@ -7490,11 +7492,12 @@ class PlaybackService : MediaLibraryService() {
                             verified = answer
                         }
                     }
+                    val parkedBefore = QualityUpgrade.forced[mediaId] // [KO] swap missed 1: who filled the slot, before the forget empties it
                     QualityUpgrade.forget(mediaId)
                     if (verified != null && targetTitle != null && uri != null &&
                         com.music.bitchord.ko.KoQualityUpgrade.automaticSwapTakes(better.format) // [KO] hq-tier
                     ) {
-                        if (swapLosslessMidSong(mediaId, uri, better, targetTitle, verified)) {
+                        if (swapLosslessMidSong(mediaId, uri, better, targetTitle, verified, parkedBefore)) {
                             return@launch
                         }
                         koRelookAfterFailedSwap(mediaId) // [KO] hq-tier
@@ -8905,6 +8908,7 @@ class PlaybackService : MediaLibraryService() {
             // to be reopened. Releasing it first makes that reopen resolve the
             // previous rendition afresh instead of handing back the replacement
             // URL under the old cache key.
+            item.localConfiguration?.uri?.let(AudioCache::cancelWholeRenditionOf) // [KO] swap missed 3: the refused copy's fill
             QualityUpgrade.forgetReverted(mediaId)
             swappingMediaId = mediaId
             val abandoned = item.localConfiguration?.uri

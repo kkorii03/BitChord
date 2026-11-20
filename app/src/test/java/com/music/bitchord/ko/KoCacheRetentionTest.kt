@@ -240,6 +240,79 @@ class KoCacheRetentionTest {
         assertFalse(refusedCopyShouldDrop(refused = false, keptByQueueOrTiming = false, playerHolds = false))
     }
 
+    // Review 11-20 (AHEAD-1): a complete, verified #hifi FLAC was dropped once the
+    // queue moved on, after the song's YouTube copy had been deleted for it.
+    @Test
+    fun `a complete lossless hifi copy whose clock is known outlives the queue`() {
+        val kept = koKeepsAddonCopy("X#hifi", complete = { true }, audio = { true }, keepsUpgradeRendition = { true })
+        assertTrue(kept)
+        assertFalse(drop(origin = "OTHER", hasPlayback = true, hasPlayed = true, keepsAddonCopy = kept))
+    }
+
+    @Test
+    fun `a partial, non-audio or unkept hifi copy still drops`() {
+        assertFalse(koKeepsAddonCopy("X#hifi", complete = { false }, audio = { true }, keepsUpgradeRendition = { true }))
+        assertFalse(koKeepsAddonCopy("X#hifi", complete = { true }, audio = { false }, keepsUpgradeRendition = { true }))
+        assertFalse(koKeepsAddonCopy("X#hifi-2", complete = { true }, audio = { true }, keepsUpgradeRendition = { false }))
+        // The plain and #alt copies keep v1.9's rule and are never asked the upgrade question.
+        assertTrue(koKeepsAddonCopy("X#alt", complete = { true }, audio = { true }, keepsUpgradeRendition = { error("asked") }))
+    }
+
+    @Test
+    fun `an upgrade rendition is kept only lossless and on the clock still sounding`() {
+        fun keeps(lossless: Boolean = true, served: String? = "addon|t1|flac", substitute: Boolean = true, src: String? = "addon", track: String? = "t1") =
+            koKeepsUpgradeRendition(lossless, served, substitute, src, track)
+        assertTrue(keeps())
+        assertFalse("a lossy rendition", keeps(lossless = false))
+        assertFalse("no clock after a restart", keeps(substitute = false, src = null, track = null))
+        assertFalse("another row sounding", keeps(track = "t2"))
+        assertFalse("YouTube sounding", keeps(substitute = false))
+        assertFalse("no record of who filled it", keeps(served = null))
+    }
+
+    @Test
+    fun `the upgrade keep reads the entry and the stream choice`() {
+        val values = mapOf("bc_media_id" to "hk1", "bc_hq_lossless" to "1", "bc_served_source" to "addon|t1|flac")
+        val meta = Proxy.newProxyInstance(
+            ContentMetadata::class.java.classLoader,
+            arrayOf(ContentMetadata::class.java),
+        ) { _, method, args ->
+            when {
+                method.name == "get" && method.returnType == String::class.java -> values[args!![0] as String] ?: args[1]
+                method.name == "contains" -> (args!![0] as String) in values
+                else -> args?.getOrNull(1)
+            }
+        } as ContentMetadata
+        val cache = Proxy.newProxyInstance(Cache::class.java.classLoader, arrayOf(Cache::class.java)) { _, method, _ ->
+            if (method.name == "getContentMetadata") meta else null
+        } as Cache
+        val retention = KoCacheRetention()
+        com.music.bitchord.playback.StreamChoice.forget("hk1")
+        assertFalse("nothing in memory names it", retention.keepsUpgradeRendition(cache, "hk1#hifi"))
+        com.music.bitchord.playback.StreamChoice.remember(
+            "hk1",
+            com.music.bitchord.data.sources.SourceStream("https://a.example/f", sourceConfigId = "addon", trackId = "t1"),
+            substituted = true,
+        )
+        try {
+            assertTrue(retention.keepsUpgradeRendition(cache, "hk1#hifi"))
+        } finally {
+            com.music.bitchord.playback.StreamChoice.forget("hk1")
+        }
+    }
+
+    @Test
+    fun `the cache's addon keep no longer refuses every hifi key`() {
+        val root = java.io.File(".").canonicalFile
+        val cache = listOf("app/", "").map { java.io.File(root, "${it}src/main/java/com/music/bitchord/playback/AudioCache.kt") }
+            .first { it.exists() }.readText()
+        val keeps = cache.substringAfter("private fun keepsAddonCopy(").substringBefore("private val koRetention")
+        assertFalse(keeps.contains("!key.contains(\"#hifi\") &&"))
+        assertTrue(keeps.contains("koKeepsAddonCopy(key, ::isComplete, { containerOf(it) != null })"))
+        assertTrue(keeps.contains("koRetention.keepsUpgradeRendition(cache, it)"))
+        assertTrue(keeps.contains("!isRefusedCopy(key)"))
+    }
+
     @Test
     fun `ordinary played entries are never candidates`() {
         assertFalse(drop(origin = "YOUTUBE"))

@@ -4,8 +4,10 @@ import android.os.SystemClock
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.ContentMetadata
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.sources.CachedRenditionBar
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.BatteryPolicy
+import com.music.bitchord.playback.StreamChoice
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -194,6 +196,31 @@ class KoCacheRetention {
         }
     }
 
+    /** Kept upgrade renditions already logged, so each pass does not log them again. */
+    private val keptUpgradeLogged = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Review 11-20 (AHEAD-1): whether the complete `#hifi` entry [key] outlives
+     * the queue, see [koKeepsUpgradeRendition]. Reads the entry's own metadata
+     * and [StreamChoice]'s in-memory record; nothing on the network.
+     */
+    fun keepsUpgradeRendition(cache: Cache, key: String): Boolean {
+        val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return false
+        val mediaId = meta.get(META_MEDIA_ID, null as String?) ?: key.substringBefore('#')
+        val sounding = StreamChoice.sounding(mediaId)
+        val kept = koKeepsUpgradeRendition(
+            markedLossless = meta.get(META_HQ_LOSSLESS, null as String?) == "1",
+            servedSource = meta.get(META_SERVED_SOURCE, null as String?),
+            soundsSubstitute = StreamChoice.soundsSubstitute(mediaId),
+            soundingSourceId = sounding?.sourceConfigId,
+            soundingTrackId = sounding?.trackId,
+        )
+        if (kept && keptUpgradeLogged.add(key)) {
+            TrackLog.d(tag, "hq-cache: $key kept past the queue (complete lossless, its clock still known)", about = mediaId)
+        }
+        return kept
+    }
+
     private companion object {
         private const val TIMING_KEEP_MS = 15 * 60_000L
         private const val TIMING_KEEP_MAX = 16
@@ -207,8 +234,46 @@ class KoCacheRetention {
         private const val META_PLAYBACK = "bc_playback"
         private const val META_ANALYSIS = "bc_analysis"
         private const val META_PLAYED = "bc_played"
+        private const val META_SERVED_SOURCE = "bc_served_source"
+        private const val META_HQ_LOSSLESS = "bc_hq_lossless"
     }
 }
+
+/**
+ * v1.9's kept-addon-copy rule, minus the refusal check the cache applies on top:
+ * complete, audio by its first bytes ([audio]), and not an upgrade's `#hifi`
+ * rendition unless [keepsUpgradeRendition] keeps it. Lazy, in the order of cost:
+ * the container probe reads the file's head.
+ */
+internal fun koKeepsAddonCopy(
+    key: String,
+    complete: (String) -> Boolean,
+    audio: (String) -> Boolean,
+    keepsUpgradeRendition: (String) -> Boolean,
+): Boolean = (!key.contains("#hifi") || keepsUpgradeRendition(key)) && complete(key) && audio(key)
+
+/**
+ * Review 11-20 (AHEAD-1): a complete `#hifi` entry is what a later plain play
+ * opens ([KoLosslessCache.completeUpgradeRendition]), and the song's lower
+ * copies were already deleted for it ([KoLosslessCache.dropLowerQualityAfterLosslessSwap]).
+ * Dropped once the queue moved on, every replay fetched the Opus copy, the
+ * proof head and the whole FLAC again.
+ *
+ * Kept only when it is a lossless rendition ([markedLossless], written when the
+ * fill completed) and the lyric clock a plain play would use is this copy's:
+ * [StreamChoice] still names its source row ([servedSource]) as the substitute
+ * sounding. That record is in memory only; after a restart the lyric clock of a
+ * plain play falls back to YouTube's, so the entry goes at the first pass as
+ * before rather than play a FLAC with lines on another clock.
+ */
+internal fun koKeepsUpgradeRendition(
+    markedLossless: Boolean,
+    servedSource: String?,
+    soundsSubstitute: Boolean,
+    soundingSourceId: String?,
+    soundingTrackId: String?,
+): Boolean = markedLossless && soundsSubstitute && soundingSourceId != null && soundingTrackId != null &&
+    CachedRenditionBar.servedBy(servedSource, soundingSourceId, soundingTrackId)
 
 /**
  * Review 11-17 (LEFT-4): a refused copy goes once the queue window and the
