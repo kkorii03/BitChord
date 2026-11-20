@@ -67,4 +67,20 @@ class ExitReasonsKoTest {
             (1..100).asSequence().map { "  at frame$it" }
         assertEquals(10, mainThreadTraceLines(many, maxLines = 10).size)
     }
+
+    @Test
+    fun `a trace with a main thread is written with the exit-anr prefix`() {
+        val lines = anrTraceLines(sequenceOf("----- pid 1 -----", "\"main\" tid=1 Blocked", "  at a.B.c(B.kt:1)"))
+        assertEquals(listOf("exit-anr: \"main\" tid=1 Blocked", "exit-anr: at a.B.c(B.kt:1)"), lines)
+    }
+
+    @Test
+    fun `a trace without a main section says so with its size and first line`() {
+        val lines = anrTraceLines(sequenceOf("", "Subject: Input dispatching timed out", "\"Binder:1\" tid=2"))
+        assertEquals(
+            listOf("exit-anr: no main section (lines=3 chars=55 first=Subject: Input dispatching timed out)"),
+            lines,
+        )
+        assertEquals(listOf("exit-anr: no main section (lines=0 chars=0 first=-)"), anrTraceLines(emptySequence()))
+    }
 }

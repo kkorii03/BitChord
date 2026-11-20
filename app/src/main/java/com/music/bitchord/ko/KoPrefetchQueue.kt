@@ -214,15 +214,19 @@ class KoPrefetchQueue(
             // never going to use. The URL half below is still worth having: a
             // reverted track resolves through YouTube, which is what it warms.
             val pinnedToYouTube = OriginalVersion.isPinned(next)
-            // Not over an entry YouTube's own bytes already fill, from an
-            // earlier play: the player reads that head straight off disk,
-            // and the pin would then stream the substitute after it. That
-            // track's way up is the second look — see [AudioCache.heldByYouTube].
-            val youTubeFilled = AudioCache.heldByYouTube(
-                AudioCache.cacheKeyOf(Uri.parse("bitchord://watch?v=$next")),
-            )
             val nextFlight = if (next == headId) headFlight else null
             scope.launch {
+                // Not over an entry YouTube's own bytes already fill, from an
+                // earlier play: the player reads that head straight off disk,
+                // and the pin would then stream the substitute after it. That
+                // track's way up is the second look — see [AudioCache.heldByYouTube].
+                // Read here on [scope] (IO), not on the caller: prefetchQueue runs on
+                // the main thread at every track change, and both calls take the
+                // SimpleCache monitor that loader threads hold across index writes
+                // (anr1120); the key factory can also make a connectivity binder call.
+                val youTubeFilled = AudioCache.heldByYouTube(
+                    AudioCache.cacheKeyOf(Uri.parse("bitchord://watch?v=$next")),
+                )
                 // With substitution on, the *bytes* half above used to be
                 // switched off outright, and the paragraph explaining why is
                 // still correct as far as it goes: read-ahead resolving to
