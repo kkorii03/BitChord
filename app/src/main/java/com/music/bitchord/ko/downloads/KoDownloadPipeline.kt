@@ -266,10 +266,16 @@ internal object KoDownloadPipeline {
     )
     val replaced: kotlinx.coroutines.flow.SharedFlow<FileReplaced> = _replaced.asSharedFlow()
 
-    /** Whether the playing item [playingId], reading [playingUri], is still on a file [event] replaced. */
+    /**
+     * Whether the playing item [playingId], reading [playingUri], is still on a file [event] replaced.
+     * An .m4a record plays through its file path, not its content:// uri (PlayerConnection's
+     * resolvePlaybackUri), so a file:// uri of a replaced id counts as well: when it is the new
+     * file's own path, koUseVerifiedDownload finds the same uri and declines.
+     */
     fun movesPlayer(event: FileReplaced, playingId: String?, playingUri: String?): Boolean =
         playingId != null && playingId in event.ids &&
-            playingUri != null && playingUri != event.newUri && playingUri in event.oldUris
+            playingUri != null && playingUri != event.newUri &&
+            (playingUri in event.oldUris || playingUri.startsWith("file://"))
 
     /** What the record of one id says about the upload its file was fetched from. */
     data class FileOrigin(

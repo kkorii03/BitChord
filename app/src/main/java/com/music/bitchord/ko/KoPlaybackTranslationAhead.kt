@@ -464,12 +464,13 @@ internal fun PlaybackService.koOnSavedFileReplaced(event: com.music.bitchord.ko.
     }
     val oldPair = event.oldPairOf(id)
     val old = oldPair?.let { (source, track) -> HqVerificationStore.get(this, id, source, track) }
-    TrackLog.i(
+    // False when the item already reads the new file (its path form is the same uri).
+    val moved = koUseVerifiedDownload(live, item, live.currentPosition, playing = old)
+    if (moved) TrackLog.i(
         "BitChord",
         "saved-file replaced: $id moves onto the new file old=${oldPair?.first ?: "youtube"}${if (oldPair != null && old == null) " (no verdict)" else ""}",
         about = id,
     )
-    koUseVerifiedDownload(live, item, live.currentPosition, playing = old)
 }
 
 /**

@@ -55,6 +55,7 @@ class KoDownloadPipelineInPlaceReplaceTest {
         assertTrue(KoDownloadPipeline.movesPlayer(event, "song", old))
         assertTrue("an alias filed under the same file", KoDownloadPipeline.movesPlayer(event, "mv", old))
         assertFalse("already on the new file", KoDownloadPipeline.movesPlayer(event, "song", uri))
+        assertTrue("an m4a record plays through its file path", KoDownloadPipeline.movesPlayer(event, "song", "file:///storage/emulated/0/Music/old.m4a"))
         assertFalse("a stream is not the old file", KoDownloadPipeline.movesPlayer(event, "song", "bitchord://watch?v=song"))
         assertFalse("another song", KoDownloadPipeline.movesPlayer(event, "other", old))
         assertFalse(KoDownloadPipeline.movesPlayer(event, null, old))
