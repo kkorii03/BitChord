@@ -327,10 +327,13 @@ object VideoAudio {
         copy: AudioCache.Rendition,
         untilSeconds: Double,
         durationMs: Long,
-    ): Long? {
-        if (copy.contentLength <= 0L || durationMs <= 0L) return null
-        return (copy.contentLength * ((untilSeconds + 1.0) * 1000.0 / durationMs))
-            .toLong().coerceAtMost(copy.contentLength)
+    ): Long? = openingBytes(copy.contentLength, untilSeconds, durationMs)
+
+    /** [openingBytes] for anything [contentLength] bytes long. */
+    private fun openingBytes(contentLength: Long, untilSeconds: Double, durationMs: Long): Long? {
+        if (contentLength <= 0L || durationMs <= 0L) return null
+        return (contentLength * ((untilSeconds + 1.0) * 1000.0 / durationMs))
+            .toLong().coerceAtMost(contentLength)
     }
 
     /**
@@ -417,7 +420,8 @@ object VideoAudio {
      *
      * Waits on cache events for up to [untilSeconds], or settles for [minSeconds]
      * after [QUICK_WAIT_MS]. Null means nothing fit to send, not an error: the
-     * caller decodes instead. A file on the device is left to the decoded path.
+     * caller decodes instead. A file on the device is sent the same way when it is
+     * WebM or Ogg ([fileOpening]); any other file is left to the decoded path.
      * [stillWanted] false (the row has left) asks YouTube for nothing more.
      */
     internal suspend fun songStreamOpening(
@@ -428,7 +432,7 @@ object VideoAudio {
     ): SongAudio? = withContext(Dispatchers.IO) {
         if (!untilSeconds.isFinite() || untilSeconds <= 0.0) return@withContext null
         val local = song.localUri?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
-        if (local != null && LocalAudioSource.isLocal(local)) return@withContext null
+        if (local != null && LocalAudioSource.isLocal(local)) return@withContext fileOpening(song, local, untilSeconds) // [KO] x1120-nextdl
         val videoId = song.videoId
         val durationMs = song.durationMillis()
         AudioCache.keepForTiming(videoId)
@@ -526,6 +530,78 @@ object VideoAudio {
         )
     }
 
+    /**
+     * [KO] x1120-nextdl: the opening of a downloaded file as its own bytes, no decode.
+     *
+     * A YouTube download is the stream's own WebM (or Ogg) container, which a speech
+     * server reads cut at any point the same as the cached stream ([songStreamOpening]).
+     * The decoded path read a whole 271 s file for 10.4 s to send 8.5 MB of WAV (11-20
+     * Un7GffA7zHc); this sends the file's few MB as they are. MP4 (its index may sit at
+     * the end), FLAC and the rest still decode. The clock is read as the file is opened,
+     * as [openSongSource] does.
+     */
+    private fun fileOpening(song: Song, uri: Uri, untilSeconds: Double): SongAudio? {
+        val context = KoDownloadRecords.applicationContext() ?: return null
+        val meta = KoDownloadRecords.savedMetadataFor(song.videoId)
+        val source = LocalAudioSource.open(context.contentResolver, uri) ?: return null
+        val audio = try {
+            fileOpening(
+                size = source.size,
+                durationMs = song.durationMillis(),
+                untilSeconds = untilSeconds,
+                sourceConfigId = meta?.hqSourceConfigId,
+                trackId = meta?.hqTrackId,
+            ) { readBytes(source, it) }
+        } catch (e: Exception) {
+            TrackLog.w(TAG, "song check: could not read the file: ${e.message}", song.videoId)
+            return null
+        } finally {
+            runCatching { source.close() }
+        }
+        TrackLog.d(
+            TAG,
+            if (audio == null) "song check: file not sent as it is, decoding instead"
+            else "song check: file opening ${audio.bytes.size / 1024}KB sent as ${audio.mime}, no decode",
+            song.videoId,
+        )
+        return audio
+    }
+
+    /** [fileOpening] on a file of [size] bytes, [read] giving its first n bytes; testable. */
+    internal fun fileOpening(
+        size: Long,
+        durationMs: Long,
+        untilSeconds: Double,
+        sourceConfigId: String?,
+        trackId: String?,
+        read: (Int) -> ByteArray,
+    ): SongAudio? {
+        if (size <= 0L) return null
+        val mime = containerMime(read(minOf(size, MAGIC_BYTES).toInt()))
+        val want = openingBytes(size, maxOf(untilSeconds, SONG_CHECK_SECONDS), durationMs)
+            ?: (maxOf(untilSeconds, SONG_CHECK_SECONDS) * RAW_BYTES_PER_SECOND).toLong()
+        val take = rawFileTake(mime, size, want) ?: return null
+        val bytes = read(take.toInt())
+        if (bytes.size < MIN_RAW_BYTES) return null
+        return SongAudio(
+            bytes,
+            null,
+            fromFile = true,
+            localSourceConfigId = sourceConfigId,
+            localTrackId = trackId,
+            mime = mime ?: return null,
+            whole = bytes.size.toLong() >= size,
+            roughSeconds = RefineExtendPolicy.cachedSeconds(bytes.size.toLong(), size, durationMs / 1000.0)
+                .takeIf { it >= 0.0 } ?: (bytes.size / RAW_BYTES_PER_SECOND),
+        )
+    }
+
+    /** Bytes of a file of [size] to send as they are for [wantBytes], or null when it must be decoded. */
+    internal fun rawFileTake(mime: String?, size: Long, wantBytes: Long): Long? {
+        if (mime != "audio/webm" && mime != "audio/ogg") return null
+        return minOf(size, wantBytes).takeIf { it in MIN_RAW_BYTES..MAX_RAW_BYTES }
+    }
+
     private fun readBytes(source: MediaDataSource, size: Int): ByteArray {
         val bytes = ByteArray(size)
         var at = 0
@@ -566,6 +642,9 @@ object VideoAudio {
 
     /** A substitute's lossless file is decoded down rather than uploaded whole. */
     private const val MAX_RAW_BYTES = 16L * 1024 * 1024
+
+    /** Enough of a file's head for [containerMime]. */
+    private const val MAGIC_BYTES = 16L
 
     private class SongSource(
         val data: MediaDataSource,
