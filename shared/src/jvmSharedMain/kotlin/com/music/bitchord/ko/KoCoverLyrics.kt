@@ -2,7 +2,11 @@ package com.music.bitchord.ko
 
 import com.music.bitchord.data.lyrics.LyricsQueryVariants
 import com.music.bitchord.data.lyrics.OriginalNames
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * [KO] cover-lyrics: the lyrics retries for a cover whose title names the song
@@ -73,8 +77,48 @@ internal object KoCoverLyrics {
      */
     fun <S> owedAfterCut(videoKeyed: Set<S>, cutShort: Set<S>): Set<S> = videoKeyed.filterTo(LinkedHashSet()) { it in cutShort }
 
-    /** [order] with the [owed] sources moved to its end: they were too slow once, the names go first. */
-    fun <S> owedLast(order: List<S>, owed: Set<S>): List<S> = order.filterNot { it in owed } + order.filter { it in owed }
+    /**
+     * [KO] lookupfix: the owed sources' one more question, asked beside the later
+     * names and never inside one of their rounds. A round awaits every source in
+     * order, so an owed source that hung again (it was too slow once already)
+     * held a missing name's round to its 9 s budget and the names after it were
+     * never asked (review of 0e550c937). [start] runs [ask] once in [scope], under
+     * the caller's deadline; [ifDone] never waits; [last] waits at most what is
+     * left of that deadline. The owner cancels it when the search ends.
+     */
+    class OwedAnswer<R : Any>(private val scope: CoroutineScope) {
+        private val answer = AtomicReference<R?>(null)
+        @Volatile private var job: Job? = null
+
+        fun start(ask: suspend () -> R?) {
+            if (job != null) return
+            job = scope.launch {
+                // A failing provider must not fail the search it runs beside.
+                val found = try {
+                    ask()
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+                found?.let { answer.set(it) }
+            }
+        }
+
+        /** The answer if it has already come, taken once; null otherwise. Never waits. */
+        fun ifDone(): R? = answer.getAndSet(null)
+
+        /** Waits for the answer at most [withinMs] (nothing when not asked), then [ifDone]. */
+        suspend fun last(withinMs: Long): R? {
+            val running = job ?: return null
+            if (withinMs > 0L) withTimeoutOrNull(withinMs) { running.join() }
+            return ifDone()
+        }
+
+        fun cancel() {
+            job?.cancel()
+        }
+    }
 
     /** The log line of a cut first round. No lyric text. */
     fun cutLine(capMs: Long, kept: String, owed: Set<*> = emptySet<Any>()): String =
