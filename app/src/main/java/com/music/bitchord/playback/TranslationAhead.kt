@@ -326,6 +326,7 @@ internal object TranslationAhead {
         // manual button is unaffected.
         if (!AppSettings.heavyWorkAllowed) return
         val query = com.music.bitchord.data.cover.CoverTitles.lyricsQuery(song)
+        com.music.bitchord.ko.KoSungLanguage.noteRow(song) // [KO] coverlang: placeWithAi below sees only the query
         if (!query.isVideo || song.localUri != null) return
         if (found.lines.none { it.timeMs > 0 }) return
         val timing = com.music.bitchord.playback.smart.LyricsTiming

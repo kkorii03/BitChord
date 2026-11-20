@@ -1,5 +1,6 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.data.cover.CoverTitles
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
@@ -55,6 +56,64 @@ class KoCoverLyricsVersionLanguageTest {
         assertEquals("ja", KoSungLanguage.listenLanguage("ja", video("夜に駆ける", "타비 커버")))
         // Not a cover: an uploaded original keeps its sheet's language whatever its title.
         assertEquals("ja", KoSungLanguage.listenLanguage("ja", video("밤을 달리다", "YOASOBI")))
+    }
+
+    /**
+     * Review of 759e28305: the screen's song check and refit, and every AI timing
+     * (placeWithAi), build their Song from the lyrics query alone, as LyricsController
+     * does from LyricsRequest: Sltk38pDXV8 arrives as ("스노우 하레이션", "μ's"), no
+     * originalTitle, no coverSinger, no "커버" byline, isVideo false on the song check.
+     * That no longer reads as a cover, so the listen stayed in the sheet's "ja" on the
+     * path that applied the wrong sheet at 75% (17:59:59, a #alt quick listen in askAi).
+     */
+    @Test
+    fun theQueryShapedSongTheChecksBuildIsHeardInKoreanOnceItsRowWasLoaded() {
+        val singers = CoverTitles.knownSingers
+        val original = CoverTitles.knownOriginal
+        KoSungLanguage.forgetNotedForTest()
+        try {
+            CoverTitles.knownSingers = { emptySet() }
+            CoverTitles.knownOriginal = { id -> if (id == "Sltk38pDXV8") "Snow halation" to "μ's" else null }
+            for ((id, upload) in listOf(
+                "Sltk38pDXV8" to "스노우 하레이션 - 타비 Cover(04.02)",
+                "oZ4Tr4bINNY" to "히어로 - 타비 Cover(05.13)",
+            )) {
+                // As the queue holds it (CoverTitles.applyTo), the row loadLyricsFor gets.
+                val row = CoverTitles.applyTo(
+                    Song(videoId = id, title = upload, artist = "아라하시 타비", thumbnailUrl = null, isVideo = true),
+                )
+                assertTrue(CoverTitles.isCover(row), id)
+                val query = CoverTitles.lyricsQuery(row)
+                fun built(isVideo: Boolean) =
+                    Song(videoId = id, title = query.title, artist = query.artist, thumbnailUrl = null, isVideo = isVideo)
+                val songCheck = built(isVideo = false) // LyricsController.runSongCheck
+                val aiTiming = built(isVideo = query.isVideo) // placeWithAi -> askAi, refit
+                // 759e28305: the query alone is no cover, so the sheet's Japanese stood.
+                assertFalse(CoverTitles.isCover(songCheck), id)
+                assertEquals("ja", KoSungLanguage.listenLanguage("ja", songCheck), id)
+                KoSungLanguage.noteRow(row) // LyricsController.loadLyricsFor / next-prep / TranslationAhead
+                assertEquals("ko", KoSungLanguage.listenLanguage("ja", songCheck), id)
+                assertEquals("ko", KoSungLanguage.listenLanguage("ja", aiTiming), id)
+                assertEquals("ko", KoSungLanguage.listenLanguage("zh", songCheck), id)
+                // Still only a Japanese/Chinese sheet is moved.
+                assertEquals("en", KoSungLanguage.listenLanguage("en", songCheck), id)
+                assertEquals("ko", KoSungLanguage.listenLanguage("ko", songCheck), id)
+            }
+            // A row that is not a Korean-titled cover is not noted.
+            val japaneseCover = CoverTitles.applyTo(
+                Song(videoId = "jp-cover", title = "夜に駆ける - 타비 Cover(01.01)", artist = "아라하시 타비", thumbnailUrl = null, isVideo = true),
+            )
+            KoSungLanguage.noteRow(japaneseCover)
+            KoSungLanguage.noteRow(Song(videoId = "jp-original", title = "밤을 달리다", artist = "YOASOBI", thumbnailUrl = null, isVideo = false))
+            for (id in listOf("jp-cover", "jp-original", "never-loaded")) {
+                val bare = Song(videoId = id, title = "히어로", artist = "타비", thumbnailUrl = null, isVideo = false)
+                assertEquals("ja", KoSungLanguage.listenLanguage("ja", bare), id)
+            }
+        } finally {
+            CoverTitles.knownSingers = singers
+            CoverTitles.knownOriginal = original
+            KoSungLanguage.forgetNotedForTest()
+        }
     }
 
     @Test

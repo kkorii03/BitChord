@@ -288,6 +288,7 @@ class LyricsController(
      */
     fun loadLyricsFor(song: Song, durationMs: Long) {
         val query = CoverTitles.lyricsQuery(song)
+        com.music.bitchord.ko.KoSungLanguage.noteRow(song) // [KO] coverlang: the checks below see only the query
         loadLyrics(
             videoId = song.videoId,
             title = query.title,

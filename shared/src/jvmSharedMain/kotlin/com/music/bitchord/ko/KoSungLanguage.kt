@@ -42,13 +42,35 @@ object KoSungLanguage {
      * mostly sung in English) and every non-cover row keep the sheet's language.
      */
     fun listenLanguage(sheetLanguage: String, song: Song): String =
-        if ((sheetLanguage == "ja" || sheetLanguage == "zh") &&
-            titleSaysKorean(song.title) && CoverTitles.isCover(song)
-        ) {
+        if ((sheetLanguage == "ja" || sheetLanguage == "zh") && (koreanCover(song) || noted(song.videoId))) {
             "ko"
         } else {
             sheetLanguage
         }
+
+    private fun koreanCover(song: Song): Boolean = titleSaysKorean(song.title) && CoverTitles.isCover(song)
+
+    /**
+     * Video ids whose queue row is a Korean-titled cover, noted where the real row is
+     * at hand ([noteRow]). The screen's song check, refit and AI timing build their
+     * Song from the lyrics query alone (title "스노우 하레이션", artist "μ's",
+     * isVideo false), which no longer reads as a cover; the id carries it to them.
+     * A video's title is fixed, so an entry never goes stale; bounded, oldest out.
+     */
+    private val koreanCovers = object : LinkedHashMap<String, Unit>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Unit>?) = size > NOTED_MAX
+    }
+    private const val NOTED_MAX = 64
+
+    /** Notes [row] (a queue row as the player has it) when it is a Korean-titled cover. */
+    fun noteRow(row: Song) {
+        if (row.videoId.isBlank() || !koreanCover(row)) return
+        synchronized(koreanCovers) { koreanCovers[row.videoId] = Unit }
+    }
+
+    private fun noted(videoId: String): Boolean = synchronized(koreanCovers) { koreanCovers.containsKey(videoId) }
+
+    internal fun forgetNotedForTest() = synchronized(koreanCovers) { koreanCovers.clear() }
 
     /**
      * Told to Gemini beside the video when its title is Korean. Not "it is
