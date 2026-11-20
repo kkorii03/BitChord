@@ -172,7 +172,9 @@ class TelegramAudioReader internal constructor(
     private fun downloadRange(at: Long, length: Int): String {
         var available = transport.downloadedPrefixSize(fileId, at)
         if (available < length) {
-            val window = minOf(DOWNLOAD_WINDOW_BYTES, totalSize - at)
+            // [KO] A bounded reader (a 4 KiB length probe) asks for its own end, not 4 MiB:
+            // the synchronous DownloadFile answers only when the whole window is on disk.
+            val window = minOf(DOWNLOAD_WINDOW_BYTES, totalSize - at, endPosition - at)
                 .coerceAtLeast(length.toLong())
             val started = transport.nowMillis()
             val before = available
