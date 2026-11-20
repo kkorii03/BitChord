@@ -1,5 +1,8 @@
 package com.music.bitchord.playback.smart
 
+import com.music.bitchord.data.cover.CoverTitles
+import com.music.bitchord.data.model.Song
+import com.music.bitchord.ko.KoSungLanguage
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -139,6 +142,52 @@ class AlignFarmTest {
         assertFalse(AlignFarm.mayAskAhead(failed = 0, askedByRow = false, held = true))
     }
 
+    /**
+     * coverahead, phone 11-20 vc224: Last Stardust WANYQ3JC298 (row "Last Stardust",
+     * "Aimer · 오화요 커버") logged `align-farm: 100 words lang=ko asked ahead for=ja`, then
+     * sent 4 MB to Deepgram in ja (67%, refused); Fansa vRjfYdwM5L4 the same (43%). The
+     * Latin/Japanese title never read as Korean, so the farm's Korean words sat unused.
+     * Now the farm's Korean answer moves the cover's listen to ko, where its words are kept.
+     */
+    @Test
+    fun `a cover whose farm file is Korean is heard in Korean, from the farm's words`() = runBlocking {
+        val id = "farmko00001"
+        val row = Song(videoId = id, title = "Last Stardust", artist = "Aimer · 오화요 커버", thumbnailUrl = null, isVideo = true)
+        val query = CoverTitles.lyricsQuery(row)
+        // As placeWithAi builds it: the query's title and artist, no cover fields.
+        val asked = Song(videoId = id, title = query.title, artist = query.artist, thumbnailUrl = null, isVideo = query.isVideo)
+        KoSungLanguage.noteRow(row) // next-prep / the screen, with the real row
+        // Old code and before the farm answers: the sheet's Japanese.
+        assertEquals("ja", KoSungLanguage.listenLanguage("ja", asked))
+        assertTrue(AlignFarm.askAhead(id) { cipher(KO_BODY) })
+        val saved = AlignFarm.answer(id, "ja", PASS) { noGet("the row asked again") }
+        assertEquals("ko", saved!!.language)
+        assertEquals("ko", KoSungLanguage.listenLanguage("ja", asked))
+        assertEquals("ko", KoSungLanguage.listenLanguage("zh", asked))
+        assertEquals("farm-Korean", KoSungLanguage.evidence(asked))
+        // In ko the farm's whole file answers the 420 s ask: no request, no upload.
+        val stream = SongHearing.streamRecording(LyricsTiming.clockToKey(LyricsTiming.Clock.YouTube)!!)
+        assertNotNull(SongHearing.covering(listOf(saved), stream, "ko", 420.0))
+        // An English or Korean sheet keeps its own language.
+        assertEquals("en", KoSungLanguage.listenLanguage("en", asked))
+        assertEquals("ko", KoSungLanguage.listenLanguage("ko", asked))
+    }
+
+    @Test
+    fun `a Korean farm file alone does not move a row not known as a cover`() = runBlocking {
+        val id = "farmko00002"
+        assertNotNull(AlignFarm.answer(id, "ja", PASS) { cipher(KO_BODY) })
+        val original = Song(videoId = id, title = "ファンサ", artist = "HoneyWorks", thumbnailUrl = null, isVideo = true)
+        assertEquals("ja", KoSungLanguage.listenLanguage("ja", original))
+        // A later farm answer in Japanese takes the note back for a cover too.
+        val cover = Song(videoId = "farmko00003", title = "ファンサ - Fansa", artist = "HoneyWorks · 오화요 커버", thumbnailUrl = null, isVideo = true)
+        KoSungLanguage.noteRow(cover)
+        KoSungLanguage.noteFarm(cover.videoId, "ko")
+        assertEquals("ko", KoSungLanguage.listenLanguage("ja", cover))
+        KoSungLanguage.noteFarm(cover.videoId, "ja")
+        assertEquals("ja", KoSungLanguage.listenLanguage("ja", cover))
+    }
+
     /** A GET that must not happen. */
     private fun noGet(why: String): ByteArray? = throw AssertionError(why)
 
@@ -149,6 +198,7 @@ class AlignFarmTest {
     private companion object {
         const val PASS = "secretvid12345678"
         const val BODY = """{"lang":"en","audio_s":200.0,"words":[{"t":"a","s":1000,"e":1400},{"t":"b","s":1500,"e":1900}]}"""
+        const val KO_BODY = """{"lang":"ko","audio_s":245.0,"words":[{"t":"가","s":1000,"e":1400},{"t":"나","s":1500,"e":1900}]}"""
         const val PYTHON_40_BYTES = "26a0ddf10aab74a6abd66fa4190bab3255afa0b14b694f79e6d1d64c6508b38301df36de87dfb220"
     }
 }

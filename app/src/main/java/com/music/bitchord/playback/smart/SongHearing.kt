@@ -231,6 +231,8 @@ internal object SongHearing {
         val app = context.applicationContext
         var farmAsked = false
         var waitedOpening = false
+        // [KO] coverahead: a Korean-sung cover is heard in Korean, however its asker read the sheet.
+        var language = sungLanguage(language, song)
         // With no Groq nothing is rough, and two flights would pay Deepgram twice for one window.
         val wantExact = exact && GroqWhisper.apiKey.isNotBlank()
         while (true) {
@@ -260,7 +262,11 @@ internal object SongHearing {
             // The farm's GET can take its whole timeout: only words not kept wait on it.
             if (!farmAsked) {
                 farmAsked = true
-                if (keepFromFarm(app, song, language)) continue
+                if (keepFromFarm(app, song, language)) {
+                    // [KO] coverahead: the farm's file may be the Korean words of a cover asked for in ja.
+                    language = sungLanguage(language, song)
+                    continue
+                }
             }
             // One request per recording, language and window kind (opening or longer) at a time.
             // Each window flying on its own paid for the same opening
@@ -321,13 +327,28 @@ internal object SongHearing {
         return true
     }
 
+    /**
+     * [KO] coverahead: [asked], or Korean for a cover the farm or its title says is sung in
+     * Korean ([KoSungLanguage.listenLanguage]). Phone 11-20: the farm's Korean file for Last
+     * Stardust WANYQ3JC298 was kept, then 4 MB went to Deepgram in ja for 67% and a refusal.
+     */
+    private fun sungLanguage(asked: String, song: Song): String {
+        val sung = com.music.bitchord.ko.KoSungLanguage.listenLanguage(asked, song)
+        if (sung != asked) {
+            TrackLog.d(TAG, "song-hear: ${com.music.bitchord.ko.KoSungLanguage.evidence(song)} cover heard in $sung, not $asked", song.videoId)
+        }
+        return sung
+    }
+
     /** The longest words kept for what [song] plays now; never a request. */
     suspend fun longestKept(context: Context, song: Song, language: String): Heard? {
         val app = context.applicationContext
         val recording = recordingKey(song) ?: return null
+        var language = sungLanguage(language, song) // [KO] coverahead
         var saved = longestSaved(app, song, recording, language)
         // A whole song leaves the farm nothing to add, so its GET is not waited on.
         if (saved?.whole != true && keepFromFarm(app, song, language)) {
+            language = sungLanguage(language, song) // [KO] coverahead
             saved = longestSaved(app, song, recording, language)
         }
         return saved?.let(::heardFrom)
@@ -494,7 +515,8 @@ internal object SongHearing {
         val recording = (if (raw != null) recordingKey(raw.fromFile, LyricsTiming.clockForSongAudio(song, raw)) else recordingKey(song))
             ?: return null
         val kept = withContext(Dispatchers.IO) { load(app, song.videoId) }
-        val saved = covering(kept.filterNot { exact && it.rough }, recording, language, untilSeconds) ?: return null
+        val heardIn = if (answered) sungLanguage(language, song) else language // [KO] coverahead
+        val saved = covering(kept.filterNot { exact && it.rough }, recording, heardIn, untilSeconds) ?: return null
         TrackLog.d(
             TAG,
             if (answered) "song-hear: the farm answered a second ask, ${saved.words.size} words"
