@@ -1515,16 +1515,18 @@ object AudioCache {
      *
      *  - **Complete.** A whole entry is never written to again, so it can't
      *    become the mixed-file seam a partial one is.
-     *  - **Not an upgrade's rendition.** A `#hifi` entry is reached only
-     *    through the marked item that swapped it in, which no restored or
-     *    newly queued item carries — kept, it would sit on disk unread.
+     *  - **Not an upgrade's rendition**, unless it is a lossless one whose
+     *    clock is still known. [KO] In this fork a plain play opens a complete
+     *    `#hifi` copy ([completeUpgradeRendition]) and the lower copies were
+     *    deleted for it, so that one is kept; any other `#hifi` entry still
+     *    goes, see [com.music.bitchord.ko.koKeepsUpgradeRendition].
      *  - **Audio, by its first bytes.** Tidal answers with a DASH manifest, and
      *    the XML lands under the track's own key; kept, the next play would
      *    read a manifest of expired segment URLs off disk as if it were the
      *    song. WebM, MP4 and FLAC pass, as [cachedContainerOf] reads them.
      */
     private fun keepsAddonCopy(key: String): Boolean =
-        !key.contains("#hifi") && isComplete(key) && containerOf(key) != null &&
+        com.music.bitchord.ko.koKeepsAddonCopy(key, ::isComplete, { containerOf(it) != null }) { koRetention.keepsUpgradeRendition(cache, it) } && // [KO] AHEAD-1
             // [KO] A refused row's whole copy is another recording: once the queue lets go of it, it goes.
             !isRefusedCopy(key)
 
@@ -2247,7 +2249,11 @@ object AudioCache {
         title: String?,
         stream: SourceStream,
         takesLossy: Boolean = false,
-    ): Boolean = koLossless.downloadVerifiedRendition(uri, title, stream, takesLossy) // [KO] hq-lossless
+        parkedBefore: SourceStream? = null,
+    ): Boolean = koLossless.downloadVerifiedRendition(uri, title, stream, takesLossy, parkedBefore) // [KO] hq-lossless
+
+    /** [KO] Review 11-20 (swap, missed 3) */
+    fun cancelWholeRenditionOf(uri: Uri) = koLossless.cancelWholeRenditionOf(uri) // [KO] hq-lossless
 
     /** [KO] hq-lossless */
     fun dropLowerQualityAfterLosslessSwap(mediaId: String, keepKey: String) =

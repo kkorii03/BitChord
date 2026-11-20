@@ -328,6 +328,7 @@ internal suspend fun PlaybackService.koSwapLosslessMidSong(
     stream: SourceStream,
     title: String?,
     verified: HqVerificationStore.Verified,
+    parkedBefore: SourceStream? = null,
 ): Boolean {
     val beforeDownload = koSwapDecisionPastCrossfade(mediaId, verified)
     if (!beforeDownload.allowed) {
@@ -339,7 +340,7 @@ internal suspend fun PlaybackService.koSwapLosslessMidSong(
         return false
     }
     val upgradedUri = Uri.parse(QualityUpgrade.upgradedUri(uri.toString()))
-    val downloaded = AudioCache.downloadVerifiedRendition(upgradedUri, title, stream, takesLossy = true)
+    val downloaded = AudioCache.downloadVerifiedRendition(upgradedUri, title, stream, takesLossy = true, parkedBefore = parkedBefore)
     if (!downloaded) {
         TrackLog.d("BitChord", "hq-swap: $mediaId skipped download-failed", about = mediaId)
         return false

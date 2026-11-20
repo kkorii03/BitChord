@@ -58,6 +58,9 @@ class KoLosslessCache(
     /** Whole-rendition downloads in flight, so a queue move can stop the old one. */
     private val wholeRenditionJobs = ConcurrentHashMap<String, Job>()
 
+    /** The same downloads by the cache key they fill, so a reverted swap stops only its own; see [cancelWholeRenditionOf]. */
+    private val wholeRenditionKeyJobs = ConcurrentHashMap<String, Job>()
+
     private val losslessPrefetchAttempted = ConcurrentHashMap.newKeySet<String>()
 
     private var losslessPrefetchJob: Job? = null
@@ -185,6 +188,7 @@ class KoLosslessCache(
         val mediaId = mediaIdIn(uri)
         val job = coroutineContext.job
         mediaId?.let { wholeRenditionJobs[it] = job }
+        wholeRenditionKeyJobs[key] = job
         // The cache index and its metadata are not main-thread data: callers
         // reach this from playback on Main, and `getCachedSpans`, `isComplete`
         // and the metadata write all take the cache's lock. The whole fetch
@@ -248,6 +252,7 @@ class KoLosslessCache(
                 )
                 WholeRenditionResult(false, bytes, reason)
             } finally {
+                wholeRenditionKeyJobs.remove(key, job)
                 mediaId?.let {
                     wholeRenditionJobs.remove(it, job)
                     if (releasesHost) HqHostTracker.endDownload(it, host)
@@ -298,12 +303,17 @@ class KoLosslessCache(
         if (active) losslessPrefetchAttempted.remove(mediaId)
     }
 
-    /** @param takesLossy the automatic swap's lossy fallback; see [KoQualityUpgrade.automaticSwapTakes]. */
+    /**
+     * @param takesLossy the automatic swap's lossy fallback; see [KoQualityUpgrade.automaticSwapTakes].
+     * @param parkedBefore the stream parked for this song before the automatic look's
+     *   [QualityUpgrade.forget] emptied the slot; see [koFilledByStream].
+     */
     suspend fun downloadVerifiedRendition(
         uri: Uri,
         title: String?,
         stream: SourceStream,
         takesLossy: Boolean = false,
+        parkedBefore: SourceStream? = null,
     ): Boolean {
         val cache = cache() ?: return false
         val mediaId = mediaIdIn(uri) ?: return false
@@ -333,7 +343,11 @@ class KoLosslessCache(
         // a slot, not a file: a partial left by another candidate must be
         // thrown away rather than resumed, or the two files are spliced into
         // one entry. The same guard [PlaybackService.swapIn] uses.
-        val alreadyFilled = QualityUpgrade.forcedStream(uri)?.url == stream.url
+        val parkedNow = QualityUpgrade.forcedStream(uri)
+        val alreadyFilled = koFilledByStream(parkedNow?.url, parkedBefore?.url, stream.url)
+        if (alreadyFilled && parkedNow == null) {
+            TrackLog.d(tag, "hq-swap: $mediaId keeps the copy it filled from this stream", about = mediaId)
+        }
         // Park the stream even when the bytes are already complete: the player
         // is about to open the marked URI and the resolving data source must
         // hand it this exact URL rather than searching for another one.
@@ -586,6 +600,21 @@ class KoLosslessCache(
         clearRendition(mediaId)
     }
 
+    /**
+     * Review 11-20 (swap, missed 3): stops the whole-file download filling [uri]'s
+     * entry. A reverted swap discards that entry, so the rest of the refused file
+     * was fetched for nothing, held the host, and wrote after the discard. Only
+     * the fill of that one key: another rendition of the song keeps its own.
+     */
+    fun cancelWholeRenditionOf(uri: Uri) {
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        wholeRenditionKeyJobs.remove(key)?.let { job ->
+            if (!job.isActive) return@let
+            job.cancel()
+            TrackLog.d(tag, "hq-cache: ${mediaIdIn(uri)} reverted; its whole-file download stopped", about = mediaIdIn(uri))
+        }
+    }
+
     fun cancelWholeRenditionsExcept(mediaId: String?) {
         wholeRenditionJobs.entries
             .filter { it.key != mediaId }
@@ -622,3 +651,14 @@ internal fun koSwapWaitsForPrefetch(
 ): Boolean =
     prefetchFor == null || prefetchFor == mediaId ||
         prefetchHost == null || streamHost == null || prefetchHost == streamHost
+
+/**
+ * Review 11-20 (swap, missed 1): whether the `#hifi` entry already holds the
+ * bytes of the stream at [streamUrl]. The slot's current record wins; with the
+ * slot empty, the stream parked before the automatic look emptied it
+ * ([parkedBeforeUrl]) answers. Without it a complete FLAC left by a refused
+ * swap or a joined same-row prefetch was deleted and fetched again. Another
+ * URL is another candidate: the entry is discarded, two files never share it.
+ */
+internal fun koFilledByStream(parkedNowUrl: String?, parkedBeforeUrl: String?, streamUrl: String): Boolean =
+    (parkedNowUrl ?: parkedBeforeUrl) == streamUrl

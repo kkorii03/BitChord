@@ -3,6 +3,7 @@ package com.music.bitchord.ko
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.playback.smart.HqVerificationStore
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -112,6 +113,43 @@ class KoLosslessAheadTest {
         assertTrue(asked < download.indexOf("running.join()"))
         assertFalse("no unconditional join", "?.join()" in download)
         assertTrue("for prefetch of \$prefetchFor" in download)
+    }
+
+    // Review 11-20 (swap, missed 1): the automatic look's forget emptied the slot
+    // before the swap, so a complete FLAC of the very same stream was always
+    // discarded and fetched again (a refused swap's retry, a joined prefetch).
+    @Test
+    fun `a slot emptied by the look still knows the stream that filled it`() {
+        assertTrue(koFilledByStream(parkedNowUrl = null, parkedBeforeUrl = "https://a.example/f", streamUrl = "https://a.example/f"))
+        assertFalse("another candidate is discarded", koFilledByStream(null, "https://a.example/f", "https://b.example/g"))
+        assertFalse("nothing known", koFilledByStream(null, null, "https://a.example/f"))
+        assertFalse("the slot's own record wins", koFilledByStream("https://b.example/g", "https://a.example/f", "https://a.example/f"))
+        assertTrue(koFilledByStream("https://a.example/f", null, "https://a.example/f"))
+        val service = source("src/main/java/com/music/bitchord/playback/PlaybackService.kt")
+        val reads = Regex("""val parkedBefore = QualityUpgrade\.forced\[mediaId\][^\n]*\n\s*QualityUpgrade\.forget\(mediaId\)""")
+        assertEquals("both automatic swaps read the slot before the forget", 2, reads.findAll(service).count())
+        assertEquals(2, Regex("""swapLosslessMidSong\(mediaId, uri, \w+, targetTitle, verified, parkedBefore\)""").findAll(service).count())
+        val swap = source("src/main/java/com/music/bitchord/ko/KoPlaybackLosslessSwap.kt")
+        assertTrue("parkedBefore = parkedBefore)" in swap.substringAfter("suspend fun PlaybackService.koSwapLosslessMidSong("))
+        val download = source("src/main/java/com/music/bitchord/ko/KoLosslessCache.kt")
+            .substringAfter("suspend fun downloadVerifiedRendition(")
+            .substringBefore("private suspend fun fetchLosslessRendition(")
+        assertTrue("koFilledByStream(parkedNow?.url, parkedBefore?.url, stream.url)" in download)
+        assertTrue("if (!alreadyFilled) discardRendition(uri)" in download)
+    }
+
+    // Review 11-20 (swap, missed 3): a reverted manual swap left the refused
+    // copy's whole-file download running after its entry was discarded.
+    @Test
+    fun `a revert stops the refused copy's whole-file download first`() {
+        val revert = source("src/main/java/com/music/bitchord/playback/PlaybackService.kt")
+            .substringAfter("\"upgrade reverted: replacement reports")
+        val cancel = revert.indexOf("item.localConfiguration?.uri?.let(AudioCache::cancelWholeRenditionOf)")
+        assertTrue(cancel >= 0)
+        assertTrue(cancel < revert.indexOf("QualityUpgrade.forgetReverted(mediaId)"))
+        val cache = source("src/main/java/com/music/bitchord/ko/KoLosslessCache.kt")
+        assertTrue("wholeRenditionKeyJobs[key] = job" in cache)
+        assertTrue("wholeRenditionKeyJobs.remove(key, job)" in cache)
     }
 
     private fun source(path: String): String {
