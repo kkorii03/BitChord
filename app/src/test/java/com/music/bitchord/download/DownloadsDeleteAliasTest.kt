@@ -2,6 +2,8 @@ package com.music.bitchord.download
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -19,6 +21,36 @@ class DownloadsDeleteAliasTest {
         assertEquals(setOf("song", "mv"), Downloads.idsSharingFile(saved, "song"))
         assertEquals(setOf("other"), Downloads.idsSharingFile(saved, "other"))
         assertEquals(setOf("gone"), Downloads.idsSharingFile(saved, "gone"))
+    }
+
+    /**
+     * u1121 LIBRARY-1: a replacement landed on a new uri and deleted the old
+     * file; a queued item still on the old uri failed to open it. Old code
+     * forgot the record by id, which named the new, valid file.
+     */
+    @Test
+    fun `a failed read of the old uri keeps the record of the replacement`() {
+        val id = "u1121-lib1"
+        val old = "content://media/external/audio/media/11"
+        val new = "content://media/external/audio/media/12"
+        Downloads.record(saved = { it + (id to new) }, meta = { it })
+        try {
+            assertFalse(Downloads.forgetMissing(id, old))
+            assertEquals(new, Downloads.savedValue()[id])
+            assertFalse("no failed uri, nothing proven", Downloads.forgetMissing(id, null))
+            assertEquals(new, Downloads.savedValue()[id])
+            assertTrue(Downloads.forgetMissing(id, new))
+            assertNull(Downloads.savedValue()[id])
+        } finally {
+            Downloads.record(saved = { it - id }, meta = { it - id })
+        }
+    }
+
+    @Test
+    fun `the forget rule asks for the recorded file itself`() {
+        assertTrue(Downloads.forgetsMissing("file:///a.m4a", "file:///a.m4a"))
+        assertFalse(Downloads.forgetsMissing("file:///a.flac", "file:///a.m4a"))
+        assertFalse(Downloads.forgetsMissing("file:///a.flac", null))
     }
 
     @Test

@@ -439,6 +439,40 @@ internal fun PlaybackService.koApplyDownloadHealth(song: Song, outcome: Download
 }
 
 /**
+ * [KO] u1121 LIBRARY-3: a replacement (DownloadHealth upgrade or repair, a
+ * manual re-download) committed while its old file was sounding. The record,
+ * the song check and the lyric clock now name the new file, so the player moves
+ * onto it at the same point of the recording; left alone it read the old bytes
+ * under the new pair's clock, and a seek or repeat opened the deleted uri.
+ * A same-path rewrite (newUri among the old uris) is not moved: the uri is the
+ * same, so there is nothing to move onto, and the next open reads the new bytes.
+ */
+internal fun PlaybackService.koOnSavedFileReplaced(event: com.music.bitchord.ko.downloads.KoDownloadPipeline.FileReplaced) {
+    val live = player ?: return
+    val item = live.currentMediaItem ?: return
+    val id = item.mediaId
+    if (!com.music.bitchord.ko.downloads.KoDownloadPipeline.movesPlayer(event, id, item.localConfiguration?.uri?.toString())) return
+    val held = when {
+        crossfade?.isTransitioning() == true -> "a blend holds it"
+        swappingMediaId == id -> "a swap is in flight"
+        !Downloads.isRecordingVerified(id) -> "the new file is not verified"
+        else -> null
+    }
+    if (held != null) {
+        TrackLog.i("BitChord", "saved-file replaced: $id stays on the old file for this play ($held)", about = id)
+        return
+    }
+    val oldPair = event.oldPairOf(id)
+    val old = oldPair?.let { (source, track) -> HqVerificationStore.get(this, id, source, track) }
+    TrackLog.i(
+        "BitChord",
+        "saved-file replaced: $id moves onto the new file old=${oldPair?.first ?: "youtube"}${if (oldPair != null && old == null) " (no verdict)" else ""}",
+        about = id,
+    )
+    koUseVerifiedDownload(live, item, live.currentPosition, playing = old)
+}
+
+/**
  * Moves a playing unverified download from its stream onto the file the check
  * just accepted, at the position the listener has reached.
  */
@@ -446,13 +480,15 @@ internal fun PlaybackService.koUseVerifiedDownload(
     player: ExoPlayer,
     item: MediaItem,
     position: Long,
+    /** [KO] u1121: the clock of what is sounding; an old saved file passes its own pair. */
+    playing: HqVerificationStore.Verified? = koCurrentPlayingVerification(item.mediaId),
 ): Boolean {
     val id = item.mediaId
     val file = Downloads.verifiedSavedUri(id) ?: return false
     val verified = item.toSong().copy(localUri = file, localPath = null).toMediaItem()
     if (verified.localConfiguration?.uri == item.localConfiguration?.uri) return false
     val meta = Downloads.savedMetadataFor(id)
-    val current = koCurrentPlayingVerification(id)
+    val current = playing
     // The file's clock can start elsewhere; no verdict (YouTube's own bytes) keeps the number.
     val start = HqVerificationStore.get(this, id, meta?.hqSourceConfigId, meta?.hqTrackId)?.let {
         com.music.bitchord.playback.HqSwapPolicy.swapStartMs(
