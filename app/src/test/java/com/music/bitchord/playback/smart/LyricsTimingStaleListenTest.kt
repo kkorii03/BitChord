@@ -6,8 +6,10 @@ import com.music.bitchord.testutil.FakeContext
 import com.music.bitchord.testutil.FakePreferences
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -86,6 +88,53 @@ class LyricsTimingStaleListenTest {
 
         assertNotNull(save(started))
         assertTrue(LyricsTiming.refineHeardKnown(context, "video", lines, untimed))
+    }
+
+    /**
+     * Phone 11-20 itBbxKe6Z50: the wrong recording was repaired while the refine listened,
+     * the drop was right, but nothing listened again, so the song stayed sync=none all play.
+     */
+    @Test
+    fun `a listen dropped by a replacement is heard once more on the new file`() = runBlocking {
+        val calls = AtomicInteger()
+        val started = LyricsTiming.songSyncGenerationOf("video")
+        val heard = LyricsTiming.refineListenOnce(context, "video", started, null) { generation, _ ->
+            if (calls.incrementAndGet() == 1) LyricsTiming.resetSongCheck(context, "video")
+            save(generation)
+        }
+
+        assertEquals(2, calls.get())
+        assertNotNull(heard)
+        assertEquals(LyricsTiming.songSyncGenerationOf("video"), heard!!.second)
+        assertTrue(LyricsTiming.refineHeardKnown(context, "video", lines, untimed))
+    }
+
+    @Test
+    fun `a second replacement is not chased with a third listen`() = runBlocking {
+        val calls = AtomicInteger()
+        val started = LyricsTiming.songSyncGenerationOf("video")
+        val heard = LyricsTiming.refineListenOnce(context, "video", started, null) { generation, _ ->
+            calls.incrementAndGet()
+            LyricsTiming.resetSongCheck(context, "video")
+            save(generation)
+        }
+
+        assertEquals(2, calls.get())
+        assertNull(heard)
+        assertFalse(LyricsTiming.refineHeardKnown(context, "video", lines, untimed))
+    }
+
+    @Test
+    fun `a listen that heard nothing without a replacement is not repeated`() = runBlocking {
+        val calls = AtomicInteger()
+        val started = LyricsTiming.songSyncGenerationOf("video")
+        val heard = LyricsTiming.refineListenOnce(context, "video", started, null) { _, _ ->
+            calls.incrementAndGet()
+            null
+        }
+
+        assertEquals(1, calls.get())
+        assertNull(heard)
     }
 
     @Test

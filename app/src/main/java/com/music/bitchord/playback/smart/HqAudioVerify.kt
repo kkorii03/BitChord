@@ -2397,8 +2397,11 @@ object HqAudioVerify {
     ): Long = withContext(Dispatchers.IO) {
         val id = TelegramStreamUri.trackId(android.net.Uri.parse(url))
             ?: throw DownloadRefused(404)
-        runInterruptible { TelegramClientManager.beginStream(id) }
+        // [KO] fix1120: a cancel during beginStream still leaves its lease queued on the
+        // worker; the release must follow it, or one lease keeps the client open for good.
+        var began = false
         try {
+            runInterruptible { began = true; TelegramClientManager.beginStream(id) }
             val reader = runInterruptible {
                 TelegramAudioReader.open(id, 0L, -1L, TelegramAudioReader.REASON_VERIFY)
             }
@@ -2421,7 +2424,7 @@ object HqAudioVerify {
                 }
             }
         } finally {
-            TelegramClientManager.endStream(id)
+            if (began) TelegramClientManager.endStream(id)
         }
         file.length()
     }

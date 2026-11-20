@@ -21,6 +21,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -595,7 +596,8 @@ object TelegramClientManager {
         withContext(NonCancellable + Dispatchers.IO) { runOnWorker { acquireStreamLease("stream metadata open") } }
         return try {
             awaitReady()
-            withContext(Dispatchers.IO) { trackForStreamWithRetry(trackId) }
+            // [KO] fix1120: interruptible, so a walk that gave up ends its lease now, not after 3x15 s.
+            runInterruptible(Dispatchers.IO) { trackForStreamWithRetry(trackId) }
         } finally {
             withContext(NonCancellable + Dispatchers.IO) {
                 runOnWorker { releaseStreamLease("stream metadata close") }
@@ -661,6 +663,14 @@ object TelegramClientManager {
         val target = client ?: throw IOException("The Telegram client is not open.")
         return call(target, function, timeoutMs)
     }
+
+    /**
+     * [KO] fix1120: [request] for a search. Cancelling the search interrupts the wait, so
+     * a walk that timed out ends the flight (and its lease, and the client) at once. Phone
+     * 11-20 15:40: a search hung on a bad network kept the client open past the walk's 15 s.
+     */
+    private suspend fun <T : TdApi.Object> searchRequest(function: TdApi.Function<T>, timeoutMs: Long): T =
+        runInterruptible { request(function, timeoutMs) }
 
     internal suspend fun awaitReady() {
         awaitReadyForTest?.let { it(); return }
@@ -766,7 +776,7 @@ object TelegramClientManager {
             while (rows.size < limit) {
                 currentCoroutineContext().ensureActive()
                 val found = try {
-                    request(
+                    searchRequest(
                         TdApi.SearchMessages(
                             null,
                             query,
@@ -829,7 +839,7 @@ object TelegramClientManager {
                             // Awaiting children cannot interrupt a blocked
                             // TDLib call, so stop before starting another one.
                             currentCoroutineContext().ensureActive()
-                            val found = request(
+                            val found = searchRequest(
                                 TdApi.SearchChatMessages(
                                     chat,
                                     null,
@@ -1402,13 +1412,21 @@ object TelegramClientManager {
     /** Runs on [work] only. */
     private fun loadAccountName() {
         val target = client ?: return
+        // [KO] fix1120: asked, not awaited. Every cold open reaches Ready, and a blocking
+        // GetMe (up to 40 s on a bad network) held the one worker that every lease release
+        // and client close queues behind. The answer comes back as an event instead.
+        val current = generation.get()
         try {
-            val me = call(target, TdApi.GetMe())
-            val name = listOf(me.firstName, me.lastName)
-                .filter { it.isNotBlank() }
-                .joinToString(" ")
-                .ifBlank { me.usernames?.editableUsername?.takeIf { it.isNotBlank() }?.let { "@$it" }.orEmpty() }
-            update { it.copy(accountName = name.ifBlank { null }) }
+            target.send(TdApi.GetMe(), { me ->
+                if (me !is TdApi.User) return@send // The login still succeeded; a missing name is not an error.
+                val name = listOf(me.firstName, me.lastName)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" ")
+                    .ifBlank { me.usernames?.editableUsername?.takeIf { it.isNotBlank() }?.let { "@$it" }.orEmpty() }
+                work.execute {
+                    if (current == generation.get() && !closing) update { it.copy(accountName = name.ifBlank { null }) }
+                }
+            }, null)
         } catch (_: Throwable) {
             // The login still succeeded; a missing display name is not an error.
         }

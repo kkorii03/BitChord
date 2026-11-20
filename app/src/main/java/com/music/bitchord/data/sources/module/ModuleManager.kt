@@ -31,6 +31,28 @@ internal fun redactModuleUrl(url: String): String =
     }.getOrDefault("***")
 
 /**
+ * [KO] fix1120: module files the server says are gone (404/410), for this app session.
+ * Phone 11-20: two addon modules answered 404 on every song walk and were fetched again
+ * each time. Keyed by the download URL, so an index that moves the module to a new file is
+ * tried again; a restart forgets. The source itself is left as the user set it up.
+ */
+internal object KoMissingModules {
+    private val missing = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    fun remember(url: String, moduleId: String, code: Int) {
+        if (code != 404 && code != 410) return
+        if (missing.put(url, code) == null) {
+            TrackLog.w("BitChord", "module ${moduleId}: HTTP $code, not fetched again this session")
+        }
+    }
+
+    fun knownMissing(url: String, moduleId: String): Exception? =
+        missing[url]?.let { Exception("HTTP $it downloading module $moduleId (remembered)") }
+
+    internal fun resetForTest() = missing.clear()
+}
+
+/**
  * Fetches a module index, downloads and loads module JS, and calls the
  * module's exported search/stream functions.
  *
@@ -216,9 +238,11 @@ class ModuleManager {
             }
 
             TrackLog.d(TAG, "  Resolved download URL: ${redactModuleUrl(downloadUrl)}")
+            KoMissingModules.knownMissing(downloadUrl, module.id)?.let { throw it }
             val request = Request.Builder().url(downloadUrl).build()
             val jsCode = Http.client.newCall(request).execute().use { resp ->
                 if (!resp.isSuccessful) {
+                    KoMissingModules.remember(downloadUrl, module.id, resp.code)
                     throw Exception("HTTP ${resp.code} downloading module ${module.id}")
                 }
                 resp.body?.string() ?: throw Exception("Empty body for module ${module.id}")
