@@ -188,6 +188,29 @@ class AlignFarmTest {
         assertEquals("ja", KoSungLanguage.listenLanguage("ja", cover))
     }
 
+    /**
+     * coverahead review: two hearings of one cover (opening and longer window, or a song check
+     * beside next-prep) wait on the same ask-ahead. The first keeps the farm's Korean file; the
+     * second gets null from [AlignFarm.answer], and farmAgain looked its kept words up in ja
+     * (nothing), so 4 MB still went to Deepgram in ja. It now looks them up in Korean.
+     */
+    @Test
+    fun `a second hearing the farm's answer went to still finds the Korean file`() = runBlocking {
+        val id = "farmko00004"
+        val row = Song(videoId = id, title = "ファンサ - Fansa", artist = "HoneyWorks · 오화요 커버", thumbnailUrl = null, isVideo = true)
+        val query = CoverTitles.lyricsQuery(row)
+        val asked = Song(videoId = id, title = query.title, artist = query.artist, thumbnailUrl = null, isVideo = query.isVideo)
+        KoSungLanguage.noteRow(row)
+        assertTrue(AlignFarm.askAhead(id) { cipher(KO_BODY) })
+        val first = AlignFarm.answer(id, "ja", PASS) { noGet("the first hearing asked again") }
+        assertEquals("ko", first!!.language)
+        assertNull(AlignFarm.answer(id, "ja", PASS) { noGet("the second hearing asked again") })
+        val stream = SongHearing.streamRecording(LyricsTiming.clockToKey(LyricsTiming.Clock.YouTube)!!)
+        // The old lookup, in the asker's ja: nothing, so the second hearing uploaded.
+        assertNull(SongHearing.covering(listOf(first), stream, "ja", 420.0))
+        assertNotNull(SongHearing.farmKept(listOf(first), stream, "ja", asked, exact = false, untilSeconds = 420.0))
+    }
+
     /** A GET that must not happen. */
     private fun noGet(why: String): ByteArray? = throw AssertionError(why)
 
