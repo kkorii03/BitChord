@@ -321,6 +321,18 @@ class SongHearingTest {
         assertNull(SongHearing.streamWords(listOf(youtube), "ko"))
     }
 
+    /** x1120-memories: 11-20 17:02 iKraCjaTBVk, the stream's 62 s answered a 90 s ask and no line fitted. */
+    @Test
+    fun aPartOfTheStreamOnlyServesTheSpanItHeard() {
+        val part = SongHearing.Saved("stream|yt", "en", 62.0, clock = "yt")
+        val whole = SongHearing.Saved("stream|yt", "en", 240.0, whole = true, clock = "yt")
+        assertNull(SongHearing.streamWords(listOf(part), "en", 90.0))
+        assertNull(SongHearing.streamWords(listOf(part), "en", 420.0))
+        assertEquals(part, SongHearing.streamWords(listOf(part), "en", 40.0))
+        assertEquals(part, SongHearing.streamWords(listOf(part), "en", 63.0))
+        assertEquals(whole, SongHearing.streamWords(listOf(whole), "en", 420.0))
+    }
+
     @Test
     fun aRequestWithNoReplyGoesAgainButAServersAnswerDoesNot() {
         assertEquals(true, SongHearing.shouldResend(null, 0))

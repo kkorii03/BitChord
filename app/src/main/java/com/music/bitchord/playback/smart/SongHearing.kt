@@ -147,11 +147,17 @@ internal object SongHearing {
         .filter { it.whole || it.seconds + 1.0 >= untilSeconds }
         .maxByOrNull { it.seconds }
 
-    /** The longest transcript of the YouTube stream in [language], if it is enough to fit an offset to. */
-    internal fun streamWords(kept: List<Saved>, language: String): Saved? = kept
+    /**
+     * The longest transcript of the YouTube stream in [language], if it is enough to fit an
+     * offset to and reaches [untilSeconds] as [covering] reads it. [KO] x1120-memories: a part
+     * counts only for the span it heard; 11-20 17:02 iKraCjaTBVk answered a 90 s ask with the
+     * stream's 62 s, fitted no line, and the song played with no sync.
+     */
+    internal fun streamWords(kept: List<Saved>, language: String, untilSeconds: Double = 0.0): Saved? = kept
         .filter { it.recording.startsWith(STREAM_PREFIX) && it.language == language }
         .filter { LyricsTiming.clockFromKey(it.clock) == LyricsTiming.Clock.YouTube }
         .filter { it.whole || it.seconds >= FILE_READS_STREAM_SECONDS }
+        .filter { it.whole || it.seconds + 1.0 >= untilSeconds }
         .maxByOrNull { it.seconds }
 
     /**
@@ -241,7 +247,11 @@ internal object SongHearing {
                 // Decoding the file instead left the song uncorrected for 71 s (11-06
                 // w58uXpyHWes, its new sheet 1.0-1.2 s late on the listener's own log).
                 if (recording.startsWith(FILE_PREFIX) && LyricsTiming.streamWordsReachFile(app, song.videoId)) {
-                    streamWords(kept, language)?.let { saved ->
+                    val reach = minOf(untilSeconds, reuseFrom)
+                    streamWords(kept, language)?.takeIf { streamWords(kept, language, reach) == null }?.let { short ->
+                        TrackLog.d(TAG, "song-hear: the stream's ${short.seconds.toInt()}s do not reach ${reach.toInt()}s; hearing the file", song.videoId)
+                    }
+                    streamWords(kept, language, reach)?.let { saved ->
                         TrackLog.d(TAG, "song-hear: file reads the stream's ${saved.seconds.toInt()}s lang=$language", song.videoId)
                         return heardFrom(saved)
                     }
