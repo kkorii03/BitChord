@@ -6,9 +6,11 @@ import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ko.KoSungLanguage
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** Why the AI transcription did not run, kept apart from "no lyrics found". */
@@ -112,7 +114,12 @@ object AiLyrics {
             // AI_LYRICS_AUDIO_WAIT_MS, then let Gemini fetch the video itself.
             val audio = context?.let { ctx -> audioWithin(AI_LYRICS_AUDIO_WAIT_MS) { VideoAudio.wav(ctx, videoId) } }
             if (audio == null) TrackLog.d(TAG, "no phone audio within ${AI_LYRICS_AUDIO_WAIT_MS}ms; Gemini fetches the video", videoId)
-            LyricsTranslation.transcribeVideo(videoId, durationMs, audio)
+            // [KO] coverlang: the row title LyricsRepository asked with; a Korean one tells Gemini so.
+            val rowTitle = currentCoroutineContext()[KoSungLanguage.RowTitle]?.title.orEmpty()
+            if (KoSungLanguage.transcribeHint(rowTitle) != null) {
+                TrackLog.d(TAG, "Gemini told the title is Korean: write the Korean words sung, not the original's", videoId)
+            }
+            LyricsTranslation.transcribeVideo(videoId, durationMs, audio, rowTitle)
         } finally {
             LyricsRepository.markTranscribing(videoId, false)
         }

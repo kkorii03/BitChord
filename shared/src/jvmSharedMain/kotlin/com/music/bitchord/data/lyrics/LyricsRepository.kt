@@ -185,7 +185,7 @@ object LyricsRepository {
             videoId, title, artist, durationMs, album, prioritizeSyllableSync, isrc, isVideo, artistKnown,
             alternatives, order, sources, artistAliases,
         )
-        val run = transcriptionRun(videoId, durationMs) ?: return null
+        val run = transcriptionRun(videoId, durationMs, title) ?: return null // [KO] coverlang
         var answered = false
         val heard = withTimeoutOrNull(transcribeLimitMs) { run.await().also { answered = true } }
         if (!answered) {
@@ -663,11 +663,12 @@ object LyricsRepository {
      * a minute of listening the next play would want — and so a caller's own
      * limit ends only its wait, never the listening.
      */
-    private fun transcriptionRun(videoId: String, durationMs: Long): Deferred<Result?>? {
+    private fun transcriptionRun(videoId: String, durationMs: Long, title: String = ""): Deferred<Result?>? {
         val ask = transcriber ?: return null
         if (videoId.isBlank() || videoId.contains(':') || durationMs <= 0L) return null
         synchronized(heard) { heard[videoId] }?.let { return CompletableDeferred(it) }
-        val fresh = background.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+        // [KO] coverlang: the row title rides in the run's context, read by the transcriber's language hint.
+        val fresh = background.async(com.music.bitchord.ko.KoSungLanguage.RowTitle(title), start = kotlinx.coroutines.CoroutineStart.LAZY) {
             val lines = try {
                 ask(videoId, durationMs)
             } catch (cancelled: CancellationException) {
