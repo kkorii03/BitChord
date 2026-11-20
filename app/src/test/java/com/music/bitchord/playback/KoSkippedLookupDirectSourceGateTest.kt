@@ -209,9 +209,9 @@ class KoSkippedLookupDirectSourceGateTest {
             waitForAll: Boolean,
             request: StreamRequest?,
         ): List<Song> {
-            val title = query.substringBefore(" Eljohnzc").trim()
+            // The resolver may normalise the query (case, punctuation): match the title loosely.
             val key = listOf("Skip Alpha", "Skip Bravo", "Skip Charlie", "Skip Next", "Keep November", "Cast Oscar")
-                .firstOrNull { it in query } ?: title
+                .firstOrNull { query.contains(it, ignoreCase = true) } ?: query
             searching(key).complete(Unit)
             if (asked.add(key)) {
                 try {
