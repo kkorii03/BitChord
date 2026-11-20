@@ -3481,7 +3481,7 @@ object LyricsTiming {
                 artist = artist,
                 thumbnailUrl = null,
                 isVideo = isVideo,
-                localUri = fileOfAnotherUpload(videoId),
+                localUri = fileOfAnotherUpload(videoId) ?: com.music.bitchord.ko.KoVideoFileHearing.fileFor(context, videoId, isVideo), // [KO] x1120-nextdl
             )
             val language = hearingLanguage(song, texts) // [KO] coverlang
             // A playing video also hears its opening with the song check's quick request
