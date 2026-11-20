@@ -530,7 +530,9 @@ object VersionAudioAligner {
             }
             .maxByOrNull { it.cachedPrefix }
         return if (sameSource != null &&
-            sameSource.cachedPrefix >= AudioCache.MIN_ALIGNMENT_PREFIX_BYTES
+            // [KO] U1121 VERIFY-1: a short track's whole copy is all there is; under the
+            // floor it lost to a larger #hifi copy, which then measured itself.
+            (sameSource.cachedPrefix >= AudioCache.MIN_ALIGNMENT_PREFIX_BYTES || sameSource.isComplete)
         ) {
             sameSource
         } else {

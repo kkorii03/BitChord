@@ -147,4 +147,43 @@ class HqVerifyNoAlignmentLogTest {
                 .contains("KoUnverifiedRows.note(source.configId, localised)"),
         )
     }
+
+    /**
+     * U1121 VERIFY-1/2 (review 11-20 UPG-verify): the reference read took an
+     * abandoned read's partial (an acceptance on 15-80 s stored for good; a
+     * 10-15 s one made every attempt download the candidate head to end "too
+     * short") and any copy's bytes as YouTube's (a blocked start measured its
+     * addon stream with itself). Pinned on the source: the read needs a decoder.
+     */
+    @Test
+    fun `the reference is the whole window of YouTube's own sound`() {
+        val verify = source("playback/smart/HqAudioVerify.kt")
+        val read = verify.substringAfter("private suspend fun referenceFeaturesUncached(")
+            .substringBefore("private fun featuresOfWav(")
+        assertTrue(
+            "the read must ask for the whole window",
+            read.contains("VideoAudio.songWavCopy(context, song, COMPARE_SECONDS, acceptPartial = false)"),
+        )
+        assertFalse("no partial may answer the reference", read.contains("acceptPartial = true"))
+        val refusal = read.indexOf("if (!VideoAudio.isYouTubeOpening(song, opening)) {")
+        assertTrue("the opening's clock must be tested", refusal >= 0)
+        val refused = read.substring(refusal).substringBefore("val features = featuresOfWav(")
+        assertTrue(refused.contains("noteNoReference(youtubeId, NoReferenceReason.NOT_YOUTUBE)"))
+        assertTrue(refused.contains("return Reference.Missing(NoReferenceReason.NOT_YOUTUBE)"))
+        for (kept in listOf("featuresOfWav(", "referenceCache.put(", "storeReference(")) {
+            assertTrue("$kept must come after the clock test", read.indexOf(kept) > refusal)
+        }
+        val first = verify.substringAfter("val referenceFirst = ").substringBefore("val candidateDeferred")
+        assertTrue(
+            "a remembered missing reference must answer before the candidate fetch",
+            first.replace(Regex("\\s+"), " ").contains("|| noReferenceRemembered(youtubeId, manual)"),
+        )
+        assertTrue("profiles written from a substitute are rebuilt", verify.contains("REFERENCE_DIR = \"hq_reference2\""))
+        val ready = source("playback/smart/VideoAudio.kt")
+            .substringAfter("internal fun referenceReady(song: Song, untilSeconds: Double): Boolean {")
+            .substringBefore("/** [referenceReady]'s rule")
+        assertFalse("a partial must not count as a reference in hand", ready.contains("partialKey("))
+        assertTrue(ready.contains("return isYouTubeOpening(song, it)"))
+        assertTrue(ready.contains("isYouTubeCopy(song.videoId, it)"))
+    }
 }

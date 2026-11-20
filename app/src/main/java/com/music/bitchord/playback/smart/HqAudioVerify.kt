@@ -220,7 +220,10 @@ object HqAudioVerify {
         GATE_TIMEOUT("gate-timeout"),
 
         /** Less than ten seconds of the opening came back. */
-        TOO_SHORT("too-short");
+        TOO_SHORT("too-short"),
+
+        /** [KO] U1121 VERIFY-1: the opening in hand is the substitute that plays, not YouTube's. */
+        NOT_YOUTUBE("not-youtube");
 
         /**
          * Whether this is a failure of the moment rather than of the recording.
@@ -417,7 +420,10 @@ object HqAudioVerify {
      * partial profile is never written, for the same reason it is not kept in
      * memory (see [HqReferenceCache]).
      */
-    private const val REFERENCE_DIR = "hq_reference"
+    private const val REFERENCE_DIR = "hq_reference2" // [KO] U1121 VERIFY-1: rebuilt once, see storeReference
+
+    /** Profiles written before a substitute's opening was refused as the reference; they cannot be told apart. */
+    private const val OLD_REFERENCE_DIR = "hq_reference"
 
     /**
      * A kept profile is the 4.7 s reference decode of a track's next first play
@@ -675,7 +681,9 @@ object HqAudioVerify {
                     // cancels the candidate read before anything waits on it.
                     // [KO] OPT1: a read-ahead with no opening, profile or kept reference in hand can only
                     // learn NO_WAV; its candidate (a source API call and a head request) is not started for it.
-                    val referenceFirst = !waitForOpening && !referenceInHand(context, youtubeId, target.title)
+                    // [KO] U1121: a missing reference this play remembers (a substitute's opening) answers before any fetch too.
+                    val referenceFirst = !waitForOpening && !referenceInHand(context, youtubeId, target.title) ||
+                        noReferenceRemembered(youtubeId, manual)
                     val candidateDeferred = if (referenceFirst) null else async { candidateFetch(context, stream, epoch, keepOpening = unalignedWords != null, onOpeningFull = onOpeningFull) }
                     val reference = referenceFeatures(
                         context,
@@ -1603,6 +1611,10 @@ object HqAudioVerify {
         noReference[youtubeId] = reason
     }
 
+    /** [KO] U1121: whether [referenceFeaturesUncached] will answer from [noReference] without reading anything. */
+    private fun noReferenceRemembered(youtubeId: String, manual: Boolean): Boolean =
+        !HqVerifyPolicy.shouldRetryMissingReference(manual) && noReference.containsKey(youtubeId)
+
     private fun logNoReference(title: String, youtubeId: String, reason: NoReferenceReason) {
         TrackLog.d(
             TAG,
@@ -1638,7 +1650,8 @@ object HqAudioVerify {
     private fun storeReference(context: Context, youtubeId: String, features: ChromaAlignment.Features) {
         runCatching {
             val dir = File(context.filesDir, REFERENCE_DIR)
-            dir.mkdirs()
+            // [KO] U1121: true only the once the new directory is made; the old one goes with it.
+            if (dir.mkdirs()) File(context.filesDir, OLD_REFERENCE_DIR).deleteRecursively()
             val file = referenceFile(context, youtubeId)
             val temporary = File(dir, file.name + ".tmp")
             temporary.writeBytes(features.toBytes())
@@ -1776,15 +1789,18 @@ object HqAudioVerify {
             return Reference.Missing(NoReferenceReason.NO_WAV)
         }
         var refusal: VideoAudio.SongWavRefusal? = null
-        val wav = try {
-            // A shorter opening an abandoned read left will do here: it is not
-            // kept as the reference (see below), only used for this comparison.
-            VideoAudio.songWav(context, song, COMPARE_SECONDS, acceptPartial = true) { refusal = it }
+        val opening = try {
+            // [KO] U1121 VERIFY-2: the whole window only. The shorter opening an abandoned
+            // read left let an acceptance measured on 15-80 s be stored for good, and a
+            // 10-15 s one ended every attempt "too short" after the candidate head was
+            // fetched. Asked this way the read decodes the window once; the no-wait path
+            // never gets here with only a partial ([VideoAudio.referenceReady]).
+            VideoAudio.songWavCopy(context, song, COMPARE_SECONDS, acceptPartial = false) { refusal = it }
         } catch (cancelled: CancellationException) {
             logNoReference(title, youtubeId, NoReferenceReason.CANCELLED)
             return Reference.Missing(NoReferenceReason.CANCELLED)
         }
-        if (wav == null) {
+        if (opening == null) {
             // A read the play abandoned is not a recording that failed to
             // decode: naming it the same hid that the reference was never asked
             // to finish, and sent every later attempt looking for a missing
@@ -1799,7 +1815,20 @@ object HqAudioVerify {
             logNoReference(title, youtubeId, reason)
             return Reference.Missing(reason)
         }
-        val features = featuresOfWav(wav)
+        // [KO] U1121 VERIFY-1: the song check listens to the copy that plays when no YouTube
+        // opening can be pulled (its words carry that clock). Here that copy would be measured
+        // as YouTube's: a blocked start compared its addon stream with itself (match 100,
+        // offset 0, stored verified). No profile, no verdict; remembered for this play only.
+        if (!VideoAudio.isYouTubeOpening(song, opening)) {
+            noteNoReference(youtubeId, NoReferenceReason.NOT_YOUTUBE)
+            TrackLog.d(
+                TAG,
+                "hq-verify: '$title' no reference reason=${NoReferenceReason.NOT_YOUTUBE.wire} (heard ${opening.renditionKey})",
+                youtubeId,
+            )
+            return Reference.Missing(NoReferenceReason.NOT_YOUTUBE)
+        }
+        val features = featuresOfWav(opening.bytes)
         if (features == null) {
             noteNoReference(youtubeId, NoReferenceReason.DECODE_FAILED)
             logNoReference(title, youtubeId, NoReferenceReason.DECODE_FAILED)
