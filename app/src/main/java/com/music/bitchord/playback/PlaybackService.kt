@@ -12527,7 +12527,7 @@ class PlaybackService : MediaLibraryService() {
                 val timed = sheet.timed
                 val timeable = sheet.timeable
                 val recordTimed = sheet.recordTimed
-                val shown = if (timed && raw != null) {
+                val timing = if (timed && raw != null) { // [KO] N4: kept for the track summary below
                     com.music.bitchord.playback.smart.LyricsTiming
                         .timing(
                             this@PlaybackService,
@@ -12546,10 +12546,12 @@ class PlaybackService : MediaLibraryService() {
                                     .audioSourceKey(currentSong.videoId, currentSong.localUri != null)
                             },
                         )
-                        ?.let { com.music.bitchord.playback.smart.LyricsTiming.apply(raw, it) } ?: raw
                 } else {
-                    raw
+                    null
                 }
+                val shown = if (timing != null && raw != null) com.music.bitchord.playback.smart.LyricsTiming.apply(raw, timing) else raw
+                // [KO] N4: a background play has no lyrics screen; say what this load found and applied.
+                NextPrepLog.summaryFacts(sheet.source, raw?.any { it.text.isNotBlank() } == true, timing)?.let { TrackDiagnostics.notePreparedLyrics(currentSong.videoId, it) }
                 withContext(Dispatchers.Main) {
                     serviceLyrics = shown
                     com.music.bitchord.lockscreen.NowPlayingLyrics.publish(currentSong.videoId, shown)

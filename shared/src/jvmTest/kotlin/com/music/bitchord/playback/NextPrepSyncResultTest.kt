@@ -14,6 +14,7 @@ class NextPrepSyncResultTest {
         hasLyrics: Boolean = true,
         remainingMs: Long = 60_000L,
         currentPlayedMs: Long = NextPrepPolicy.AI_MIN_PLAYED_MS,
+        baseNone: Boolean = false,
     ) = NextPrepPolicy.SyncFacts(
         lyricsOff = lyricsOff,
         hasLyrics = hasLyrics,
@@ -21,7 +22,25 @@ class NextPrepSyncResultTest {
         remainingMs = remainingMs,
         hasTiming = hasTiming,
         failure = failure,
+        baseNone = baseNone,
     )
+
+    /** N2: 11-20 Memories/Fansa logged `sync=applied` / `result=answered` after `base-apply: base=none`. */
+    @Test
+    fun aTimingWithBaseNoneIsANoAnswerNotApplied() {
+        val none = facts(baseNone = true)
+        assertEquals("skipped(base-none)", NextPrepPolicy.syncStatus(none))
+        assertEquals("no-answer", NextPrepPolicy.syncResult(none))
+        assertEquals("base-none", NextPrepPolicy.syncResultReason(none))
+        assertTrue(NextPrepPolicy.shouldStoreSyncResult(none))
+        // An engine that failed behind the none base now shows instead of hiding as `answered`.
+        val failed = facts(baseNone = true, failure = NextPrepPolicy.SyncFailure.RATE_LIMIT)
+        assertEquals("failed:rate-limit", NextPrepPolicy.syncResult(failed))
+        assertFalse(NextPrepPolicy.shouldStoreSyncResult(failed))
+        // A gate that stopped the paid half keeps naming itself.
+        assertEquals("skipped:ai-too-early", NextPrepPolicy.syncResult(facts(baseNone = true, currentPlayedMs = 0L)))
+        assertEquals("skipped:deadline", NextPrepPolicy.syncResult(facts(baseNone = true, remainingMs = 0L)))
+    }
 
     @Test
     fun aHealthyCheckWithNothingToCorrectIsNoAnswerAndIsStored() {
