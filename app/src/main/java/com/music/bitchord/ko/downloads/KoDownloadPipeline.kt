@@ -175,7 +175,8 @@ internal object KoDownloadPipeline {
         // dupdl: the player filling this very file now hands its copy over instead of a second GET.
         // F2: asked once — by the automatic pass before it takes the host slot, else by the write.
         val playersFill = com.music.bitchord.ko.KoPlayersFill.Asked<AudioCache.CompleteCopy> {
-            if (packaged) null else AudioCache.playersFillOf(track.videoId, stream.url, storable.extension)
+            if (packaged) null else cachedSourceCopy(track.videoId, stream, storable, probe)
+                ?: AudioCache.playersFillOf(track.videoId, stream.url, storable.extension)
         }
         return Downloads.Route(
             // DASH is saved *as* HLS — see [OfflineDash] for why — so both
@@ -202,6 +203,34 @@ internal object KoDownloadPipeline {
             },
             beforeHostSlot = { playersFill.get() },
         )
+    }
+
+    /**
+     * [KO] w1120-battery: the song cache's whole copy of this very source file
+     * (an upgrade's `#hifi` fill, say), or null to fetch; see [com.music.bitchord.ko.KoSourceCopy].
+     * Only for a probed file whose server stated its length, from a source that allows downloads.
+     */
+    internal suspend fun cachedSourceCopy(
+        videoId: String,
+        stream: SourceStream,
+        storable: DownloadStore.Storable,
+        probe: Downloader.Probe?,
+    ): AudioCache.CompleteCopy? {
+        val file = probe as? Downloader.Probe.File ?: return null
+        val configId = stream.sourceConfigId ?: return null
+        if (com.music.bitchord.data.sources.SourceRegistry.config(configId)?.allowDownloads == false) return null
+        val copy = AudioCache.sourceCopyOf(videoId, configId, stream.trackId, stream.format.codec, file.totalBytes)
+            ?: return null
+        if (!DownloadedRecordingPolicy.containerMatches(storable.extension, copy.extension)) {
+            Log.d(TAG, "download: the cached copy is .${copy.extension}, not .${storable.extension}; fetching ($videoId)")
+            return null
+        }
+        com.music.bitchord.data.TrackLog.d(
+            TAG,
+            "download: copying the cached copy of the same source file (${copy.key}, ${copy.length} B); no second fetch",
+            about = videoId,
+        )
+        return copy
     }
     data class PreviousRecordState(
         val uris: Set<String>,

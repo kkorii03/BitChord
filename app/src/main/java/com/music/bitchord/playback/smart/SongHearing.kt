@@ -416,16 +416,28 @@ internal object SongHearing {
             // A server that read it (or a limit or a dead network, which the
             // decoded path would only meet again) ends here. Only bytes it could
             // not read go round through the decoder.
-            val unread = answer.httpCode != null && answer.httpCode !in 200..299 &&
-                answer.httpCode != 429 && answer.httpCode != 401 && answer.httpCode != 403
-            if (!unread) {
+            if (!decodesAfter(answer.httpCode)) {
                 keepWavForTest(app, song, untilSeconds)
                 return kept(app, song, raw, answer, untilSeconds, language, clock, fileGeneration)
             }
             TrackLog.d(TAG, "song-hear: http=${answer.httpCode} for ${raw.mime}, decoding instead", videoId)
         }
         val started2 = System.currentTimeMillis()
-        val wav = VideoAudio.songWavCopy(app, song, untilSeconds)
+        // [KO] w1120-battery: a copy only Deepgram would hear is dropped there the moment its
+        // row has left ([askWhileWanted]), so its decode stops then too. 11-18 15:47/15:48 and
+        // 11-19 18:00: three whole-song WAVs (16.1 MB, 66 s of decoder) finished for a gone row.
+        val wav = if (exact || !groqFirst(untilSeconds)) {
+            val decoded = whileRowWanted({ rowGone(videoId) }, com.music.bitchord.data.DiagnosticsState.rows) {
+                VideoAudio.songWavCopy(app, song, untilSeconds)
+            }
+            if (decoded.left) {
+                TrackLog.d(TAG, "song-hear: the row left; decode stopped after ${System.currentTimeMillis() - started2}ms", videoId)
+                return null
+            }
+            decoded.value
+        } else {
+            VideoAudio.songWavCopy(app, song, untilSeconds)
+        }
         TrackLog.d(
             TAG,
             "song-hear: decoded ${if (wav == null) "nothing" else "${wav.bytes.size / 1024}KB"} after ${System.currentTimeMillis() - started2}ms",
@@ -580,6 +592,42 @@ internal object SongHearing {
             videoId,
         )
         answer
+    }
+
+    /**
+     * Whether the stream's bytes go round through the decoder after [httpCode]: only a 4xx
+     * that says the server could not read them. A reply, a limit (429), a key (401/403), no
+     * reply or a server error (5xx) would meet the decoded copy the same way. [KO] w1120-battery:
+     * 11-19 02:33 _QtN6qocpKU, webm http=503, then a 2.8 MB WAV decoded and sent, http=503 again.
+     */
+    internal fun decodesAfter(httpCode: Int?): Boolean =
+        httpCode != null && httpCode in 400..499 && httpCode != 429 && httpCode != 401 && httpCode != 403
+
+    /** What [whileRowWanted] got: [work]'s [value], or nothing because the row [left] first. */
+    internal class WhileWanted<T>(val value: T?, val left: Boolean)
+
+    /**
+     * [work] while its row is wanted: it is cancelled as soon as [gone] is true, read on each
+     * change of [moved] (the rows, so no poll), exactly as [askWhileWanted] drops an ask.
+     */
+    internal suspend fun <T> whileRowWanted(
+        gone: () -> Boolean,
+        moved: Flow<Any?>,
+        work: suspend () -> T?,
+    ): WhileWanted<T> = coroutineScope {
+        if (gone()) return@coroutineScope WhileWanted<T>(null, left = true)
+        val done = async { work() }
+        val left = async { moved.first { gone() } }
+        select<WhileWanted<T>> {
+            done.onAwait { value ->
+                left.cancel()
+                WhileWanted(value, left = false)
+            }
+            left.onAwait {
+                done.cancel()
+                WhileWanted(null, left = true)
+            }
+        }
     }
 
     /** Whether a request that got no reply goes again: a server's own answer never does. */
