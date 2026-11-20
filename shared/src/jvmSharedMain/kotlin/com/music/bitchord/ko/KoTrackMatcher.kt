@@ -413,7 +413,41 @@ internal object KoTrackMatcher {
      * performed by Justin Bieber)"), so the title alone cannot rule them out.
      */
     internal fun isCoverOf(candidate: Song, target: Target): Boolean =
-        isCoverArrangement(candidate, seedOf(target))
+        isCoverArrangement(candidate, seedOf(target)) || isLabelTributeOf(candidate, target)
+
+    /**
+     * [KO] tribute: a row credited only to a compilation label ("Various
+     * Artists", "Original Soundtrack") on a release named after [target]'s
+     * act — "Songs of Taylor Swift", "IU Reimagined" — is that act's
+     * song sung by somebody else. A label names nobody, so the act's own name
+     * on someone else's release is the evidence; without this the row reached
+     * the sound check as an unknown credit (opus-ostartist, remaining risk).
+     *
+     * A soundtrack album is left alone (that is where a label credit is the
+     * real recording: KoSoundtrackCredit), and so is the target's own album
+     * by name. Only the album is read: a compilation that prints the
+     * performer in the track title ("Act - Song") already fails the title.
+     */
+    internal fun isLabelTributeOf(candidate: Song, target: Target): Boolean {
+        if (!isGenericCredit(candidate.artist)) return false
+        val album = candidate.albumName?.takeIf { it.isNotBlank() } ?: return false
+        if (target.artist.isBlank() || isGenericCredit(target.artist) || isSoundtrackCredit(target.artist)) {
+            return false
+        }
+        val albumText = normalize(album)
+        if (isSoundtrackCredit(albumText) || "사운드트랙" in albumText) return false
+        if (target.album?.let { normalize(it) } == albumText) return false
+        val words = releaseWords(albumText)
+        return artistNames(target.artist).any { containsRun(words, it) || containsRun(words, withoutArticle(it)) }
+    }
+
+    /** [nameWords] of a release title, with a possessive "'s" read as the name. */
+    private fun releaseWords(text: String): List<String> =
+        text.split(RELEASE_WORD_SPLIT)
+            .map { it.removeSuffix("'s").removeSuffix("’s").replace(NON_ALNUM, "") }
+            .filter { it.length > 1 }
+
+    private val RELEASE_WORD_SPLIT = Regex("""[^\p{L}\p{N}'’]+""")
 
     /**
      * Whether [candidate] and [target] name the same recording: the title
@@ -1020,6 +1054,11 @@ internal object KoTrackMatcher {
         Regex("""\bparty tyme\b"""),
         Regex("""\bkaraoke\b"""),
         Regex("""\btribute\b"""),
+        // [KO] tribute: the same word in Korean, Japanese and Chinese release
+        // names ("아이유 트리뷰트", "トリビュート・アルバム", "致敬…", "헌정 앨범").
+        // `\btribute\b` never sees them, and a localised credit beside them
+        // reached the sound check as an unknown name.
+        Regex("""트리뷰트|トリビュート|致敬|헌정\s*(?:앨범|음반|곡)"""),
         Regex("""\binstrumental\b"""),
         // The shorthand a catalogue prints as a bracketed aside: "(Inst)",
         // "(MR)", "(Band)", "(Piano)", "(한국어)", "(Eng)". The version
@@ -1055,6 +1094,9 @@ internal object KoTrackMatcher {
         Regex("""\bcovers\b"""),
         // Not "디스커버리", "커버리지", "리커버리" (review RR F5); "아이유커버" still counts.
         Regex("""커버(?!리)"""),
+        // [KO] tribute: a cover album in kana or Chinese ("カバーアルバム",
+        // "翻唱专辑"). Not "ディスカバー" / "リカバー" (discover, recover).
+        Regex("""(?<![スリ])カバー|翻唱"""),
     )
 
     /**

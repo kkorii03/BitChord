@@ -159,4 +159,76 @@ class KoSoundtrackCreditTest {
             "Joker OST", "Hildur Guðnadóttir", "The Weeknd", "Original", "Artists", "",
         ).forEach { assertFalse(it, KoTrackMatcher.isGenericCredit(it)) }
     }
+
+    // ── [KO] tribute (11-20): label-credited tribute releases ───────────────
+
+    private val smile = target("Smile", "Jimmy Durante", 190)
+
+    @Test
+    fun `a Various Artists row on a release named after the act is a tribute, not unknown`() {
+        listOf(
+            "Songs of Jimmy Durante",
+            "Jimmy Durante's Greatest Songs, Sung by Friends",
+            "We Love Jimmy Durante",
+        ).forEach { album ->
+            val tribute = row("Smile", "Various Artists", 191, album = album)
+            assertFalse(album, TrackMatcher.isArtistUnverifiedOriginal(tribute, smile))
+            assertFalse(album, TrackMatcher.isOriginalRecording(tribute, smile, allowArtistUnverified = true))
+            assertEquals(album, "version", verdict(tribute, smile))
+        }
+        // A leading article on the act is not part of its name on the sleeve.
+        val lights = target("Blinding Lights", "The Weeknd", 200)
+        val remade = row("Blinding Lights", "Various Artists", 200, album = "Weeknd Remade")
+        assertFalse(TrackMatcher.isArtistUnverifiedOriginal(remade, lights))
+        assertEquals("version", verdict(remade, lights))
+    }
+
+    @Test
+    fun `the soundtrack rule still offers label rows to the sound check`() {
+        val admitted = listOf(
+            row("Smile", "Various Artists", 191),
+            row("Smile", "Various Artists", 191, album = "Movie Classics"),
+            // A soundtrack named after the act is still a soundtrack.
+            row("Smile", "Various Artists", 191, album = "Jimmy Durante (Original Motion Picture Soundtrack)"),
+            row("Smile", "Original Soundtrack", 191, album = "Jimmy Durante OST"),
+        )
+        admitted.forEach { assertTrue(it.albumName.orEmpty(), TrackMatcher.isArtistUnverifiedOriginal(it, smile)) }
+        // The act's own album by name is the act's release.
+        val own = TrackMatcher.Target("Smile", "Jimmy Durante", durationSec = 190, album = "Jimmy Durante Sings")
+        assertTrue(TrackMatcher.isArtistUnverifiedOriginal(row("Smile", "Various Artists", 191, album = "Jimmy Durante Sings"), own))
+        // A credited performer on a self-titled album is untouched.
+        assertTrue(TrackMatcher.isOriginalRecording(row("Smile", "Jimmy Durante", 190, album = "Jimmy Durante"), smile))
+        // A label request names no act to look for on the sleeve.
+        val labelRequest = target("Main Title", "Original Soundtrack", 120)
+        assertTrue(TrackMatcher.isArtistUnverifiedOriginal(row("Main Title", "Various Artists", 120, album = "Original Soundtrack Hits"), labelRequest))
+    }
+
+    @Test
+    fun `tribute and cover albums in Korean, Japanese and Chinese are refused under a localised credit`() {
+        val night = target("Through the Night", "아이유", 255)
+        assertTrue(TrackMatcher.isArtistUnverifiedOriginal(row("Through the Night", "Some Singer", 255, album = "Palette"), night))
+        listOf("아이유 트리뷰트", "헌정 앨범", "Hommage トリビュート").forEach { album ->
+            val tribute = row("Through the Night", "Some Singer", 255, album = album)
+            assertFalse(album, TrackMatcher.isArtistUnverifiedOriginal(tribute, night))
+            assertEquals(album, "version", verdict(tribute, night))
+        }
+        val flowers = target("Flowers", "Miley Cyrus", 200)
+        assertTrue(TrackMatcher.isArtistUnverifiedOriginal(row("Flowers", "マイリー・サイラス", 200, album = "Endless Summer Vacation"), flowers))
+        // "ディスカバー" is discover, not cover.
+        assertTrue(TrackMatcher.isArtistUnverifiedOriginal(row("Flowers", "マイリー・サイラス", 200, album = "ディスカバー"), flowers))
+        listOf("洋楽カバーアルバム", "翻唱专辑", "致敬经典").forEach { album ->
+            val cover = row("Flowers", "某歌手", 200, album = album)
+            assertFalse(album, TrackMatcher.isArtistUnverifiedOriginal(cover, flowers))
+            assertEquals(album, "version", verdict(cover, flowers))
+        }
+    }
+
+    @Test
+    fun `AutoPlay reads the same tribute words`() {
+        val seed = row("Song", "Artist", 200)
+        assertTrue(TrackMatcher.isKaraokeOrTributeArrangement(row("Song", "Singer", 200, album = "아이유 트리뷰트"), seed))
+        assertTrue(TrackMatcher.isCoverArrangement(row("Song", "Singer", 200, album = "カバーアルバム"), seed))
+        assertFalse(TrackMatcher.isCoverArrangement(row("Song", "Singer", 200, album = "ディスカバー"), seed))
+        assertFalse(TrackMatcher.isCoverArrangement(row("Song", "Singer", 200, album = "リカバー"), seed))
+    }
 }
