@@ -38,6 +38,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.HqMatchPolicy
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.LyricsTag
+import com.music.bitchord.ko.KoRecordedClock
 import com.music.bitchord.ko.downloads.KoDownloadRecords
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.NextPrepPolicy
@@ -857,9 +858,22 @@ object LyricsTiming {
             videoId,
             clock.sourceConfigId,
             clock.trackId,
-        ) ?: return null
+        ) ?: return recordedClock(context, videoId, clock) // [KO] LIBRARY-4
         if (!verified.rate.isFinite() || verified.rate <= 0.0) return null
         return VerifiedClock(verified.offsetMs, verified.rate)
+    }
+
+    /** [KO] LIBRARY-4: the saved file's own record of its pair's alignment; see [KoRecordedClock]. */
+    private fun recordedClock(context: Context, videoId: String, clock: Clock.Substitute): VerifiedClock? {
+        val (offset, rate) = KoRecordedClock.alignment(
+            KoDownloadRecords.savedMetadataFor(videoId),
+            clock.sourceConfigId,
+            clock.trackId,
+        ) ?: return null
+        // A pair refused since the file was saved is not carried by the record either.
+        if (HqVerificationStore.isRejected(context, videoId, clock.sourceConfigId, clock.trackId)) return null
+        KoRecordedClock.noteUsed(videoId, clock.sourceConfigId, clock.trackId, offset, rate)
+        return VerifiedClock(offset, rate)
     }
 
     private class ClockConversion(val map: LyricsTimeMap, val deltaScale: Double) {

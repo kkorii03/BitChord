@@ -90,7 +90,13 @@ class LyricsTimingFileClockTest {
         savedFile(pair)
     }
 
-    private fun savedFile(pair: Boolean = true, soundSource: String? = null, wrong: Boolean = false) {
+    private fun savedFile(
+        pair: Boolean = true,
+        soundSource: String? = null,
+        wrong: Boolean = false,
+        offsetMs: Long? = null,
+        rate: Double? = null,
+    ) {
         Downloads.setSavedMetadata(
             mapOf(
                 id to SavedSongMetadata(
@@ -100,6 +106,8 @@ class LyricsTimingFileClockTest {
                     uri = "file:///$id.flac",
                     hqSourceConfigId = if (pair) "src" else null,
                     hqTrackId = if (pair) "track" else null,
+                    hqOffsetMs = offsetMs,
+                    hqRate = rate,
                     recordingVerified = true,
                     soundSourceVideoId = soundSource,
                     wrongRecording = wrong,
@@ -150,6 +158,50 @@ class LyricsTimingFileClockTest {
     }
 
     /** Phone 11-10 4rsheRU_bdQ: a cover video playing a file cut from another upload. */
+    /**
+     * Review 11-20 LIBRARY-4: the verdict store lost the pair (an addon address edit,
+     * a source-list import, the 2000-pair eviction) while the saved file's record still
+     * holds the offset and rate it was proved with. Old code dropped the answer.
+     */
+    @Test
+    fun `the record's alignment carries the stream's answer once the store lost the pair`() {
+        fileTookOver()
+        savedFile(offsetMs = 1_000L, rate = 1.0)
+        answer(fileSource, "yt")
+
+        assertEquals(11_800L, LyricsTiming.apply(lines, timing(fileSource)!!).first().timeMs)
+        assertEquals(true, LyricsTiming.streamWordsReachFile(context, id))
+    }
+
+    @Test
+    fun `a recorded alignment is not used for a refused pair, a wrong file or a broken rate`() {
+        savedFile(offsetMs = 1_000L, rate = 1.0, wrong = true)
+        assertEquals(false, LyricsTiming.streamWordsReachFile(context, id))
+        savedFile(offsetMs = 1_000L, rate = Double.NaN)
+        assertEquals(false, LyricsTiming.streamWordsReachFile(context, id))
+        savedFile(offsetMs = 1_000L, rate = 0.0)
+        assertEquals(false, LyricsTiming.streamWordsReachFile(context, id))
+        savedFile(offsetMs = null, rate = 1.0)
+        assertEquals(false, LyricsTiming.streamWordsReachFile(context, id))
+
+        savedFile(offsetMs = 1_000L, rate = 1.0)
+        assertEquals(true, LyricsTiming.streamWordsReachFile(context, id))
+        HqVerificationStore.reject(context, id, "src", "track")
+        assertEquals(false, LyricsTiming.streamWordsReachFile(context, id))
+    }
+
+    @Test
+    fun `a recorded alignment answers only its own pair`() {
+        val meta = SavedSongMetadata(
+            videoId = id, title = "t", artist = "a", uri = "file:///$id.flac",
+            hqSourceConfigId = "src", hqTrackId = "track", hqOffsetMs = 250L, hqRate = 1.001,
+        )
+        assertEquals(250L to 1.001, com.music.bitchord.ko.KoRecordedClock.alignment(meta, "src", "track"))
+        assertNull(com.music.bitchord.ko.KoRecordedClock.alignment(meta, "src", "other"))
+        assertNull(com.music.bitchord.ko.KoRecordedClock.alignment(meta, "other", "track"))
+        assertNull(com.music.bitchord.ko.KoRecordedClock.alignment(null, "src", "track"))
+    }
+
     @Test
     fun `a file cut from another upload is heard from the file, never from this id's stream`() {
         savedFile(pair = false, soundSource = "other-upload")

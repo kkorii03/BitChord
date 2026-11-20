@@ -3,10 +3,13 @@ package com.music.bitchord.ko.downloads
 import android.content.Context
 import android.net.Uri
 import com.music.bitchord.data.DebugLog as Log
+import com.music.bitchord.data.sources.HqLibraryPolicy
 import com.music.bitchord.data.sources.HqQuality
+import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.download.DownloadedQuality
 import com.music.bitchord.download.Downloads
+import com.music.bitchord.download.SavedSongMetadata
 import java.io.File
 import java.io.InputStream
 
@@ -104,6 +107,74 @@ internal object KoFlacMeasure {
         if (oldUri == staged.toString()) return null
         val old = read(context, Uri.parse(oldUri)) ?: return null
         return refusal(ids.first(), old, read(context, staged), stagedBadge)
+            // [KO] LIBRARY-5: the kept file's measured rung goes into its record, so the
+            // pass stops reading it as its badge's 16-bit and asking for the same pair.
+            ?.also { keepMeasuredTier(ids, oldUri, HqQuality.tierOf(old)) }
+    }
+
+    /**
+     * [KO] LIBRARY-5 (review 11-20): the same comparison, made before a byte of a
+     * verified replacement ([hq]) is fetched. A FLAC saved before rungs were
+     * recorded reads as its badge's 16-bit, so any verified hi-res pair made it a
+     * target: tens of MB were downloaded and then refused by [refusedLowerFile]
+     * (or replaced a file of the same rung), and nothing corrected the record, so
+     * it repeated. Here the old file's own STREAMINFO is read first; when it is
+     * already at least the pair's rung the transfer is skipped and the measured
+     * rung is recorded. [refusedLowerFile] stays the final gate after the bytes.
+     * A record condemned as the wrong recording is never protected.
+     */
+    fun keptBeforeTransfer(context: Context, ids: Set<String>, hq: HqDownloadSource?): String? {
+        if (hq == null) return null
+        val records = Downloads.savedMetadataValue()
+        val previous = ids.mapNotNull { records[it] }
+        if (previous.isEmpty() || previous.any { it.wrongRecording }) return null
+        val meta = previous.firstOrNull { it.uri.isNotBlank() } ?: return null
+        val old = read(context, Uri.parse(meta.uri)) ?: return null
+        return keptBefore(ids, meta, old, hq)
+    }
+
+    /** The decision of [keptBeforeTransfer] once the old file's head is read. */
+    internal fun keptBefore(
+        ids: Set<String>,
+        meta: SavedSongMetadata,
+        old: StreamFormat,
+        hq: HqDownloadSource,
+    ): String? {
+        val measured = HqQuality.tierOf(old)
+        // Decided on what the record will read once the rung is written, so a
+        // skip always leaves the song no longer a target (no loop through the pass).
+        val reads = DownloadedQuality.tierOf(meta.downloadFormat, measured.name)
+        if (!HqLibraryPolicy.hasCopyAtLeastAsGood(reads, hq.tier)) return null
+        keepMeasuredTier(ids, meta.uri, measured)
+        Log.w(
+            TAG,
+            "download: kept ${ids.first()} before fetching: file measures ${describe(old)} " +
+                "(${measured.name}), pair ${hq.sourceConfigId} claims ${hq.tier.name}",
+        )
+        return KEPT_BEFORE_MESSAGE
+    }
+
+    /**
+     * Writes [measured] as the stored rung of every record in [ids] that still
+     * names [uri], when that reads higher than the record does now. Never on a
+     * wrong-recording record, and the record's pair ids are left alone.
+     */
+    private fun keepMeasuredTier(ids: Set<String>, uri: String, measured: HqTier) {
+        Downloads.record(
+            saved = { it },
+            meta = { map ->
+                var out = map
+                for (id in ids) {
+                    val current = out[id] ?: continue
+                    if (current.uri != uri || current.wrongRecording) continue
+                    val now = DownloadedQuality.tierOf(current.downloadFormat, current.hqTier)
+                    val then = DownloadedQuality.tierOf(current.downloadFormat, measured.name)
+                    if (then.rank >= now.rank) continue
+                    out = out + (id to current.copy(hqTier = measured.name))
+                }
+                out
+            },
+        )
     }
 
     /**
@@ -123,6 +194,7 @@ internal object KoFlacMeasure {
         format?.let { "${it.bitDepth ?: "?"}/${it.sampleRateHz ?: "?"} ${it.codec ?: "?"}" } ?: "unknown"
 
     const val KEPT_MESSAGE = "이미 받은 파일보다 음질이 낮아 바꾸지 않았습니다"
+    const val KEPT_BEFORE_MESSAGE = "이미 받은 파일의 음질이 같거나 더 높아 바꾸지 않았습니다"
 
     private const val TAG = "Downloads"
     private const val TYPE_STREAMINFO = 0
