@@ -1719,6 +1719,7 @@ object Downloads {
             return false
         }
         val route = plan.route ?: error("다운로드할 항목이 없습니다")
+        com.music.bitchord.ko.downloads.KoFlacMeasure.keptBeforeTransfer(context, setOf(song.videoId, track.videoId), plan.hq)?.let { error(it) } // [KO] LIBRARY-5
 
         var pending: DownloadStore.Pending? = null
         var reservedName: String? = null

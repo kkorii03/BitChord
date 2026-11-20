@@ -1,6 +1,12 @@
 package com.music.bitchord.ko.downloads
 
+import com.music.bitchord.data.sources.HqLibraryEntry
+import com.music.bitchord.data.sources.HqLibraryPolicy
+import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.StreamFormat
+import com.music.bitchord.download.DownloadedQuality
+import com.music.bitchord.download.Downloads
+import com.music.bitchord.download.SavedSongMetadata
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -97,6 +103,96 @@ class KoFlacMeasureTest {
         assertTrue(
             source("ko/downloads/KoDownloadPipeline.kt")
                 .contains("hqTier = hq?.tier?.name ?: KoFlacMeasure.measuredTierName(uri, downloadFormat)"),
+        )
+    }
+
+    /**
+     * Review 11-20 LIBRARY-5: a FLAC saved before rungs were recorded (hqTier null)
+     * reads as its badge's 16-bit, so a verified hi-res pair made it a replace target
+     * and the whole file was fetched before [KoFlacMeasure.refusedLowerFile] refused it.
+     */
+    @Test
+    fun `an old hi-res FLAC with no recorded rung is kept before the fetch and stops being a target`() {
+        val id = "old-hires"
+        val pair = HqDownloadSource(sourceConfigId = "src", trackId = "trk", tier = HqTier.HI_RES_24_44)
+        val meta = SavedSongMetadata(videoId = id, title = "t", artist = "a", uri = "file:///$id.flac", downloadFormat = "FLAC")
+        KoDownloadRecords.ensureOpen()
+        Downloads.setSavedMetadata(mapOf(id to meta))
+        try {
+            // What the old code saw: a 16-bit file and a better verified pair.
+            val before = DownloadedQuality.tierOf(meta.downloadFormat, meta.hqTier)
+            assertEquals(HqTier.LOSSLESS_16, before)
+            assertEquals(1, plan(id, before, pair.tier).replace.size)
+
+            val kept = KoFlacMeasure.keptBefore(setOf(id), meta, KoFlacMeasure.parse(header(96_000, 24))!!, pair)
+
+            assertEquals(KoFlacMeasure.KEPT_BEFORE_MESSAGE, kept)
+            assertFalse(KoDownloadPipeline.automaticFailure(IllegalStateException(kept)).transient)
+            val after = Downloads.savedMetadataValue().getValue(id)
+            assertEquals(HqTier.HI_RES_24_88.name, after.hqTier)
+            // The pair ids are not touched: the record is not claimed as that pair's file.
+            assertNull(after.hqSourceConfigId)
+            val reads = DownloadedQuality.tierOf(after.downloadFormat, after.hqTier)
+            assertTrue(HqLibraryPolicy.hasCopyAtLeastAsGood(reads, pair.tier))
+            assertTrue(plan(id, reads, pair.tier).replace.isEmpty())
+            assertFalse(com.music.bitchord.download.repairEntryUsable(false, false, reads, pair.tier))
+        } finally {
+            Downloads.setSavedMetadata(emptyMap())
+        }
+    }
+
+    @Test
+    fun `a same-rung old file is kept too, a lower one is fetched, and a wrong one is never protected`() {
+        val id = "same-rung"
+        val meta = SavedSongMetadata(videoId = id, title = "t", artist = "a", uri = "file:///$id.flac", downloadFormat = "FLAC")
+        KoDownloadRecords.ensureOpen()
+        Downloads.setSavedMetadata(mapOf(id to meta))
+        try {
+            val sameRung = HqDownloadSource("src", "trk", HqTier.HI_RES_24_44)
+            assertEquals(
+                KoFlacMeasure.KEPT_BEFORE_MESSAGE,
+                KoFlacMeasure.keptBefore(setOf(id), meta, KoFlacMeasure.parse(header(48_000, 24))!!, sameRung),
+            )
+            assertEquals(HqTier.HI_RES_24_44.name, Downloads.savedMetadataValue().getValue(id).hqTier)
+
+            Downloads.setSavedMetadata(mapOf(id to meta))
+            val hiRes = HqDownloadSource("src", "trk", HqTier.HI_RES_24_88)
+            assertNull(KoFlacMeasure.keptBefore(setOf(id), meta, KoFlacMeasure.parse(header(44_100, 16))!!, hiRes))
+            assertNull(KoFlacMeasure.keptBefore(setOf(id), meta, KoFlacMeasure.parse(header(48_000, 24))!!, hiRes))
+            // Nothing to keep: the record is unchanged.
+            assertNull(Downloads.savedMetadataValue().getValue(id).hqTier)
+
+            Downloads.setSavedMetadata(mapOf(id to meta.copy(wrongRecording = true)))
+            val context = com.music.bitchord.testutil.FakeContext.create()
+            assertNull(KoFlacMeasure.keptBeforeTransfer(context, setOf(id), sameRung))
+            assertNull(KoFlacMeasure.keptBeforeTransfer(context, setOf(id), null))
+        } finally {
+            Downloads.setSavedMetadata(emptyMap())
+        }
+    }
+
+    private fun plan(id: String, current: HqTier, verified: HqTier) = HqLibraryPolicy.select(
+        entries = listOf(
+            HqLibraryEntry(videoId = id, currentTier = current, verifiedTier = verified, sourceConfigId = "src", trackId = "trk"),
+        ),
+        prefetchLimit = 0,
+    )
+
+    @Test
+    fun `the transfer reads the old file before any byte or lookup, and a kept refusal records its rung`() {
+        val root = File(".").canonicalFile
+        fun source(path: String) = listOf("app/", "").map { File(root, "${it}src/main/java/com/music/bitchord/$path") }
+            .first { it.exists() }.readText()
+        val transfer = source("download/Downloads.kt")
+            .substringAfter("private suspend fun transfer(")
+            .substringBefore("} catch (e: Throwable) {")
+        val early = transfer.indexOf("KoFlacMeasure.keptBeforeTransfer(context, setOf(song.videoId, track.videoId), plan.hq)?.let { error(it) }")
+        assertTrue("early gate missing", early >= 0)
+        assertTrue(early < transfer.indexOf("lyrics = async"))
+        assertTrue(early < transfer.indexOf("DownloadStore.begin("))
+        assertTrue(
+            source("ko/downloads/KoFlacMeasure.kt")
+                .contains("?.also { keepMeasuredTier(ids, oldUri, HqQuality.tierOf(old)) }"),
         )
     }
 
