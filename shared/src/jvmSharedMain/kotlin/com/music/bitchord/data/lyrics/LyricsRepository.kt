@@ -826,7 +826,21 @@ object LyricsRepository {
                 )
             },
         )
-        val first = tryName(primary.title, primary.artist, sources)
+        val first = if (artistKnown) {
+            tryName(primary.title, primary.artist, sources)
+        } else {
+            // [KO] lyricsmiss: the singer's name may not take the resolved original's time.
+            val capMs = com.music.bitchord.ko.KoCoverLyrics.firstRoundMs(deadline.totalMs)
+            com.music.bitchord.ko.KoCoverLyrics.cappedFirstRound(
+                capMs = capMs,
+                round = { tryName(primary.title, primary.artist, sources) },
+                onCut = {
+                    keepIfBetter(bestSeen()).also { kept ->
+                        TrackLog.i(TAG, com.music.bitchord.ko.KoCoverLyrics.cutLine(capMs, kept != null), about = videoId)
+                    }
+                },
+            )
+        }
         if (first != null) return first
         if (deadline.expired()) return deadlineResult()
         // The sources keyed on the video rather than on a name were already

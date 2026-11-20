@@ -35,6 +35,31 @@ internal object KoCoverLyrics {
     const val RESOLVED_WAIT_MS = 2_000L
 
     /**
+     * [KO] lyricsmiss: the share of the lookup's deadline the first round, made
+     * under the singer's name, may take. One slow provider held it to its 9 s
+     * budget, so the resolved original got the last 2-3 s of the 12 s deadline
+     * and was cut before it answered (phone 11-20 ySQCgv_uw-A "창귀": first round
+     * 9 s, KuGou under 'CHANGGWI'/'ahn ye eun' 3 s later at the deadline;
+     * RVtVN18Kf4U "180도": first round 9.7 s, deadline during the retry).
+     */
+    fun firstRoundMs(deadlineMs: Long): Long = deadlineMs / 2
+
+    /**
+     * [round] waited for at most [capMs]. When it is cut, [onCut] says what to
+     * keep instead (the best a provider already delivered); a round that ends in
+     * time is returned as it is, a miss included.
+     */
+    suspend fun <R : Any> cappedFirstRound(capMs: Long, round: suspend () -> R?, onCut: () -> R?): R? {
+        var ended = false
+        val found = withTimeoutOrNull(capMs) { round().also { ended = true } }
+        return if (ended) found else onCut()
+    }
+
+    /** The log line of a cut first round. No lyric text. */
+    fun cutLine(capMs: Long, kept: Boolean): String =
+        "cover-lyrics: first round cut after ${capMs}ms (singer's name), kept=" + if (kept) "y" else "n"
+
+    /**
      * The original the title resolved to, as a name to retry. Null when the
      * artist is known (nothing changes) or nothing was resolved.
      */
@@ -58,12 +83,17 @@ internal object KoCoverLyrics {
      * Japanese or Chinese one ("晩餐歌" for "만찬가") goes first, as before: the
      * Hangul is then only a spelling of the original. The resolved artist stays in
      * both names, so this is no looser than the resolved name itself.
+     *
+     * [KO] lyricsmiss: a resolved title that only carries the Hangul one in brackets
+     * ("180 Degree (180도)" for BEN's "180도", phone 11-20 RVtVN18Kf4U) is no Hangul
+     * title the catalogues file: the row's own is still asked. Only the same title
+     * adds nothing.
      */
     fun resolvedNames(rowTitle: String, resolved: OriginalNames.Name?): List<Pair<String, String>> {
         val name = resolvedFirst(artistKnown = false, resolved = resolved) ?: return emptyList()
         val row = rowTitle.trim()
         if (row.isEmpty() || name.second.isEmpty() || !OriginalNames.hasHangul(row) ||
-            OriginalNames.hasHangul(name.first) || row.equals(name.first, ignoreCase = true)
+            row.equals(name.first, ignoreCase = true)
         ) {
             return listOf(name)
         }

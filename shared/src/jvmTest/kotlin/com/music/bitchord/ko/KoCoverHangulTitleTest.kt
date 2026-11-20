@@ -63,6 +63,48 @@ class KoCoverHangulTitleTest {
         assertEquals(listOf("晩餐歌" to "tuki.", "만찬가" to "tuki.", "만찬가" to ""), provider.asked)
     }
 
+    /**
+     * [KO] lyricsmiss, phone 11-20 RVtVN18Kf4U "180도": YouTube Music resolved BEN's song as
+     * "180 Degree (180도)". The Hangul in brackets made the row's own title look already asked,
+     * so only the bracketed name was retried and every Korean catalogue missed.
+     */
+    @Test
+    fun aBracketedHangulTitleStillAsksTheRowsOwnTitle() {
+        assertEquals(
+            listOf("180도" to "ben", "180 Degree (180도)" to "ben"),
+            KoCoverLyrics.resolvedNames("180도", OriginalNames.Name("180 Degree (180도)", "ben")),
+        )
+        val provider = FakeProvider(mapOf(("180도" to "ben") to "sheet"))
+        assertEquals("sheet", retry("180도", OriginalNames.Name("180 Degree (180도)", "ben"), provider))
+        assertEquals(listOf("180도" to "ben"), provider.asked)
+    }
+
+    /**
+     * [KO] lyricsmiss, phone 11-20 ySQCgv_uw-A "창귀": one provider held the singer-name round to
+     * its 9 s budget and the resolved original was cut by the 12 s deadline. The round is cut at
+     * half the deadline and what was already delivered is kept; a round that ends in time is as before.
+     */
+    @Test
+    fun aSlowFirstRoundIsCutAtHalfTheDeadline() = runBlocking<Unit> {
+        assertEquals(6_000L, KoCoverLyrics.firstRoundMs(12_000L))
+        var cuts = 0
+        val cut = KoCoverLyrics.cappedFirstRound(
+            capMs = 50L,
+            round = { kotlinx.coroutines.delay(60_000L); "late" },
+            onCut = { cuts++; "delivered" },
+        )
+        assertEquals("delivered", cut)
+        assertEquals(1, cuts)
+        assertNull(KoCoverLyrics.cappedFirstRound<String>(50L, round = { null }, onCut = { cuts++; "x" }))
+        assertEquals("found", KoCoverLyrics.cappedFirstRound(50L, round = { "found" }, onCut = { cuts++; "x" }))
+        assertEquals(1, cuts)
+        assertNull(KoCoverLyrics.cappedFirstRound(50L, round = { kotlinx.coroutines.delay(60_000L); "late" }, onCut = { null }))
+        assertEquals(
+            "cover-lyrics: first round cut after 6000ms (singer's name), kept=n",
+            KoCoverLyrics.cutLine(6_000L, kept = false),
+        )
+    }
+
     @Test
     fun aHangulOriginalOrNoArtistAddsNothing() {
         assertEquals(
