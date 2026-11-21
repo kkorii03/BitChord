@@ -4740,14 +4740,13 @@ object LyricsTiming {
         if (indices.size < MIN_AI_LINES) return SongAsk(null, "", untilSeconds)
         val texts = indices.map { lines[it].text }
         val sheetLanguage = hearingLanguage(song, texts) // [KO] coverlang
-        // A mixed sheet's one retry listens in its other script; still one request, still 2 per lyrics text.
-        val retryLanguage = if (retry) com.music.bitchord.data.lyrics.Deepgram.retryLanguageFor(texts, sheetLanguage) else null
-        val language = retryLanguage ?: sheetLanguage
+        // A mixed sheet's one retry listens in its other script, a moved cover's lets Whisper pick; still one request, still 2 per lyrics text.
+        val language = com.music.bitchord.ko.KoSungLanguage.songCheckLanguage(texts, song, retry) // [KO] relisten
         val mixed = com.music.bitchord.data.lyrics.Deepgram.mixedPercent(texts, sheetLanguage)
         if (mixed > 0) TrackLog.d(TAG, "song-sync: lang=$sheetLanguage sheet-mixed ratio=$mixed%", song.videoId)
-        if (retryLanguage != null) TrackLog.d(TAG, "song-sync: lang retry ($sheetLanguage -> $retryLanguage)", song.videoId)
+        if (language != sheetLanguage) TrackLog.d(TAG, "song-sync: lang retry ($sheetLanguage -> $language)", song.videoId)
         val answer = listenForSong(context, song, key, untilSeconds, language, probe, firstPass) ?: return null
-        return SongAsk(answer, language, untilSeconds)
+        return SongAsk(answer, com.music.bitchord.ko.KoSungLanguage.songFitLanguage(texts, language), untilSeconds)
     }
 
     /** Videos whose last song check ended without any reply (network down), see [SongCheckRetry]. */

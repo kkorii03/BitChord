@@ -49,6 +49,37 @@ object KoSungLanguage {
             sheetLanguage
         }
 
+    /** Deepgram's Whisper picks the sung language itself for this ("detect_language=true"); Groq gets no language. */
+    const val DETECT = "multi"
+
+    /**
+     * [KO] relisten: the language a song check on [texts] listens in. The first check
+     * listens as [listenLanguage] says. Its one [retry], for a cover moved off its sheet's
+     * Japanese/Chinese by the title alone, lets Whisper pick the language ([DETECT]): a
+     * Korean-titled upload may be sung in Japanese ([transcribeHint]), and the retry used to
+     * ask in Korean again, where the stored Korean words answered it and spent it, so such a
+     * cover could never fit its sheet. Not the sheet's language: forced into Japanese,
+     * Whisper wrote Korean singing as Japanese close to the original's and "applied" the
+     * wrong sheet at 75% (11-19 Sltk38pDXV8); left to pick, it hears what is sung. A cover
+     * the align farm scored in Korean keeps Korean: its words were already sung in Korean.
+     * Every other retry is [Deepgram.retryLanguageFor]'s mixed-script one, unchanged.
+     */
+    fun songCheckLanguage(texts: List<String>, song: Song, retry: Boolean): String {
+        val sheet = Deepgram.languageFor(texts)
+        val heard = listenLanguage(sheet, song)
+        if (!retry) return heard
+        if (heard != sheet && !farmKorean(song)) return DETECT
+        return Deepgram.retryLanguageFor(texts, heard) ?: heard
+    }
+
+    /**
+     * The language a song check's lines are fitted as ([Deepgram.spellableLines]) once
+     * heard in [listened]: the sheet's own for a [DETECT] listen, whose words may be in
+     * any script, else the language listened in.
+     */
+    fun songFitLanguage(texts: List<String>, listened: String): String =
+        if (listened == DETECT) Deepgram.languageFor(texts) else listened
+
     /** Why [listenLanguage] moved [song] to Korean, for the log: its title, or the farm's words. */
     fun evidence(song: Song): String = if (koreanTitled(song)) "Korean-titled" else "farm-Korean"
 
