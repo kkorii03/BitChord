@@ -240,6 +240,8 @@ internal object KoDownloadPipeline {
         val origins: Map<String, FileOrigin> = emptyMap(),
         /** [KO] u1121 LIBRARY-3: per id, the old file's verified pair (source, track); null for YouTube's bytes. */
         val pairs: Map<String, Pair<String, String?>?> = emptyMap(),
+        /** [KO] l1121 CLOCK-1: per id, the (offset, rate) the old file's record carries for that pair. */
+        val clocks: Map<String, Pair<Long, Double>> = emptyMap(),
     )
 
     /**
@@ -254,10 +256,26 @@ internal object KoDownloadPipeline {
         val oldUris: Set<String>,
         val newUri: String,
         val oldPairs: Map<String, Pair<String, String?>?>,
+        /** [KO] l1121 CLOCK-1: the old records' own (offset, rate), by id; see [PreviousRecordState.clocks]. */
+        val oldClocks: Map<String, Pair<Long, Double>> = emptyMap(),
     ) {
         /** The pair the old file of [id] was verified as; an alias id takes the one pair all ids shared. */
         fun oldPairOf(id: String): Pair<String, String?>? =
             if (id in oldPairs) oldPairs[id] else oldPairs.values.distinct().singleOrNull()
+
+        /**
+         * [KO] l1121 CLOCK-1: the (offset, rate) of the old file [id] was reading; null for
+         * YouTube's bytes. The verdict store is keyed by the song id, so an alias (a music
+         * video row on the song's file) finds nothing under its own id and started the move
+         * as if the old file ran on YouTube's clock: off by the old file's whole offset.
+         * Asks [verdict] under [id], then under the ids that owned the pair, then reads
+         * their old records.
+         */
+        fun oldClockOf(id: String, verdict: (owner: String, pair: Pair<String, String?>) -> Pair<Long, Double>?): Pair<Long, Double>? {
+            val pair = oldPairOf(id) ?: return null
+            val owners = listOf(id) + oldPairs.filter { (owner, value) -> owner != id && value == pair }.keys
+            return owners.firstNotNullOfOrNull { verdict(it, pair) } ?: owners.firstNotNullOfOrNull { oldClocks[it] }
+        }
     }
 
     private val _replaced = kotlinx.coroutines.flow.MutableSharedFlow<FileReplaced>(
@@ -308,7 +326,10 @@ internal object KoDownloadPipeline {
         val pairs = ids.mapNotNull { id ->
             metadata[id]?.let { meta -> id to meta.hqSourceConfigId?.takeIf { it.isNotBlank() }?.let { it to meta.hqTrackId } }
         }.toMap()
-        return PreviousRecordState(previousUris, previousSuspects, origins, pairs)
+        val clocks = ids.mapNotNull { id ->
+            metadata[id]?.let { meta -> com.music.bitchord.ko.KoRecordedClock.fileAlignment(null, meta)?.let { id to it } }
+        }.toMap()
+        return PreviousRecordState(previousUris, previousSuspects, origins, pairs, clocks)
     }
 
     /**
@@ -518,7 +539,7 @@ internal object KoDownloadPipeline {
             }
             // [KO] u1121 LIBRARY-3: a player still reading the old file moves onto this one.
             if (previous.uris.any { it != uri.toString() }) {
-                _replaced.tryEmit(FileReplaced(ids + staleIds, previous.uris, uri.toString(), previous.pairs))
+                _replaced.tryEmit(FileReplaced(ids + staleIds, previous.uris, uri.toString(), previous.pairs, previous.clocks))
             }
             if (context != null) {
                 previous.uris.forEach { old ->
