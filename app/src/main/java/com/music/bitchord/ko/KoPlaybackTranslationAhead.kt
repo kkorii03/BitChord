@@ -491,13 +491,14 @@ internal fun PlaybackService.koUseVerifiedDownload(
     val meta = Downloads.savedMetadataFor(id)
     val current = playing
     // The file's clock can start elsewhere; no verdict (YouTube's own bytes) keeps the number.
-    val start = HqVerificationStore.get(this, id, meta?.hqSourceConfigId, meta?.hqTrackId)?.let {
+    val stored = HqVerificationStore.get(this, id, meta?.hqSourceConfigId, meta?.hqTrackId)?.let { it.offsetMs to it.rate }
+    val start = KoRecordedClock.fileAlignment(stored, meta)?.let { (offsetMs, rate) -> // [KO] l1121 CLOCK-1
         com.music.bitchord.playback.HqSwapPolicy.swapStartMs(
             position,
             current?.offsetMs ?: 0L,
             current?.rate ?: 1.0,
-            it.offsetMs,
-            it.rate,
+            offsetMs,
+            rate,
         )
     } ?: position
     TrackLog.i(
