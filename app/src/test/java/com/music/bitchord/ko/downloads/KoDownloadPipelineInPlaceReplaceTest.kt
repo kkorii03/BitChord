@@ -81,7 +81,7 @@ class KoDownloadPipelineInPlaceReplaceTest {
     fun `the replacement is announced and the service moves the playing file`() {
         val pipeline = File("src/main/java/com/music/bitchord/ko/downloads/KoDownloadPipeline.kt").readText()
         val after = pipeline.substringAfter("suspend fun afterRemember(")
-        val emit = after.indexOf("_replaced.tryEmit(FileReplaced(ids + staleIds, previous.uris, uri.toString(), previous.pairs))")
+        val emit = after.indexOf("_replaced.tryEmit(FileReplaced(ids + staleIds, previous.uris, uri.toString(), previous.pairs, previous.clocks))")
         assertTrue("afterRemember announces the replacement", emit >= 0)
         assertTrue("before the old file is deleted", emit < after.indexOf("DownloadStore.delete(context, old.toUri())"))
         val service = File("src/main/java/com/music/bitchord/playback/PlaybackService.kt").readText()
@@ -153,6 +153,44 @@ class KoDownloadPipelineInPlaceReplaceTest {
         val handler = File("src/main/java/com/music/bitchord/ko/KoPlaybackTranslationAhead.kt").readText()
             .substringAfter("internal fun PlaybackService.koUseVerifiedDownload(")
         assertTrue(handler.contains("KoRecordedClock.fileAlignment(stored, meta)"))
+    }
+
+    /**
+     * l1121 CLOCK-1 review: alias V plays S's verified FLAC (offset 1200 ms); a FLAC with
+     * offset 1500 ms replaces it. The verdict store holds the old pair under S only, so the
+     * old lookup under V found nothing and started the move as if the old file ran on
+     * YouTube's clock: position + 1500 instead of position + 300.
+     */
+    @Test
+    fun `a playing alias leaves the old file through the old file's own clock`() {
+        val event = KoDownloadPipeline.FileReplaced(
+            setOf("S", "V"),
+            setOf("content://media/external/audio/media/11"),
+            uri,
+            mapOf("S" to ("addon" to "t1")),
+            mapOf("S" to (1_200L to 1.0)),
+        )
+        val store = mapOf(("S" to ("addon" to "t1")) to (1_200L to 1.0))
+        val position = 60_000L
+        fun startFor(id: String, verdicts: Map<Pair<String, Pair<String, String?>>, Pair<Long, Double>>): Long {
+            val old = event.oldClockOf(id) { owner, pair -> verdicts[owner to pair] }
+            return com.music.bitchord.playback.HqSwapPolicy.swapStartMs(
+                position, old?.first ?: 0L, old?.second ?: 1.0, 1_500L, 1.0,
+            )
+        }
+        // Old code: store lookup under V only -> no verdict -> offset 0 -> 61500.
+        assertEquals("the owner's verdict", position + 300L, startFor("V", store))
+        assertEquals("the old record when the store lost the pair", position + 300L, startFor("V", emptyMap()))
+        assertEquals("the owner itself", position + 300L, startFor("S", emptyMap()))
+        val youTubeBytes = KoDownloadPipeline.FileReplaced(setOf("S", "V"), setOf("file:///old.m4a"), uri, mapOf("S" to null))
+        assertNull("YouTube's bytes keep YouTube's clock", youTubeBytes.oldClockOf("V") { _, _ -> 999L to 1.0 })
+        val handler = File("src/main/java/com/music/bitchord/ko/KoPlaybackTranslationAhead.kt").readText()
+            .substringAfter("internal fun PlaybackService.koOnSavedFileReplaced(")
+            .substringBefore("internal fun PlaybackService.koUseVerifiedDownload(")
+        assertTrue(handler.contains("event.oldClockOf(id)"))
+        val pipeline = File("src/main/java/com/music/bitchord/ko/downloads/KoDownloadPipeline.kt").readText()
+            .substringAfter("fun previousStateFor(")
+        assertTrue("the old record's clock is kept before it is overwritten", pipeline.contains("KoRecordedClock.fileAlignment(null, meta)"))
     }
 
     @Test

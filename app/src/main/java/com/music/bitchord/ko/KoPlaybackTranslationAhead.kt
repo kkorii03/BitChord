@@ -463,12 +463,20 @@ internal fun PlaybackService.koOnSavedFileReplaced(event: com.music.bitchord.ko.
         return
     }
     val oldPair = event.oldPairOf(id)
-    val old = oldPair?.let { (source, track) -> HqVerificationStore.get(this, id, source, track) }
+    // [KO] l1121 CLOCK-1: an alias has no verdict under its own id; the owner's verdict or the old record's clock.
+    val old = event.oldClockOf(id) { owner, (source, track) ->
+        HqVerificationStore.get(this, owner, source, track)?.let { it.offsetMs to it.rate }
+    }
     // False when the item already reads the new file (its path form is the same uri).
     val moved = koUseVerifiedDownload(live, item, live.currentPosition, playing = old)
+    val oldClock = when {
+        oldPair == null -> ""
+        old == null -> " (no verdict)"
+        else -> " offset=${old.first}ms"
+    }
     if (moved) TrackLog.i(
         "BitChord",
-        "saved-file replaced: $id moves onto the new file old=${oldPair?.first ?: "youtube"}${if (oldPair != null && old == null) " (no verdict)" else ""}",
+        "saved-file replaced: $id moves onto the new file old=${oldPair?.first ?: "youtube"}$oldClock",
         about = id,
     )
 }
@@ -481,8 +489,8 @@ internal fun PlaybackService.koUseVerifiedDownload(
     player: ExoPlayer,
     item: MediaItem,
     position: Long,
-    /** [KO] u1121: the clock of what is sounding; an old saved file passes its own pair. */
-    playing: HqVerificationStore.Verified? = koCurrentPlayingVerification(item.mediaId),
+    /** [KO] u1121: the clock (offset, rate) of what is sounding; an old saved file passes its own. */
+    playing: Pair<Long, Double>? = koCurrentPlayingVerification(item.mediaId)?.let { it.offsetMs to it.rate },
 ): Boolean {
     val id = item.mediaId
     val file = Downloads.verifiedSavedUri(id) ?: return false
@@ -495,8 +503,8 @@ internal fun PlaybackService.koUseVerifiedDownload(
     val start = KoRecordedClock.fileAlignment(stored, meta)?.let { (offsetMs, rate) -> // [KO] l1121 CLOCK-1
         com.music.bitchord.playback.HqSwapPolicy.swapStartMs(
             position,
-            current?.offsetMs ?: 0L,
-            current?.rate ?: 1.0,
+            current?.first ?: 0L,
+            current?.second ?: 1.0,
             offsetMs,
             rate,
         )
