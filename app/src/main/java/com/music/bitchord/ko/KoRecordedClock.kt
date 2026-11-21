@@ -32,6 +32,18 @@ internal object KoRecordedClock {
         return offset to rate
     }
 
+    /**
+     * [KO] l1121 CLOCK-1: the alignment to start [meta]'s file at: the verdict store's
+     * ([stored]), else the record's own. An alias moved onto a replaced file has no
+     * verdict under its own id; started at the raw position it jumped by the offset.
+     */
+    fun fileAlignment(stored: Pair<Long, Double>?, meta: SavedSongMetadata?): Pair<Long, Double>? {
+        if (stored != null) return stored
+        val source = meta?.hqSourceConfigId ?: return null
+        val track = meta.hqTrackId ?: return null
+        return alignment(meta, source, track)
+    }
+
     /** One line per song and pair, so the phone log shows the fallback without repeating it. */
     fun noteUsed(videoId: String, sourceConfigId: String, trackId: String, offsetMs: Long, rate: Double) {
         if (!logged.add("$videoId\u0001$sourceConfigId\u0001$trackId")) return

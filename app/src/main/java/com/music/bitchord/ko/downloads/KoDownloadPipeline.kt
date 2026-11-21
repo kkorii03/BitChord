@@ -380,6 +380,53 @@ internal object KoDownloadPipeline {
     }
 
     /**
+     * [KO] l1121 CLOCK-1: the other ids (a music video and its song) whose record named a
+     * file that [ids] just replaced: those still on an old path, and, when a replacement
+     * was written back over the same path, those already on it. A plain adopt of the file
+     * already there rewrote nothing and touches none.
+     */
+    internal fun aliasesOfReplacedFile(
+        saved: Map<String, String>,
+        ids: Set<String>,
+        previousUris: Set<String>,
+        newUri: String,
+        replacing: Boolean,
+    ): Set<String> = saved
+        .filter { (id, value) -> id !in ids && value in previousUris && (value != newUri || replacing) }
+        .keys
+
+    /**
+     * [KO] l1121 CLOCK-1: [alias] shares the file the new record [file] describes. The
+     * fields that describe the file follow it — its format and stored name, the hq pair
+     * and alignment the lyric clock reads ([com.music.bitchord.playback.smart.LyricsTiming.playingClock],
+     * [com.music.bitchord.ko.KoRecordedClock]), the measured tier and the sound-check
+     * verdict. Kept, the alias played the new bytes on the old file's clock. The row's own
+     * title, artist, type, album, artwork and dates stay.
+     */
+    internal fun aliasOfReplacedFile(
+        alias: SavedSongMetadata,
+        file: SavedSongMetadata?,
+        uri: String,
+        soundSourceVideoId: String,
+    ): SavedSongMetadata {
+        val moved = alias.copy(uri = uri, soundSourceVideoId = soundSourceVideoId)
+        if (file == null || file.uri != uri) return moved
+        return moved.copy(
+            displayName = file.displayName,
+            downloadFormat = file.downloadFormat,
+            hqSourceConfigId = file.hqSourceConfigId,
+            hqTrackId = file.hqTrackId,
+            hqOffsetMs = file.hqOffsetMs,
+            hqRate = file.hqRate,
+            hqTier = file.hqTier,
+            hqSourceTitle = file.hqSourceTitle,
+            hqSourceArtist = file.hqSourceArtist,
+            recordingVerified = file.recordingVerified,
+            wrongRecording = file.wrongRecording,
+        )
+    }
+
+    /**
      * The record has been written: refresh artwork rows, drop verdicts and
      * timing answers that belonged to the old file, repoint aliases and remove
      * the replaced file once nothing else names it.
@@ -451,16 +498,17 @@ internal object KoDownloadPipeline {
             val staleIds = saved
                 .filterValues { value -> value != uri.toString() && value in previous.uris }
                 .keys.toList()
-            if (staleIds.isNotEmpty()) {
+            // [KO] l1121 CLOCK-1: an alias already on this path when a replacement was written over it.
+            val fileAliases = aliasesOfReplacedFile(saved, ids, previous.uris, uri.toString(), replacing)
+            if (dropTiming) fileAliases.forEach(::forgetAlignment)
+            if (fileAliases.isNotEmpty()) {
                 Downloads.record(
                     saved = { it + staleIds.associateWith { uri.toString() } },
                     meta = { meta ->
+                        val file = meta[fetched.videoId] ?: meta[asked.videoId]
                         meta.mapValues { (id, value) ->
-                            if (id in staleIds) {
-                                value.copy(
-                                    uri = uri.toString(),
-                                    soundSourceVideoId = soundSourceVideoId,
-                                )
+                            if (id in fileAliases) {
+                                aliasOfReplacedFile(value, file, uri.toString(), soundSourceVideoId)
                             } else {
                                 value
                             }
@@ -498,7 +546,7 @@ internal object KoDownloadPipeline {
                         saved = { it },
                         meta = { meta ->
                             meta.mapValues { (id, value) ->
-                                if (id in ids) value.copy(displayName = recordedName) else value
+                                if (id in ids || id in fileAliases) value.copy(displayName = recordedName) else value
                             }
                         },
                     )
