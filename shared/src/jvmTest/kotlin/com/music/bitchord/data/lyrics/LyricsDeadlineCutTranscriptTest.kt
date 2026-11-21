@@ -84,7 +84,8 @@ class LyricsDeadlineCutTranscriptTest {
         }
     }
 
-    private suspend fun waitUntilChecked(videoId: String) = withTimeout(10_000L) {
+    // Longer than the recheck's own 12 s lookup deadline, so a slow source cannot fail the wait.
+    private suspend fun waitUntilChecked(videoId: String) = withTimeout(30_000L) {
         while (LyricsDiskCache.read(key(videoId))?.let(LyricsDiskCache::worthCheckingAgain) != false) delay(20L)
     }
 
