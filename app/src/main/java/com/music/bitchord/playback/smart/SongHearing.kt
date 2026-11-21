@@ -12,6 +12,7 @@ import com.music.bitchord.ko.downloads.KoDownloadRecords
 import com.music.bitchord.playback.AudioCache
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -176,7 +177,8 @@ internal object SongHearing {
     /**
      * The first answer that heard something. A second request goes out if the
      * first has said nothing after [hedgeAfterMs]; the loser is cancelled. A plain
-     * failure from one waits for the other, never hides it. The second waits for
+     * failure from one waits for the other, never hides it, unless the other is a
+     * second still waiting for its slot: then the failure is returned. The second waits for
      * a free slot in [requests] rather than giving up: a slot opens when another
      * request ends, and the first may still be the slow one. If the first answers
      * while the second waits, the second is cancelled before it is sent.
@@ -193,8 +195,10 @@ internal object SongHearing {
         if (quick != null) return@coroutineScope quick
         if (gone()) return@coroutineScope first.await()
         // A slot opens when another request ends; the first may still be the slow one.
+        val sending = AtomicBoolean(false)
         val second = async {
             requests.acquire()
+            sending.set(true)
             try {
                 ask()
             } finally {
@@ -205,7 +209,11 @@ internal object SongHearing {
             first.onAwait { it to second }
             second.onAwait { it to first }
         }
-        val answer = if (heardSomething(done)) done else other.await()
+        // [KO] l1121-hedge (HEARING-1): the first failed while the second still waits for a
+        // slot. The caller holds one; with all 3 held that way none frees, so the failure is
+        // the answer and the caller's resend / no-reply path goes on from it.
+        val unsent = other === second && !sending.get()
+        val answer = if (heardSomething(done) || unsent) done else other.await()
         first.cancel()
         second.cancel()
         answer

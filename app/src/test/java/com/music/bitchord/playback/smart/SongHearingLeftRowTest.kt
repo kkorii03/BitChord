@@ -2,10 +2,14 @@ package com.music.bitchord.playback.smart
 
 import com.music.bitchord.data.lyrics.Deepgram
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -122,6 +126,68 @@ class SongHearingLeftRowTest {
         }, heardSomething = { true }, gone = { gone })
         assertEquals("first", answer)
         assertEquals(1, asked)
+    }
+
+    /** HEARING-1: every slot taken and never freed; the first copy fails past the hedge. */
+    @Test
+    fun aFailedFirstCopyIsTheAnswerWhenTheSecondNeverGetsASlot() = runTest {
+        var held = 0
+        repeat(3) {
+            SongHearing.requests.acquire()
+            held++
+        }
+        try {
+            var asked = 0
+            // Old code waits on the second copy's acquire forever: the timeout fails it.
+            val answer = withTimeout(600_000L) {
+                SongHearing.hedged(15_000L, ask = {
+                    asked++
+                    delay(16_000L)
+                    "failed"
+                }, heardSomething = { it == "heard" })
+            }
+            assertEquals("failed", answer)
+            assertEquals(1, asked)
+            assertEquals(16_000L, testScheduler.currentTime)
+            // The cancelled wait gave back no slot it never got.
+            assertEquals(0, SongHearing.requests.availablePermits)
+        } finally {
+            repeat(held) { SongHearing.requests.release() }
+        }
+    }
+
+    /** HEARING-1 as the phone meets it: 3 asks inside their own slot, all first copies fail. */
+    @Test
+    fun threeAsksHoldingEverySlotEndWhenTheirFirstCopiesFail() = runTest {
+        val rows = MutableStateFlow<Any?>("To4SWGZkEPk" to "DyDfgMOUjCI")
+        var asked = 0
+        val outcomes = withTimeout(3_600_000L) {
+            List(3) {
+                async {
+                    SongHearing.requests.withPermit {
+                        SongHearing.askWhileWanted(
+                            hedgeAfterMs = 15_000L,
+                            gone = { false },
+                            moved = rows,
+                            resendable = { true },
+                            ask = {
+                                asked++
+                                delay(16_000L)
+                                Deepgram.Answer(null, httpCode = 503)
+                            },
+                        )
+                    }
+                }
+            }.awaitAll()
+        }
+        outcomes.forEach {
+            assertEquals(503, it.answer.httpCode)
+            assertFalse(it.left)
+        }
+        // A slot one ask gives back may still send another's second copy; none waits for good.
+        assertTrue("asked=$asked", asked in 3..6)
+        assertTrue("t=${testScheduler.currentTime}", testScheduler.currentTime <= 32_000L)
+        assertEquals(3, SongHearing.requests.availablePermits)
     }
 
     @Test
