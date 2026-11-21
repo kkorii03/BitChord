@@ -19,7 +19,13 @@ import kotlinx.serialization.json.Json
 internal object LyricsDiskCache {
 
     /** A kept answer, found at [at], last checked for something better at [checkedAt]. */
-    class Kept(val result: LyricsRepository.Result?, val at: Long, val checkedAt: Long)
+    class Kept(
+        val result: LyricsRepository.Result?,
+        val at: Long,
+        val checkedAt: Long,
+        /** [KO] deadline: found by a search its deadline cut short: worth asking the sources again now. */
+        val recheck: Boolean = false,
+    )
 
     private const val DIRECTORY = "lyrics_v1"
     private const val MAX_FILES = 4_000
@@ -39,6 +45,7 @@ internal object LyricsDiskCache {
     /** Worth a quiet search for better: not word-synced yet, and not checked lately. */
     fun worthCheckingAgain(kept: Kept): Boolean {
         val result = kept.result ?: return false
+        if (kept.recheck) return true // [KO] deadline
         return rank(result) < 2 && System.currentTimeMillis() - kept.checkedAt > RECHECK_MS
     }
 
@@ -67,10 +74,10 @@ internal object LyricsDiskCache {
                 searchedAs = entry.asTitle?.let { it to entry.asArtist.orEmpty() },
             )
         }
-        Kept(result, entry.at, maxOf(entry.at, entry.checkedAt))
+        Kept(result, entry.at, maxOf(entry.at, entry.checkedAt), entry.recheck)
     }.getOrNull()
 
-    fun write(key: String, result: LyricsRepository.Result?) {
+    fun write(key: String, result: LyricsRepository.Result?, recheck: Boolean = false) {
         runCatching {
             val file = fileFor(key) ?: return
             file.parentFile?.mkdirs()
@@ -82,6 +89,7 @@ internal object LyricsDiskCache {
                 lines = result?.lines.orEmpty().map(::fromLine),
                 asTitle = result?.searchedAs?.first,
                 asArtist = result?.searchedAs?.second,
+                recheck = recheck,
             )
             val temporary = File(file.parentFile, file.name + ".tmp")
             temporary.writeText(json.encodeToString(Entry.serializer(), entry))
@@ -98,7 +106,7 @@ internal object LyricsDiskCache {
         runCatching { fileFor(key)?.delete() }
     }
 
-    /** Marks [key] as just checked, so the background search waits [RECHECK_MS] again. */
+    /** Marks [key] as just checked, so the background search waits [RECHECK_MS] again (a recheck mark is cleared). */
     fun touchChecked(key: String) {
         runCatching {
             val file = fileFor(key)?.takeIf { it.exists() } ?: return
@@ -128,6 +136,8 @@ internal object LyricsDiskCache {
         val lines: List<Line> = emptyList(),
         val asTitle: String? = null,
         val asArtist: String? = null,
+        /** [KO] deadline: see [Kept.recheck]. */
+        val recheck: Boolean = false,
     )
 
     @Serializable
