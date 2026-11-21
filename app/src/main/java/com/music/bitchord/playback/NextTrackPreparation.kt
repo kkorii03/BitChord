@@ -379,11 +379,17 @@ internal class NextTrackPreparation(
                     when (step) {
                         Step.VERSION -> Unit
                         Step.LYRICS -> {
+                            // [KO] l1121-prepai: no Gemini transcription for a row not playing yet on mobile data or before the 30 s AI gate.
+                            val transcribeHeld = TranslationAheadPolicy.transcribeAheadHeld(
+                                AppSettings.heavyWorkAllowed, AppSettings.meteredConnection.value, player.currentPosition)
                             lyrics = TranslationAhead.lyricsForPrep(
                                 context,
                                 song,
-                                allowHeavy = AppSettings.heavyWorkAllowed,
+                                allowHeavy = transcribeHeld == null,
                             )
+                            if (transcribeHeld != null && song.localUri == null && lyrics?.lines == null) {
+                                TrackLog.i("BitChord", "next-prep: no lyrics ahead, transcription left to the row's start ($transcribeHeld)", about = song.videoId)
+                            }
                             synchronized(lyricsByRow) {
                                 lyrics?.let { lyricsByRow[stateKey] = it }
                             }

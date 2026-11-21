@@ -262,7 +262,10 @@ internal object TranslationAhead {
                 return
             }
         }
-        val found = lookUp(song, transcribe = allowHeavy && song.localUri == null) ?: return
+        // [KO] l1121-prepai: Gemini only after the AI gate, as the paid timing below waits for it.
+        val found = TranslationAheadPolicy.lookUpThenTranscribe(allowHeavy && song.localUri == null, paidGate) {
+            lookUp(song, transcribe = it)
+        } ?: return
         val lines = found.lines.takeIf { lines -> lines.any { it.text.isNotBlank() } } ?: return
         if (translateOnly) {
             if (translationWanted) translate(song.videoId, lines, targetLanguage(app), keep = song.localUri != null)
