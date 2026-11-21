@@ -116,6 +116,59 @@ class KoCoverLyricsVersionLanguageTest {
         }
     }
 
+    /**
+     * relisten (review 11-21 HEARING-2): a Korean-titled cover's Japanese sheet is heard in
+     * Korean, and its one retry asked in Korean again: Deepgram.retryLanguageFor(texts, "ko")
+     * is always null (CJK is all spellable), so SongHearing served the stored Korean words and
+     * the retry was spent without a new ask. A cover sung in Japanese never fitted its sheet.
+     */
+    @Test
+    fun aMovedCoversRetryLetsWhisperPickTheLanguage() {
+        KoSungLanguage.forgetNotedForTest()
+        try {
+            val tabi = video("스노우 하레이션", "μ's · 타비 커버")
+            val japanese = (0 until 6).map { "かきくけこ さしすせそ たちつてと $it" }
+            assertEquals("ja", com.music.bitchord.data.lyrics.Deepgram.languageFor(japanese))
+            // The first check stays Korean (coverlang).
+            assertEquals("ko", KoSungLanguage.songCheckLanguage(japanese, tabi, retry = false))
+            // Old code: retryLanguageFor(texts, "ko") ?: "ko", the same Korean ask again.
+            assertNull(com.music.bitchord.data.lyrics.Deepgram.retryLanguageFor(japanese, "ko"))
+            assertEquals(KoSungLanguage.DETECT, KoSungLanguage.songCheckLanguage(japanese, tabi, retry = true))
+            // Whatever script Whisper picks, the lines are fitted as the sheet's Japanese, every line spellable.
+            assertEquals("ja", KoSungLanguage.songFitLanguage(japanese, KoSungLanguage.DETECT))
+            assertEquals("ko", KoSungLanguage.songFitLanguage(japanese, "ko"))
+            // Not forced into Japanese: that is how Korean singing "applied" the original's sheet at 75%.
+            assertEquals("multi", KoSungLanguage.DETECT)
+            // A cover the align farm scored in Korean was sung in Korean: its retry stays Korean.
+            KoSungLanguage.noteFarm(tabi.videoId, "ko")
+            assertEquals("ko", KoSungLanguage.songCheckLanguage(japanese, tabi, retry = true))
+            KoSungLanguage.noteFarm(tabi.videoId, "ja")
+            assertEquals(KoSungLanguage.DETECT, KoSungLanguage.songCheckLanguage(japanese, tabi, retry = true))
+            // A row not moved keeps today's retry: the same language for a Japanese original.
+            val original = video("夜に駆ける", "YOASOBI")
+            assertEquals("ja", KoSungLanguage.songCheckLanguage(japanese, original, retry = true))
+            assertEquals("ja", KoSungLanguage.songFitLanguage(japanese, "ja"))
+        } finally {
+            KoSungLanguage.forgetNotedForTest()
+        }
+    }
+
+    @Test
+    fun aMixedSheetKeepsItsOtherScriptRetry() {
+        val tabi = video("스노우 하레이션", "μ's · 타비 커버")
+        val mixed = (0 until 8).map { "you and me in the night so bright $it" } + listOf("시선 고정", "감각 마비")
+        assertEquals("en", com.music.bitchord.data.lyrics.Deepgram.languageFor(mixed))
+        assertEquals("en", KoSungLanguage.songCheckLanguage(mixed, tabi, retry = false))
+        assertEquals("ko", KoSungLanguage.songCheckLanguage(mixed, tabi, retry = true))
+        assertEquals("ko", KoSungLanguage.songFitLanguage(mixed, "ko"))
+        val english = mixed.take(8)
+        assertEquals("en", KoSungLanguage.songCheckLanguage(english, tabi, retry = true))
+        // A Latin sheet read as "multi" listens and fits as "multi", as before.
+        val latin = listOf("hola amigo como estas mi hermano querido siempre")
+        assertEquals("multi", KoSungLanguage.songCheckLanguage(latin, tabi, retry = true))
+        assertEquals("multi", KoSungLanguage.songFitLanguage(latin, "multi"))
+    }
+
     @Test
     fun theTranscriptionIsToldOnlyAboutAKoreanTitle() {
         assertTrue(KoSungLanguage.titleSaysKorean("히어로"))
