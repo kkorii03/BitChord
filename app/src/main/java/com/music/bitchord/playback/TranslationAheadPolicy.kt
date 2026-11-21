@@ -49,4 +49,29 @@ internal object TranslationAheadPolicy {
         metered == false && allowHeavy -> Plan.FULL
         else -> Plan.LYRICS_ONLY
     }
+
+    /**
+     * [KO] l1121-prepai: why a lookup made for a row that is not playing yet must not have
+     * Gemini write its words down (the row's audio pulled, decoded and uploaded), or null when
+     * it may. Only on an unmetered connection, with heavy work allowed, once the current track
+     * passed the 30 s AI gate the paid sync engines wait for; otherwise the row's own start
+     * transcribes it, as a row that never plays costs nothing.
+     */
+    fun transcribeAheadHeld(heavyAllowed: Boolean, metered: Boolean?, playedMs: Long): String? = when {
+        !heavyAllowed -> "low-power"
+        metered == null -> "offline"
+        metered == true -> "metered"
+        !NextPrepPolicy.aiGateOpen(playedMs) -> "ai-too-early"
+        else -> null
+    }
+
+    /**
+     * [KO] l1121-prepai: the providers first, without a transcription; Gemini only when they all
+     * missed, [transcribeWanted] and [paidGate] opens. A found sheet never waits on the gate.
+     */
+    suspend fun <T : Any> lookUpThenTranscribe(
+        transcribeWanted: Boolean,
+        paidGate: suspend () -> Boolean,
+        lookUp: suspend (transcribe: Boolean) -> T?,
+    ): T? = lookUp(false) ?: if (transcribeWanted && paidGate()) lookUp(true) else null
 }
