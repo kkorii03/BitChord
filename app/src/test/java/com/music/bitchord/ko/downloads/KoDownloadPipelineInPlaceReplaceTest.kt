@@ -170,7 +170,8 @@ class KoDownloadPipelineInPlaceReplaceTest {
             mapOf("S" to ("addon" to "t1")),
             mapOf("S" to (1_200L to 1.0)),
         )
-        val store = mapOf(("S" to ("addon" to "t1")) to (1_200L to 1.0))
+        val store: Map<Pair<String, Pair<String, String?>>, Pair<Long, Double>> =
+            mapOf(("S" to ("addon" to "t1")) to (1_200L to 1.0))
         val position = 60_000L
         fun startFor(id: String, verdicts: Map<Pair<String, Pair<String, String?>>, Pair<Long, Double>>): Long {
             val old = event.oldClockOf(id) { owner, pair -> verdicts[owner to pair] }
