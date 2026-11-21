@@ -172,6 +172,8 @@ object LyricsRepository {
         // An upload labelled an instrumental has no words to write down: skip
         // the paid Gemini request before it is made.
         if (found != null || !transcribe || sources.isEmpty() || LyricsAiGuard.isInstrumentalTitle(title)) return found
+        // [KO] deadline: the miss may only mean slow sources: the sheet below is shown now but kept for a recheck.
+        val cut = deadline.cut
         // Not held to the search's deadline: Gemini listening to the whole
         // track takes tens of seconds (next-prep with lyrics=gemini_transcript
         // took 55 s), so the 12 s bound would end every AI sheet before it was
@@ -193,7 +195,7 @@ object LyricsRepository {
             // Event-driven: the run itself reports its end, no timer or poll.
             run.invokeOnCompletion { cause ->
                 if (cause == null) background.launch {
-                    run.await()?.let { saveLateTranscription(videoId, key, it) }
+                    run.await()?.let { saveLateTranscription(videoId, key, it, recheck = cut) }
                 }
             }
         }
@@ -203,8 +205,9 @@ object LyricsRepository {
             return null
         }
         return heard?.also {
-            answers.put(key, Answer(it))
-            kotlinx.coroutines.withContext(Dispatchers.IO) { LyricsDiskCache.write(key, it) }
+            if (cut) TrackLog.i(TAG, "lyrics: transcript after a deadline-cut search -> kept, sources asked again next play", about = videoId)
+            answers.put(key, Answer(it, cut = cut))
+            kotlinx.coroutines.withContext(Dispatchers.IO) { LyricsDiskCache.write(key, it, recheck = cut) }
         }
     }
 
@@ -338,6 +341,12 @@ object LyricsRepository {
             alternatives, order, sources, artistAliases,
         )
         val heard = heardNow(videoId)
+        val searchAgain: suspend () -> Result? = {
+            search(
+                videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
+                null, null, null, isVideo, alternatives, artistKnown, artistAliases, language,
+            )
+        }
         var remembered: Pair<String, Answer>? = null
         for (candidate in readKeys) {
             val answer = answers.get(candidate) ?: continue
@@ -356,6 +365,15 @@ object LyricsRepository {
             if (remembered == null) remembered = candidate to answer
         }
         if (remembered != null) {
+            // [KO] deadline: a deadline ended that answer: this caller's is cut too, and its sheet looked for again once.
+            if (remembered.second.cut) {
+                deadline.cut = true
+                val kept = remembered.second.result
+                if (kept != null) {
+                    TrackLog.i(TAG, "lyrics: ${kept.source.label} sheet came from a deadline-cut search -> sources asked again", about = videoId)
+                    checkAgain(remembered.first, key, videoId, kept, searchAgain)
+                }
+            }
             remembered.second.result?.let { onSourceResult?.invoke(it.source, it, null) }
             return remembered.second.result
         }
@@ -379,12 +397,7 @@ object LyricsRepository {
                 answers.put(key, Answer(keptResult))
                 onSourceResult?.invoke(keptResult.source, keptResult, null)
                 if (LyricsDiskCache.worthCheckingAgain(kept)) {
-                    checkAgain(keptEntry.first, key, videoId, keptResult) {
-                        search(
-                            videoId, title, artist, durationMs, album, sources, order, prioritizeSyllableSync, isrc,
-                            null, null, null, isVideo, alternatives, artistKnown, artistAliases, language,
-                        )
-                    }
+                    checkAgain(keptEntry.first, key, videoId, keptResult, searchAgain)
                 }
                 return keptResult
             }
@@ -414,10 +427,16 @@ object LyricsRepository {
                         lookup::started, lookup::answered, lookup::cancelled, isVideo, alternatives, artistKnown,
                         artistAliases, language, deadline,
                     ).also {
-                        answers.put(key, Answer(it))
+                        // [KO] deadline: an answer the deadline ended, a miss or one with no word timing, is not final.
+                        val cut = deadline.cut && (it == null || LyricsDiskCache.rank(it) < 2)
+                        lookup.cut = deadline.cut
+                        if (cut && it != null) {
+                            TrackLog.i(TAG, "lyrics: deadline-cut ${it.source.label} sheet kept for a recheck", about = videoId)
+                        }
+                        answers.put(key, Answer(it, cut = cut))
                         // Only answers go on disk: "nothing found" may only
                         // mean the phone was offline.
-                        if (it != null) LyricsDiskCache.write(key, it)
+                        if (it != null) LyricsDiskCache.write(key, it, recheck = cut)
                         // [KO] herolyr: a sheet for a song another lookup missed goes to the screen.
                         if (com.music.bitchord.ko.KoLateSheet.answered(videoId, it != null) && it != null &&
                             !soundRejects(videoId, it, heardNow(videoId))
@@ -432,6 +451,7 @@ object LyricsRepository {
                 started.start()
             }
             val result = lookup.await()
+            if (lookup.cut) deadline.cut = true // [KO] deadline: a joined lookup's deadline cut this answer too
             // Joined at the very end, after the last provider had reported:
             // the answer itself is still news to this caller.
             if (!listener.heard && result != null) onSourceResult?.invoke(result.source, result, null)
@@ -506,6 +526,9 @@ object LyricsRepository {
     private class Lookup {
         private val job = kotlinx.coroutines.CompletableDeferred<Deferred<Result?>>()
 
+        /** [KO] deadline: the search ran out of its deadline; set before its answer is handed out. */
+        @Volatile var cut = false
+
         /** Hands over the search itself, once, right after the lookup is published. */
         fun start(search: Deferred<Result?>) {
             job.complete(search)
@@ -560,7 +583,12 @@ object LyricsRepository {
     }
 
     /** A whole lookup's answer, a miss included, and when it was made. */
-    private class Answer(val result: Result?, val at: Long = System.currentTimeMillis())
+    private class Answer(
+        val result: Result?,
+        val at: Long = System.currentTimeMillis(),
+        /** [KO] deadline: the search was ended by its deadline, so sources are asked again on the next lookup. */
+        val cut: Boolean = false,
+    )
 
     /** One provider's finished attempt: its answer, or why there is none. */
     private data class ProviderAnswer(val result: Result?, val failure: LyricsFailure?)
@@ -694,13 +722,14 @@ object LyricsRepository {
      * playing. Anything a source has beats what Gemini heard, so a provider
      * answer that landed meanwhile is left alone.
      */
-    private fun saveLateTranscription(videoId: String, key: String, late: Result) {
+    private fun saveLateTranscription(videoId: String, key: String, late: Result, recheck: Boolean = false) {
         val kept = LyricsDiskCache.read(key)?.result
         if (kept != null && kept.source != LyricsSource.GEMINI_TRANSCRIPT) return
         if (LyricsMismatch.isRejected(videoId, late.source, late.lines)) return // [KO] herolyr
         TrackLog.i(TAG, "lyrics: late sheet kept after the ${transcribeLimitMs}ms limit", about = videoId)
-        answers.put(key, Answer(late))
-        LyricsDiskCache.write(key, late)
+        // [KO] deadline: after a deadline-cut search it waits for a recheck, like an on-time one.
+        answers.put(key, Answer(late, cut = recheck))
+        LyricsDiskCache.write(key, late, recheck = recheck)
         _upgrades.tryEmit(videoId to late)
     }
 
@@ -802,7 +831,9 @@ object LyricsRepository {
         }
         fun bestSeen(): Result? = synchronized(seenLock) { seen }
         fun deadlineResult(): Result? {
-            if (deadline.expired() && !deadlineLogged) {
+            val expired = deadline.expired()
+            if (expired) deadline.cut = true // [KO] deadline: the search did not finish asking
+            if (expired && !deadlineLogged) {
                 deadlineLogged = true
                 TrackLog.i(TAG, "lyrics: deadline after ${deadline.totalMs}ms", about = videoId)
             }
@@ -1168,6 +1199,13 @@ object LyricsRepository {
         private val clock: () -> Long = System::nanoTime,
     ) {
         private val startedAtNs: Long = clock()
+
+        /**
+         * [KO] deadline: set when the search ran out of this time (or the answer
+         * it got came from one that did), so a miss or untimed sheet it ended
+         * with is not kept as final: "nothing in 12 s" may only mean slow sources.
+         */
+        @Volatile var cut: Boolean = false
 
         fun remainingMs(nowNs: Long = clock()): Long {
             val elapsedMs = (nowNs - startedAtNs) / 1_000_000L
