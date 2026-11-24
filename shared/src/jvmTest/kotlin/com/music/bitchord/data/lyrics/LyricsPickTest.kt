@@ -23,6 +23,32 @@ class LyricsPickTest {
     }
 
     @Test
+    fun `YouTube Music's line timings stand behind another source's`() = runBlocking {
+        val picked = LyricsRepository.pick(
+            listOf(
+                LyricsSource.YOUTUBE_MUSIC to suspend { result(LyricsSource.YOUTUBE_MUSIC, 1_000L) },
+                LyricsSource.LRCLIB to suspend { result(LyricsSource.LRCLIB, 1_000L) },
+            ),
+            prioritizeSyllableSync = true,
+        )
+
+        assertEquals(LyricsSource.LRCLIB, picked?.source)
+    }
+
+    @Test
+    fun `YouTube Music's line timings are the answer over plain text`() = runBlocking {
+        val picked = LyricsRepository.pick(
+            listOf(
+                LyricsSource.YOUTUBE_MUSIC to suspend { result(LyricsSource.YOUTUBE_MUSIC, 1_000L) },
+                LyricsSource.LRCLIB to suspend { result(LyricsSource.LRCLIB, 0L) },
+            ),
+            prioritizeSyllableSync = true,
+        )
+
+        assertEquals(LyricsSource.YOUTUBE_MUSIC, picked?.source)
+    }
+
+    @Test
     fun `plain lyrics are still the answer when nothing is timed`() = runBlocking {
         val picked = LyricsRepository.pick(
             listOf(LyricsSource.YOUTUBE_MUSIC to suspend { result(LyricsSource.YOUTUBE_MUSIC, 0L) }),

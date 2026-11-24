@@ -1842,6 +1842,7 @@ object YtMusicRepository {
      */
     suspend fun mixedForYouKeyed(): Result<List<KeyedMix>> = call("mixedForYouKeyed") {
         if (Innertube.cookie == null) return@call emptyList()
+        if (ensureGateKnown()) return@call YouTubeFallback.mixes().map { KeyedMix(it, it.title) } // [KO] gate
         coroutineScope {
             val shown = async {
                 InnertubeParser.parseTwoRowItemsDeep(Innertube.browse("FEmusic_mixed_for_you"))

@@ -762,7 +762,7 @@ object StreamResolver {
         // a benched direct path is not a winner worth leading with either.
         // [KO] Premium's rung is only offered to a signed-in walk, so with it on no
         // remembered (usually anonymous) client leads; the direct ask stays behind it.
-        val learned = order.preferred().takeUnless { premiumAudio() }
+        val learned = order.preferred().takeUnless { premiumAudio() && !gated }
         val preferredItx = ResolutionOrder.itxManifest(learned)
         val preferDirect = learned == ResolutionOrder.DIRECT
         val orderLabel = if (learned != null) "learned" else "default"

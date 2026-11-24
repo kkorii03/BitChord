@@ -454,7 +454,7 @@ internal object TranslationAhead {
      * the request got no answer, so a deferred catch-up tries it again later.
      */
     internal suspend fun keepFromFile(app: Context, videoId: String, uri: String): Boolean {
-        val lines = EmbeddedLyrics.forUri(app, uri) ?: return true
+        val lines = EmbeddedLyrics.forUri(app, uri)?.takeIf(EmbeddedLyrics::isSynced) ?: return true
         return translate(videoId, lines, targetLanguage(app), keep = true)
     }
 

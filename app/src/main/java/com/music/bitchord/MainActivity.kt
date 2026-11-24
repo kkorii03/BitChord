@@ -5848,6 +5848,9 @@ private fun BitChordApp(
             }
         }
 
+        // [KO] In a lambda of its own: the two sides' sheets together took this
+        // method past the 64 KB a JVM method may be. Not indented, so upstream merges stay small.
+        Isolated { // [KO] method size
         queuePlaylistSongs?.let { targets ->
             val completion = queuePlaylistCompletion
             val finish: (Boolean) -> Unit = { completed ->
@@ -6022,6 +6025,7 @@ private fun BitChordApp(
                 onDismiss = { showSpotifyImportDialog = false },
             )
         }
+        } // [KO] Isolated
 
         // ---- Album / playlist actions ----
         // Opened by holding a card on any tab, or from the release page's own
@@ -6107,7 +6111,7 @@ private fun BitChordApp(
                 onPlayNext = act(playSongsNext),
                 onAddToQueue = act(addSongsToQueue),
                 onPlay = act { songs ->
-                    QueueShuffle.disableForNextQueue()
+                    if (!ListenTogether.state.value.controlsLocked) QueueShuffle.disableForNextQueue() // [KO]
                     play(songs, 0)
                 }.takeIf { target.fromCard },
                 onShuffle = act { songs ->
@@ -6454,6 +6458,7 @@ private fun BitChordApp(
             }
         }
 
+        Isolated { // [KO] method size
         // ---- Update available (once per launch; held until the welcome is done) ----
         if (showUpdateDialog && onboardingComplete) {
             updateNotice?.let { update ->
@@ -7002,6 +7007,7 @@ private fun BitChordApp(
                 inOwnWindow = playerRaised || songActions != null || browseActions != null,
             )
         }
+        } // [KO] Isolated
 
     }
 }

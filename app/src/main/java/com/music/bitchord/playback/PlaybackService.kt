@@ -3154,7 +3154,8 @@ class PlaybackService : MediaLibraryService() {
                 }
             },
             versionSwapActive = {
-                versionSwapJob?.isActive == true || hqSwapOwnsStandby
+                // [KO] Nor while the sleep timer turns the player down: a blend owns its volume.
+                versionSwapJob?.isActive == true || hqSwapOwnsStandby || sleepFading
             },
             // Direct Source Stream fetches the next track only in the last
             // seconds before the blend, so the marker waits for its audio:
@@ -4252,9 +4253,11 @@ class PlaybackService : MediaLibraryService() {
             if (index > before.currentIndex && item.queueTier == QueueTier.CONTEXT) {
                 val canonicalIndex = item.canonicalIndex
                 val cycleId = item.contextCycleId
-                if (window == null || canonicalIndex == null || cycleId == null ||
-                    !window.exclude(QueueWindowEntry(canonicalIndex, cycleId))
-                ) return@forEach
+                // [KO] A row the window no longer holds (an unbounded queue, or one already
+                // passed in a shuffled cycle) is still a row the listener asked to remove.
+                if (window != null && canonicalIndex != null && cycleId != null) {
+                    window.exclude(QueueWindowEntry(canonicalIndex, cycleId))
+                }
             }
             indices += index
         }
@@ -4284,10 +4287,15 @@ class PlaybackService : MediaLibraryService() {
         removedCurrent: Boolean,
         mutationSettled: CompletableDeferred<Unit>,
         removedCount: Int,
+        undoable: Boolean, // [KO]
         messageForCount: (Int) -> String,
     ): Boolean {
         partySync?.onLocalIntent()
         saveQueueSnapshotImmediately(raw)
+        if (!undoable) { // [KO]
+            if (queueUndoMutationSettled === mutationSettled) queueUndoMutationSettled = null
+            return true
+        }
         val synchronousAfter = queueUndoFingerprint() ?: return true
         val settlingRevision = queueUndoInvalidationRevision
         // Complete the transition's own bounded refill before publishing the baseline.
@@ -4342,11 +4350,23 @@ class PlaybackService : MediaLibraryService() {
         noteBoundedContextRowsRemoved(others)
     }
 
+    /**
+     * [KO] Whether rows [indices] can go without ending the blend or version
+     * swap under way, as a plain removal always could: both standby players
+     * follow the raw edit. Settling first cut the song off mid-blend, and
+     * waited out a swap to then drop the tap. Such an edit offers no undo: its
+     * snapshot would be of a player about to be swapped out.
+     */
+    private fun queueEditableInFlight(before: QueueUndoFingerprint, indices: List<Int>): Boolean =
+        (crossfade?.isTransitioning() == true || versionSwapJob?.isActive == true) &&
+            indices.all { it > before.currentIndex }
+
     private suspend fun removeQueueEntriesWithUndo(args: Bundle): Boolean {
         if (ListenTogether.state.value.controlsLocked) return false
         val requested = queueUndoFingerprint() ?: return false
         val identities = queueEntryIdentities(args) ?: return false
-        if (!settleQueueUndoEdit()) return false
+        val live = queueEditableInFlight(requested, resolveQueueEntryIndices(requested, identities, null)) // [KO]
+        if (!live && !settleQueueUndoEdit()) return false
         val before = queueUndoFingerprint() ?: return false
         if (!sameQueueUndoRoute(requested, before) || ListenTogether.state.value.controlsLocked) return false
         if (before.window != null &&
@@ -4390,6 +4410,7 @@ class PlaybackService : MediaLibraryService() {
             removedCurrent = removedCurrent,
             mutationSettled = mutationSettled,
             removedCount = removedCount,
+            undoable = !live, // [KO]
             messageForCount = { count ->
                 resources.getQuantityString(R.plurals.queue_removed_count, count, count)
             },
@@ -4407,7 +4428,8 @@ class PlaybackService : MediaLibraryService() {
                 item.queueEntryId != args.getString(EXTRA_QUEUE_MOVE_ENTRY)
             ) return false
         }
-        if (!settleQueueUndoEdit() || queueUndoFingerprint() != requested) return false
+        val live = queueEditableInFlight(requested, if (clear) emptyList() else listOf(requestedIndex)) // [KO]
+        if (!live && !settleQueueUndoEdit() || queueUndoFingerprint() != requested) return false
         val before = queueUndoFingerprint() ?: return false
         if (before.window != null && before.contextToken != before.contextRegistryToken) return false
         val raw = before.player
@@ -4442,6 +4464,7 @@ class PlaybackService : MediaLibraryService() {
             removedCurrent = removedCurrent,
             mutationSettled = mutationSettled,
             removedCount = removedCount,
+            undoable = !live, // [KO]
             messageForCount = {
                 if (clear) getString(R.string.queue_cleared)
                 else getString(
@@ -11761,7 +11784,7 @@ class PlaybackService : MediaLibraryService() {
                         while (true) {
                             val elapsed = SystemClock.elapsedRealtime() - fadeStart
                             val remaining = (actualDuration - elapsed).coerceAtLeast(0L)
-                            player?.let {
+                            player?.takeIf { crossfade?.isTransitioning() != true }?.let { // [KO] the blend's own volume
                                 it.volume = SleepTimer.calculateFadeVolume(remaining, actualDuration, true)
                                 faded = it
                             }
@@ -11774,7 +11797,7 @@ class PlaybackService : MediaLibraryService() {
                     player?.pause()
                     SleepTimer.cancel()
                 } finally {
-                    faded?.volume = 1f
+                    if (crossfade?.isTransitioning() != true) faded?.volume = 1f
                     sleepFading = false
                 }
             }
@@ -13850,6 +13873,7 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onRemoteRouteChanged() {
+            onRemotePlayback() // [KO] a watch hand-back says only this
             onQueueUndoRouteChanged()
             val info = getDeviceInfo()
             listeners.forEach { it.onDeviceInfoChanged(info) }
@@ -14944,6 +14968,8 @@ class PlaybackService : MediaLibraryService() {
                         }
                     }
                     if (CastController.state.value.casting || castPlayback.active) return@withContext null
+                    // [KO] Before the bounded window is replaced: the player would refuse the queue after.
+                    check(!ListenTogether.state.value.controlsLocked) { "The host controls playback" }
                     val token = BoundedContextRequests.put(
                         BoundedContextRequests.Request(
                             songs = context.page.songs,

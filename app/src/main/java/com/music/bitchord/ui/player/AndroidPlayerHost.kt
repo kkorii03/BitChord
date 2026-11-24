@@ -139,11 +139,11 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
 
     override suspend fun canvasFor(song: Song): CanvasArtwork? = CanvasRepository.canvasFor(song)
 
-    // [KO] Not while the phone is saving power: the button is a nicety, and
+    // [KO] Not while the phone is saving power or on mobile data: the button is a nicety, and
     // the first look at a song costs a request. What is known stays offered.
     override suspend fun bestPartMs(song: Song): Long? =
         (com.music.bitchord.ui.replay.year.BestParts.known(song.videoId)
-            ?: if (AppSettings.lowPower.value) return null
+            ?: if (AppSettings.lowPower.value || AppSettings.meteredConnection.value) return null
             else com.music.bitchord.ui.replay.year.BestParts.startFor(app, song))
             .takeIf { it.source != com.music.bitchord.ui.replay.year.BestPartStart.Source.FALLBACK }
             ?.startMs

@@ -651,7 +651,14 @@ internal fun BestPartPill(
     val enabled by PlayerSettings.showBestPart.collectAsStateWithLifecycle()
     if (!enabled) return
     val start by produceState<Long?>(null, song.videoId) {
-        value = runCatching { PlayerPlatform.host.bestPartMs(song) }.getOrNull()
+        value = null // [KO] not the last song's while this one is looked up
+        value = try {
+            PlayerPlatform.host.bestPartMs(song)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
     }
     // Remembered per track: having been heard is what puts the button away.
     var heard by remember(song.videoId) { mutableStateOf(false) }

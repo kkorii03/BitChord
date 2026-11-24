@@ -122,7 +122,9 @@ object MediaTagger {
             return null
         }
         cachedArtwork(context, thumbnailUrl)?.let { return it }
-        return fetchCover(thumbnailUrl.artworkAt(1200) ?: thumbnailUrl, track.videoId)
+        val sized = thumbnailUrl.artworkAt(1200) ?: thumbnailUrl
+        return fetchCover(sized, track.videoId)
+            ?: thumbnailUrl.takeIf { it != sized }?.let { fetchCover(it, track.videoId) } // [KO] a size the host refuses
     }
 
     /** The bytes of an already-saved local sidecar, or null when it is gone. */
@@ -211,7 +213,10 @@ object MediaTagger {
         // A dead local path cannot be fetched. The caller still has the remote
         // URL in hand and must pass that one to recreate the sidecar.
         if (isLocalArtworkUri(sourceUrl)) return null
-        val artwork = fetchCover(sourceUrl.artworkAt(1200) ?: sourceUrl, "collection") ?: return null
+        val sized = sourceUrl.artworkAt(1200) ?: sourceUrl
+        val artwork = fetchCover(sized, "collection")
+            ?: sourceUrl.takeIf { it != sized }?.let { fetchCover(it, "collection") } // [KO]
+            ?: return null
         return persistArtwork(context, sourceUrl, artwork)
     }
 

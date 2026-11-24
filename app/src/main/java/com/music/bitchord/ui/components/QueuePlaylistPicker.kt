@@ -11,6 +11,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.music.bitchord.R
 import com.music.bitchord.data.OfflinePlaylists
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.SongOrigins
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.ui.MainViewModel
 
@@ -31,7 +32,7 @@ fun QueuePlaylistPicker(
     val context = LocalContext.current
     val selected = remember { songs.toList() }
     val device = remember { selected.isNotEmpty() && selected.all(::usesDevicePlaylist) }
-    val compatible = remember { if (device) selected else selected.filterNot(::usesDevicePlaylist) }
+    val compatible = remember { if (device) selected else selected.filter { SongOrigins.hasYouTubeIdentity(it.videoId) } }
     val incompatible = selected.size - compatible.size
     var submitted by remember { mutableStateOf(false) }
     var finished by remember { mutableStateOf(false) }

@@ -559,6 +559,9 @@ internal object YouTubeFallback {
         return HomeShelf(YouTubeFallbackFeed.QUICK_PICKS_TITLE, covered.map(::shelfItem))
     }
 
+    /** [KO] The home page's mixes as plain cards, for the Radio tab. */
+    suspend fun mixes(): List<ShelfItem> = mixShelf(LocalPlayHistory.recent(HISTORY_LIMIT))?.items.orEmpty()
+
     /**
      * An RD mix card for each of the recent local history's top artists, with
      * songs filling any shortfall, capped at [YouTubeFallbackFeed.MIX_LIMIT].

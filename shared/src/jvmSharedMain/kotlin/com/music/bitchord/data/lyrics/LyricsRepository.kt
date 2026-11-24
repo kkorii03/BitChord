@@ -814,8 +814,13 @@ object LyricsRepository {
         var fallback: Result? = null
         fun keepIfBetter(result: Result?): Result? {
             if (result == null) return null
-            if (result.lines.any { it.timeMs > 0 }) return result
-            if (fallback == null) fallback = result
+            // YouTube Music answers by the video whatever the name: its line
+            // timings must not end the search before a later name's word sync.
+            val videoLines = prioritizeSyllableSync && result.source == LyricsSource.YOUTUBE_MUSIC &&
+                result.lines.none { it.isWordSynced }
+            val timed = result.lines.any { it.timeMs > 0 }
+            if (timed && !videoLines) return result
+            if (fallback == null || timed && fallback?.lines?.none { it.timeMs > 0 } == true) fallback = result
             return null
         }
         // The best a provider has actually delivered, even if the round was
@@ -1390,19 +1395,26 @@ object LyricsRepository {
         wordSyncedAfter: suspend (index: Int) -> Result? = { null },
     ): Result? {
         var plain: Result? = null
+        // [KO] YouTube Music's line timings stand behind every other source's, as
+        // its plain text did: the order puts it ahead of the line-synced sources.
+        var video: Result? = null
         for ((index, entry) in racing.withIndex()) {
             val (source, await) = entry
             // With something in hand already, Genius (plain text) is not worth asking.
-            if (plain != null && source == LyricsSource.GENIUS) continue
+            if ((plain != null || video != null) && source == LyricsSource.GENIUS) continue
             val found = runCatching { await() }.getOrNull() ?: continue
             if (found.lines.any { it.isWordSynced }) return found
             if (found.lines.any { it.timeMs > 0 }) {
                 if (!prioritizeSyllableSync) return found
+                if (source == LyricsSource.YOUTUBE_MUSIC) {
+                    video = found
+                    continue
+                }
                 return wordSyncedAfter(index) ?: found
             }
             if (plain == null) plain = found
         }
-        return plain
+        return video ?: plain
     }
 
     /**

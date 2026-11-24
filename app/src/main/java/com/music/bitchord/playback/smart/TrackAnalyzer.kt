@@ -381,6 +381,9 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     /** Cumulative decode time per track, for the per-transition analysisMs log. */
     private val analysisMillis = ConcurrentHashMap<String, Long>()
     private val running = ConcurrentHashMap.newKeySet<String>()
+
+    /** [KO] "track@window" measured before Automix's models were there. */
+    private val withoutModels = ConcurrentHashMap.newKeySet<String>()
     /**
      * Tracks with a reconsideration already queued on [executor].
      *
@@ -729,6 +732,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 },
             )
             if (stopped || analysisCancel.isCancelled(trackId) || hasWindow(trackId, window)) return
+            // [KO] Sampled before measuring: the models can land while it runs.
+            val modelsReady = AutomixModels.state.value == AutomixModels.State.Ready
             val analysis = if (headRendition != null) {
                 analyzeHead(trackId, uri, durationSeconds, headRendition)
             } else {
@@ -736,6 +741,8 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                 analyzeWindow(trackId, uri, durationSeconds, window, usableCopy)
             }
             if (analysis != null) {
+                val key = "$trackId@${window.name}"
+                if (modelsReady) withoutModels.remove(key) else withoutModels.add(key)
                 publishWindow(trackId, window, analysis, durationSeconds)
             } else if (!stopped && !analysisCancel.isCancelled(trackId) &&
                 windowFailureCounts(partialRendition = headRendition != null)
@@ -792,7 +799,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // [KO] Nor one measured while Automix's models were still missing: it has no
         // model beats or vocals, and the stored answer would outlive the download.
         if (persistableMerge(headResults[trackId], tailResults[trackId]) &&
-            AutomixModels.state.value == AutomixModels.State.Ready
+            AnalysisWindow.entries.none { "$trackId@${it.name}" in withoutModels }
         ) {
             store.save(trackId, merged)
             restoreAttempted.add(trackId)
