@@ -49,6 +49,7 @@ import dev.chrisbanes.haze.materials.HazeMaterials
 internal fun FrostedSortMenu(
     hazeState: HazeState,
     selected: SongSort,
+    offerTrackNumber: Boolean,
     onSelect: (SongSort) -> Unit,
     onFlipDateDirection: () -> Unit,
     onDismiss: () -> Unit,
@@ -119,6 +120,7 @@ internal fun FrostedSortMenu(
                 }
                 SongSort.entries
                     .filter { it != SongSort.DATE_ADDED_ASC && it != SongSort.DATE_ADDED_DESC }
+                    .filter { offerTrackNumber || it != SongSort.TRACK_NUMBER }
                     .forEach { option ->
                         Row(
                             Modifier

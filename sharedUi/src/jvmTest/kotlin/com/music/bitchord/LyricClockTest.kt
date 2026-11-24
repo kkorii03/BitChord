@@ -1,11 +1,14 @@
 package com.music.bitchord
 
+import androidx.compose.runtime.mutableStateOf
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricLineIndex
 import com.music.bitchord.data.lyrics.withEstimatedWords
 import com.music.bitchord.ko.ui.player.koShouldDrawLyricFrame
+import com.music.bitchord.playback.PlaybackPosition
 import com.music.bitchord.playback.playingSpeed
 import com.music.bitchord.ui.player.LyricClock
+import com.music.bitchord.ui.player.LyricPlayhead
 import kotlin.math.abs
 import kotlin.random.Random
 import org.junit.Assert.assertEquals
@@ -506,6 +509,255 @@ class LyricClockTest {
         clock.restart()
         assertEquals(10_000L, clock.frame(60_000.0, 10_000, 0.0, 0))
         assertEquals(10_016L, clock.frame(60_016.0, 10_000, 0.0, 0))
+    }
+
+    /** The captured resume sample reached the old paused callback before recomposition removed it. */
+    @Test fun resumedSampleCannotOverwriteThePausedClockBeforeRecomposition() {
+        val position = PlaybackPosition()
+        val playhead = LyricPlayhead(position, mutableStateOf(0))
+        val clock = LyricClock(30_867)
+        var shown = 30_867L
+        // Keep the old compositional false throughout, just as in the captured callback race.
+        fun pausedObserver(nowMs: Double) {
+            clock.observe(playhead.reading(isPlaying = false), nowMs)?.let { shown = it }
+        }
+
+        position.report(30_867, sampledAtNanos = 1_000_000_000L, isPlaying = false)
+        pausedObserver(1_000.0)
+        position.report(30_746, sampledAtNanos = 5_000_000_000L, isPlaying = true)
+        pausedObserver(5_001.0)
+        assertEquals(30_867L, shown)
+        assertEquals(30_867.0, clock.displayedMs, 0.0)
+
+        // [KO] The first running frame is where the song is, carried from when it was sampled:
+        // upstream keeps the paused words and steers the gap out instead.
+        clock.restart()
+        assertEquals(30_748L, clock.frame(5_002.0, playhead.reading(isPlaying = false)))
+        position.report(30_992, sampledAtNanos = 5_034_000_000L, isPlaying = true)
+        pausedObserver(5_035.0)
+        assertEquals(30_867L, shown)
+        var previous = clock.frame(5_035.0, playhead.reading(isPlaying = false))
+        for (step in 1..600) {
+            val now = 5_034.0 + step * frameMs
+            val reported = 30_992 + (step * frameMs).toLong()
+            position.report(reported, sampledAtNanos = (now * 1_000_000).toLong(), isPlaying = true)
+            val next = clock.frame(now, playhead.reading(isPlaying = false))
+            assertTrue("went back after resume at $now", next >= previous)
+            previous = next
+        }
+        assertTrue(abs(previous - position.positionMs) < 40)
+    }
+
+    @Test fun pausedSeeksStillLandBeforeResuming() {
+        val position = PlaybackPosition()
+        val playhead = LyricPlayhead(position, mutableStateOf(0))
+        val clock = LyricClock(30_867)
+        position.report(30_867, sampledAtNanos = 1_000_000_000L, isPlaying = false)
+        clock.observe(playhead.reading(isPlaying = false), 1_000.0)
+
+        position.seeks++
+        position.report(20_000, sampledAtNanos = 2_000_000_000L, isPlaying = false)
+        assertEquals(20_000L, clock.observe(playhead.reading(isPlaying = false), 2_000.0))
+        position.seeks++
+        position.report(35_000, sampledAtNanos = 3_000_000_000L, isPlaying = false)
+        assertEquals(35_000L, clock.observe(playhead.reading(isPlaying = false), 3_000.0))
+
+        position.report(34_990, sampledAtNanos = 5_000_000_000L, isPlaying = true)
+        assertTrue(clock.observe(playhead.reading(isPlaying = false), 5_000.0) == null)
+        clock.restart()
+        assertEquals(34_990L, clock.frame(5_000.0, playhead.reading(isPlaying = true)))
+    }
+
+    /** A seek can land after the last paused callback, immediately before the resumed frame. */
+    @Test fun seekDuringTheResumeHandoffIsNotSuppressed() {
+        val position = PlaybackPosition()
+        val playhead = LyricPlayhead(position, mutableStateOf(0))
+        val clock = LyricClock(30_867)
+        position.report(30_867, sampledAtNanos = 1_000_000_000L, isPlaying = false)
+        clock.observe(playhead.reading(isPlaying = false), 1_000.0)
+
+        position.seeks++
+        position.report(20_000, sampledAtNanos = 5_000_000_000L, isPlaying = true)
+        assertTrue(clock.observe(playhead.reading(isPlaying = false), 5_000.0) == null)
+        clock.restart()
+        assertEquals(20_000L, clock.frame(5_000.0, playhead.reading(isPlaying = true)))
+    }
+
+    @Test fun seekIdentityIsPublishedWithTheLandingPosition() {
+        val position = PlaybackPosition()
+        val playhead = LyricPlayhead(position, mutableStateOf(0))
+        position.report(30_867, sampledAtNanos = 1_000_000_000L, isPlaying = false)
+        val before = playhead.reading(isPlaying = false)
+        position.seeks++
+        val pending = playhead.reading(isPlaying = false)
+        assertEquals(before, pending)
+
+        position.report(20_000, sampledAtNanos = 2_000_000_000L, isPlaying = false)
+        val landed = playhead.reading(isPlaying = false)
+        assertEquals(20_000L, landed.positionMs)
+        assertTrue(landed.discontinuity != before.discontinuity)
+    }
+
+    @Test fun stoppedSampleStopsAnObsoleteRunningFrame() {
+        val position = PlaybackPosition()
+        val playhead = LyricPlayhead(position, mutableStateOf(0))
+        val clock = LyricClock(30_867)
+        position.report(30_867, sampledAtNanos = 1_000_000_000L, isPlaying = true)
+        clock.frame(1_000.0, playhead.reading(isPlaying = true))
+
+        // Both pause and Media3 buffering publish isPlaying=false, before the UI effect stops.
+        position.report(30_880, sampledAtNanos = 1_100_000_000L, isPlaying = false)
+        assertEquals(30_880L, clock.frame(1_116.0, playhead.reading(isPlaying = true)))
+        assertEquals(30_880L, clock.frame(1_132.0, playhead.reading(isPlaying = true)))
+    }
+
+    /** [KO] A pause shows the song's own place, and the run starts from it: nothing is left to steer out. */
+    @Test fun stoppedReportsSettleAndResumeStartsFromThem() {
+        val position = PlaybackPosition()
+        val playhead = LyricPlayhead(position, mutableStateOf(0))
+        val clock = LyricClock(30_000)
+        position.report(30_000, sampledAtNanos = 1_000_000_000L, isPlaying = true)
+        clock.frame(1_000.0, playhead.reading(isPlaying = true))
+        clock.frame(1_200.5, playhead.reading(isPlaying = true))
+
+        position.report(30_170, sampledAtNanos = 1_210_000_000L, isPlaying = false)
+        assertEquals(30_170L, clock.observe(playhead.reading(isPlaying = true), 1_210.0))
+        position.report(30_150, sampledAtNanos = 1_500_000_000L, isPlaying = false)
+        assertEquals(30_150L, clock.observe(playhead.reading(isPlaying = false), 1_500.0))
+
+        position.report(30_100, sampledAtNanos = 5_000_000_000L, isPlaying = true)
+        assertTrue(clock.observe(playhead.reading(isPlaying = false), 5_000.0) == null)
+        clock.restart()
+        assertEquals(30_100L, clock.frame(5_000.0, playhead.reading(isPlaying = true)))
+        var previous = 30_100L
+        for (step in 1..600) {
+            val elapsed = step * frameMs
+            val now = 5_000.0 + elapsed
+            position.report(30_100 + elapsed.toLong(), sampledAtNanos = (now * 1_000_000).toLong(), isPlaying = true)
+            val next = clock.frame(now, playhead.reading(isPlaying = true), knownSpeed = 1.0)
+            assertTrue("regressed after a pause at $now", next >= previous)
+            assertTrue("away from the song after a pause at $now", abs(next - position.positionMs) < 40)
+            previous = next
+        }
+    }
+
+    @Test fun bufferingAfterTheFirstResumedFrameCannotLowerTheDisplay() {
+        val position = PlaybackPosition()
+        val playhead = LyricPlayhead(position, mutableStateOf(0))
+        val clock = LyricClock(30_867)
+        position.report(30_867, sampledAtNanos = 1_000_000_000L, isPlaying = false)
+        clock.observe(playhead.reading(isPlaying = false), 1_000.0)
+        position.report(30_746, sampledAtNanos = 5_000_000_000L, isPlaying = true)
+        clock.restart()
+        assertEquals(30_746L, clock.frame(5_000.0, playhead.reading(isPlaying = true)))
+        val resumed = clock.frame(5_016.0, playhead.reading(isPlaying = true))
+
+        // A real subsequent stopped sample is not the stale-UI race fixed by 8302fec2.
+        position.report(30_762, sampledAtNanos = 5_020_000_000L, isPlaying = false)
+        assertEquals(resumed, clock.frame(5_032.0, playhead.reading(isPlaying = true)))
+        assertEquals(resumed, clock.observe(playhead.reading(isPlaying = true), 5_033.0))
+        position.report(30_992, sampledAtNanos = 5_048_000_000L, isPlaying = true)
+        clock.restart()
+        assertTrue(clock.frame(5_048.0, playhead.reading(isPlaying = true)) >= resumed)
+    }
+
+    @Test fun stoppedHiddenClockStillFollowsTheActualPosition() {
+        val position = PlaybackPosition()
+        val playhead = LyricPlayhead(position, mutableStateOf(0))
+        val clock = LyricClock(30_000)
+        position.report(30_000, sampledAtNanos = 1_000_000_000L, isPlaying = true)
+        clock.frame(1_000.0, playhead.reading(isPlaying = true))
+        clock.frame(1_200.0, playhead.reading(isPlaying = true))
+        position.report(30_170, sampledAtNanos = 1_210_000_000L, isPlaying = false)
+        assertEquals(30_170L, clock.observe(playhead.reading(isPlaying = false), 1_210.0, active = false))
+    }
+
+    @Test fun hiddenRunningClockExtrapolatesWhenShownAgain() {
+        val position = PlaybackPosition()
+        val playhead = LyricPlayhead(position, mutableStateOf(0))
+        val clock = LyricClock(10_000)
+        position.report(10_000, sampledAtNanos = 1_000_000_000L, isPlaying = false)
+        clock.observe(playhead.reading(isPlaying = false), 1_000.0)
+        position.report(10_000, sampledAtNanos = 2_000_000_000L, isPlaying = true)
+        // Covers both an inactive panel and the same foreground gate used while backgrounded.
+        assertEquals(10_000L, clock.observe(playhead.reading(isPlaying = false), 2_000.0, active = false))
+        clock.restart()
+        assertEquals(40_000L, clock.frame(32_000.0, playhead.reading(isPlaying = true)))
+    }
+
+    @Test fun backgroundReturnDoesNotKeepAnObsoletePausedDisplay() {
+        val position = PlaybackPosition()
+        val playhead = LyricPlayhead(position, mutableStateOf(0))
+        val clock = LyricClock(10_000)
+        position.report(10_000, sampledAtNanos = 1_000_000_000L, isPlaying = false)
+        clock.observe(playhead.reading(isPlaying = false), 1_000.0)
+        // Even if background observations were conflated, a forward target is accepted on return.
+        position.report(40_000, sampledAtNanos = 32_000_000_000L, isPlaying = true)
+        clock.restart()
+        assertEquals(40_000L, clock.frame(32_000.0, playhead.reading(isPlaying = true)))
+    }
+
+    @Test fun pausedOffsetChangeIsAppliedWithoutANewPositionReport() {
+        val position = PlaybackPosition()
+        val offset = mutableStateOf(0)
+        val playhead = LyricPlayhead(position, offset)
+        val clock = LyricClock(30_867)
+        position.report(30_867, sampledAtNanos = 1_000_000_000L, isPlaying = false)
+        clock.observe(playhead.reading(isPlaying = false), 1_000.0)
+        offset.value = 500
+        val adjusted = position.positionMs - offset.value
+        assertEquals(adjusted, clock.observe(playhead.reading(isPlaying = false), 2_000.0))
+        position.report(30_867, sampledAtNanos = 5_000_000_000L, isPlaying = true)
+        clock.restart()
+        assertEquals(adjusted, clock.frame(5_000.0, playhead.reading(isPlaying = true)))
+    }
+
+    @Test fun repeatedLongPausesDoNotAccumulateElapsedTimeOnResume() {
+        val position = PlaybackPosition()
+        val playhead = LyricPlayhead(position, mutableStateOf(0))
+        val clock = LyricClock(30_867)
+        for (cycle in 1..5) {
+            val stopped = 30_867L + cycle * 1_000L
+            val stoppedAt = cycle * 60_000_000_000L
+            // Each cycle starts at a new landing, not an unannounced change to a frozen clock.
+            position.seeks++
+            position.report(stopped, sampledAtNanos = stoppedAt, isPlaying = false)
+            clock.observe(playhead.reading(isPlaying = true), stoppedAt / 1_000_000.0)
+            val resumedAt = stoppedAt + 30_000_000_000L
+            position.report(stopped - 121, sampledAtNanos = resumedAt, isPlaying = true)
+            assertTrue(clock.observe(playhead.reading(isPlaying = false), resumedAt / 1_000_000.0) == null)
+            clock.restart()
+            assertEquals(stopped - 121, clock.frame(resumedAt / 1_000_000.0, playhead.reading(isPlaying = true)))
+        }
+    }
+
+    @Test fun rapidPauseResumeReadsTransportEvenWhenThePositionDoesNotChange() {
+        val position = PlaybackPosition()
+        val playhead = LyricPlayhead(position, mutableStateOf(0))
+        val clock = LyricClock(30_867)
+        position.report(30_867, sampledAtNanos = 1_000_000_000L, isPlaying = false)
+        clock.observe(playhead.reading(isPlaying = false), 1_000.0)
+        position.report(30_867, sampledAtNanos = 1_001_000_000L, isPlaying = true)
+        assertTrue(playhead.reading(isPlaying = false).isPlaying)
+        assertTrue(clock.observe(playhead.reading(isPlaying = false), 1_001.0) == null)
+        clock.restart()
+        clock.frame(1_001.0, playhead.reading(isPlaying = true))
+        position.report(30_867, sampledAtNanos = 1_002_000_000L, isPlaying = false)
+        assertEquals(30_867L, clock.frame(1_002.0, playhead.reading(isPlaying = true)))
+        position.report(30_746, sampledAtNanos = 1_003_000_000L, isPlaying = true)
+        assertTrue(clock.observe(playhead.reading(isPlaying = false), 1_003.0) == null)
+        clock.restart()
+        assertEquals(30_746L, clock.frame(1_003.0, playhead.reading(isPlaying = true)))
+    }
+
+    @Test fun unstatedTransportFallsBackToUiStateAndRespectsAdvancing() {
+        val position = PlaybackPosition()
+        val playhead = LyricPlayhead(position, mutableStateOf(0))
+        position.report(30_867, sampledAtNanos = 1_000_000_000L)
+        assertTrue(!playhead.reading(isPlaying = false).isPlaying)
+        assertTrue(playhead.reading(isPlaying = true).isPlaying)
+        position.advancing = false
+        assertTrue(!playhead.reading(isPlaying = true).isPlaying)
     }
 
     /** Coming back to the app while it played on: the last reading has moved on by its age. */

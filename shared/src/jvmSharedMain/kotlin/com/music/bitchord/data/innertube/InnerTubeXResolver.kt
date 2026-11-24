@@ -324,6 +324,14 @@ object InnerTubeXResolver {
      * changes which clients InnerTubeX will use — authenticated ones only, login
      * cookies first, no embedded fallback — see [UploadedTracks].
      *
+     * [premium] says the signed-in account has YouTube Premium. For an Opus ask
+     * it sends InnerTubeX down the route age-restricted tracks already take:
+     * the signed-in clients first, instead of the anonymous direct ask that
+     * answers everything else. Only a signed-in client is offered Premium's
+     * ~256kbps Opus (itag 774); the anonymous one tops out at itag 251. The
+     * ask is then [AudioQuality.HIGH] — highest bitrate wins — since AUTO's
+     * scoring would happily settle for 251. Signed out, InnerTubeX ignores it.
+     *
      * @return a stream for [videoId], or null when every client InnerTubeX would
      *   try is refused or [skipClients] has ruled it out.
      * @param viaProxy sends this one walk, and the media fetch it mints,
@@ -340,6 +348,7 @@ object InnerTubeXResolver {
         uploaded: Boolean = false,
         preferredClientId: String? = null,
         viaProxy: Boolean = false,
+        premium: Boolean = false,
     ): Extracted? {
         val itx = if (viaProxy) proxyInnerTube else innerTube
         val walker = if (viaProxy) proxyExtractor else extractor
@@ -353,6 +362,8 @@ object InnerTubeXResolver {
         val deadRoute = com.music.bitchord.ko.KoDeadClients.route(viaProxy, com.music.bitchord.data.net.YouTubeProxy.routeGeneration, com.music.bitchord.ko.KoDeadClients.place())
         val skip = excludedFor(videoId) + skipClients
         val dead = if (preferredClientId == null) com.music.bitchord.ko.KoDeadClients.dead(deadRoute) - skip else emptySet()
+        // Premium's rung is ~256kbps; a ceiling under that couldn't keep it.
+        val premiumOpus = premium && !requireM4a && maxKbps >= PREMIUM_OPUS_KBPS
         suspend fun walk(excludedClients: Set<String>) = withContext(com.music.bitchord.ko.KoDeadClients.walkContext(deadRoute, videoId)) {
             walker.extract(
                 videoId = videoId,
@@ -364,11 +375,13 @@ object InnerTubeXResolver {
                     // [ResolutionOrder]; null keeps the measured default order.
                     playbackClientOverrideId = preferredClientId,
                 )
+                    .withPremium(premiumOpus)
                     .withStreamCapabilities(allowHls = false, allowSabr = false, allowBoundedRange = true),
                 excludedClients = excludedClients,
                 audioQuality = when {
                     requireM4a -> AudioQuality.MP4
                     maxKbps <= LOW_KBPS -> AudioQuality.LOW
+                    premiumOpus -> AudioQuality.HIGH
                     else -> AudioQuality.AUTO
                 },
                 clientPlaybackNonce = generateClientPlaybackNonce(),
@@ -678,6 +691,8 @@ object InnerTubeXResolver {
     /** The client a picture asks when the video ranking found nothing and audio learned no InnerTubeX path. */
     private const val DEFAULT_VIDEO_FALLBACK_CLIENT = "WEB_CREATOR"
     private const val LOW_KBPS = 64
+    /** Itag 774, Premium's Opus rung. */
+    private const val PREMIUM_OPUS_KBPS = 256
     private const val EXCLUDE_MS = 10 * 60 * 1000L
     private const val MAX_REMEMBERED = 64
     private const val KEPT_PLAYERS = 3

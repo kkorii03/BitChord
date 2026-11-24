@@ -431,6 +431,7 @@ class NextHqDirectSourceGateTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> {
             searches++
             searching.complete(Unit)

@@ -339,4 +339,18 @@
     <string name="private_listening_notice">Private mode · not saved to YouTube history</string>
     <string name="private_listening_turn_off">Turn off</string>
     <string name="automix_overview_unavailable">No Automix transition coming up</string>
+    <!-- upstream 1.10 -->
+    <string name="best_part">Best Part</string>
+    <string name="best_part_description">Skip to the best part</string>
+    <string name="add_to_queue">Add to queue</string>
+    <string name="mixes_yours">Your Mixes</string>
+    <string name="mixes_none">No mixes yet. Keep listening and YouTube Music will make some for you.</string>
+    <string name="queue_selected_count">%1$d selected</string>
+    <string name="queue_select_all">Select all</string>
+    <string name="queue_select">Select</string>
+    <string name="queue_close_selection">Close selection mode</string>
+    <string name="queue_add_to_playlist">Playlist</string>
+    <string name="queue_download">Download</string>
+    <string name="queue_selection_remove">Remove</string>
+    <string name="queue_add_all_to_playlist">Add all to playlist</string>
 </resources>

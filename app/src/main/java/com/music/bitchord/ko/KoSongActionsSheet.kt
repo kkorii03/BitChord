@@ -271,6 +271,8 @@ internal fun KoSongActionsSheet(
      * held row itself above them.
      */
     menu: Boolean = false,
+    /** Queue rows already belong to the queue, so hide its insertion actions. */
+    fromQueue: Boolean = false,
 ) {
     var showingSongInfo by remember(song.videoId) { mutableStateOf(false) }
     var pickingSleepTimer by remember { mutableStateOf(false) }
@@ -324,29 +326,31 @@ internal fun KoSongActionsSheet(
                 onClick = onAddToPlaylist,
             )
         }
-        if (KoSongMenuRows.showsRemoveFromPlaylist(signedIn, song)) {
-            onRemoveFromPlaylist?.let {
-                ActionRow(
-                    icon = SfIcons.RemoveFromPlaylist,
-                    label = stringResource(R.string.remove_from_playlist),
-                    accent = palette.accent,
-                    onClick = it,
-                )
-            }
+        // Signed out too: a playlist imported onto this device is the user's. The
+        // host passes this only while the track can really be taken out of something.
+        onRemoveFromPlaylist?.let {
+            ActionRow(
+                icon = SfIcons.RemoveFromPlaylist,
+                label = stringResource(R.string.remove_from_playlist),
+                accent = palette.accent,
+                onClick = it,
+            )
         }
 
-        ActionRow(
-            icon = SfIcons.PlayNext,
-            label = stringResource(R.string.play_next),
-            accent = palette.accent,
-            onClick = onPlayNext,
-        )
-        ActionRow(
-            icon = SfIcons.PlayLast,
-            label = stringResource(R.string.add_to_queue),
-            accent = palette.accent,
-            onClick = onAddToQueue,
-        )
+        if (!fromQueue) {
+            ActionRow(
+                icon = SfIcons.PlayNext,
+                label = stringResource(R.string.play_next),
+                accent = palette.accent,
+                onClick = onPlayNext,
+            )
+            ActionRow(
+                icon = SfIcons.PlayLast,
+                label = stringResource(R.string.add_to_queue),
+                accent = palette.accent,
+                onClick = onAddToQueue,
+            )
+        }
         if (!isLocalFile) {
             onShare?.let {
                 ActionRow(SfIcons.Share, stringResource(R.string.share), accent = palette.accent, onClick = it)
@@ -1103,6 +1107,15 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
             selected = custom != null,
             accent = palette.accent,
         ) { pickingCustom = true }
+
+        HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
+        val fadeOut by AppSettings.sleepTimerFadeOut.collectAsStateWithLifecycle()
+        SleepOption(
+            label = stringResource(R.string.sleep_timer_fade_out),
+            selected = fadeOut,
+            accent = palette.accent,
+        ) { AppSettings.setSleepTimerFadeOut(!fadeOut) }
+
         if (chosen != null || afterTrack) {
             ActionRow(SfIcons.Close, stringResource(R.string.turn_off_timer), accent = palette.accent) {
                 SleepTimer.cancel()

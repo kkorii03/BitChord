@@ -114,7 +114,7 @@ class KoWindowClockTest {
 
         override suspend fun health() = SourceHealth.Ok()
 
-        override suspend fun search(query: String, limit: Int, waitForAll: Boolean, request: StreamRequest?): List<Song> = rows
+        override suspend fun search(query: String, limit: Int, waitForAll: Boolean, request: StreamRequest?, target: TrackMatcher.Target?): List<Song> = rows
 
         // A reserved host: the probe's request fails at once, which keeps the candidate's chance.
         override suspend fun stream(trackId: String, request: StreamRequest): SourceStream =

@@ -1348,31 +1348,21 @@ object LyricsRepository {
         }
 
         try {
-            var fallback: Result? = null
-            for ((index, entry) in racing.withIndex()) {
-                val (source, job) = entry
-                // With something in hand already, Genius (plain text) is not worth asking.
-                if (fallback != null && source == LyricsSource.GENIUS) continue
-                val found = runCatching { job.await() }.getOrNull() ?: continue
-                if (found.lines.any { it.isWordSynced }) return@coroutineScope found.also { logConsensus(it) } // [KO] consensus
-                val timed = found.lines.any { it.timeMs > 0 }
-                if (!prioritizeSyllableSync && timed) return@coroutineScope found.also { logConsensus(it) } // [KO] consensus
-                if (fallback == null || (timed && fallback.lines.none { it.timeMs > 0 })) fallback = found
-                if (timed) {
-                    // A line-synced answer is in hand. The sources still running
-                    // get [SYLLABLE_GRACE_MS] between them to beat it with a
-                    // word-synced one — all of them at once, so one slow server
-                    // early in the order no longer ends the wait for a faster one
-                    // further down that has already answered.
-                    // Only sources that *can* answer word by word are worth
-                    // the wait; a line-only one finishing later changes nothing.
-                    val rest = racing.drop(index + 1)
-                        .filter { it.first != LyricsSource.GENIUS && it.first.wordSynced }
-                    return@coroutineScope (wordSyncedWithin(rest, SYLLABLE_GRACE_MS) ?: fallback)
-                        .also { logConsensus(it) } // [KO] consensus
-                }
-            }
-            fallback.also { logConsensus(it) } // [KO] consensus
+            pick(
+                racing.map { (source, job) -> source to suspend { job.await() } },
+                prioritizeSyllableSync,
+            ) { index ->
+                // A line-synced answer is in hand. The sources still running
+                // get [SYLLABLE_GRACE_MS] between them to beat it with a
+                // word-synced one — all of them at once, so one slow server
+                // early in the order no longer ends the wait for a faster one
+                // further down that has already answered.
+                // Only sources that *can* answer word by word are worth
+                // the wait; a line-only one finishing later changes nothing.
+                val rest = racing.drop(index + 1)
+                    .filter { it.first != LyricsSource.GENIUS && it.first.wordSynced }
+                wordSyncedWithin(rest, SYLLABLE_GRACE_MS)
+            }.also { logConsensus(it) } // [KO] consensus
         } finally {
             // Whoever lost the race is no longer worth waiting on, and
             // coroutineScope will not return while they are still running.
@@ -1380,6 +1370,39 @@ object LyricsRepository {
             identifying?.cancel()
             documents.cancel()
         }
+    }
+
+    /**
+     * The first word-synced result in [racing] order; failing that, the first
+     * line-synced one; failing that, the first plain one. Without
+     * [prioritizeSyllableSync], the first timed result wins outright.
+     *
+     * Plain and line-synced are kept apart: a plain result that happened to
+     * arrive first must not shadow a line-synced one further down the order.
+     *
+     * [wordSyncedAfter] is asked once, with the place of the first line-synced
+     * answer, whether a source after it beats it word by word; see
+     * [wordSyncedWithin].
+     */
+    internal suspend fun pick(
+        racing: List<Pair<LyricsSource, suspend () -> Result?>>,
+        prioritizeSyllableSync: Boolean,
+        wordSyncedAfter: suspend (index: Int) -> Result? = { null },
+    ): Result? {
+        var plain: Result? = null
+        for ((index, entry) in racing.withIndex()) {
+            val (source, await) = entry
+            // With something in hand already, Genius (plain text) is not worth asking.
+            if (plain != null && source == LyricsSource.GENIUS) continue
+            val found = runCatching { await() }.getOrNull() ?: continue
+            if (found.lines.any { it.isWordSynced }) return found
+            if (found.lines.any { it.timeMs > 0 }) {
+                if (!prioritizeSyllableSync) return found
+                return wordSyncedAfter(index) ?: found
+            }
+            if (plain == null) plain = found
+        }
+        return plain
     }
 
     /**
@@ -1491,7 +1514,8 @@ object LyricsRepository {
             // Never raced: only ever the last resort of [search].
             LyricsSource.GEMINI_TRANSCRIPT -> null
         }
-        if (found == null) return null
+        // An instrumental's "pure music, please enjoy" is no lyrics, whoever relays it.
+        if (found == null || KuGou.isInstrumentalNotice(found)) return null
         if (scriptRejects(videoId, language, source, found) || soundRejects(videoId, result(source, found), heard)) {
             // [KO] The id behind a refused sheet must not answer the later names of this song.
             if (source == LyricsSource.AMLL_TTML) AmllTtml.refuse(videoId, title, artist, durationMs)

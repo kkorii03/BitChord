@@ -126,6 +126,8 @@ fun SongActionsMenu(
      * held row itself above them.
      */
     menu: Boolean = false,
+    /** Queue rows already belong to the queue, so hide its insertion actions. */
+    fromQueue: Boolean = false,
 ) {
     KoSongActionsSheet(
         song = song,
@@ -166,5 +168,6 @@ fun SongActionsMenu(
         onAutomixOverview = onAutomixOverview,
         resolvingLinks = resolvingLinks,
         menu = menu,
+        fromQueue = fromQueue,
     )
 }

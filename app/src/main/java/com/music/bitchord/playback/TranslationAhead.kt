@@ -253,7 +253,7 @@ internal object TranslationAhead {
         }
         // A download carries its own lyrics: nothing to look up or time.
         song.localUri?.let { uri ->
-            val embedded = EmbeddedLyrics.forUri(app, uri)
+            val embedded = EmbeddedLyrics.forUri(app, uri)?.takeIf(EmbeddedLyrics::isSynced)
             if (embedded != null) {
                 if (translationWanted) {
                     translate(song.videoId, embedded, targetLanguage(app), keep = true)

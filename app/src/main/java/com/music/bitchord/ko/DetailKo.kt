@@ -94,14 +94,20 @@ internal suspend fun koPlayDetailSongs(
     val preview = settled?.songsArePreview == true
     val settledSongs =
         (settled?.songs as? com.music.bitchord.data.model.UiState.Success)?.data
-    val pageSongKeys =
-        (settledSongs ?: (page.songs as? com.music.bitchord.data.model.UiState.Success)?.data).orEmpty()
-            .mapTo(HashSet()) { it.contextEntryKey() }
+    val screenSongs = (page.songs as? com.music.bitchord.data.model.UiState.Success)?.data
+    val pageKeys = (settledSongs ?: screenSongs).orEmpty().map { it.contextEntryKey() }
+    val pageSongKeys = pageKeys.toHashSet()
     val selected = songs.getOrNull(index)
     val useBounded =
         (page.type == com.music.bitchord.data.model.BrowseType.ALBUM ||
             page.type == com.music.bitchord.data.model.BrowseType.PLAYLIST) &&
             selected?.contextEntryKey()?.let(pageSongKeys::contains) == true &&
+            // A sorted list plays as sorted, not in the page's order (#1141). The
+            // list tapped may be one fill-in behind, so either listing can vouch.
+            songs.map { it.contextEntryKey() }.let { shown ->
+                com.music.bitchord.inPageOrder(shown, pageKeys) ||
+                    com.music.bitchord.inPageOrder(shown, screenSongs.orEmpty().map { it.contextEntryKey() })
+            } &&
             !com.music.bitchord.playback.cast.CastController.state.value.casting
     // The page snapshot on screen can be one fill-in behind, or an older visit
     // restored from the saved context. The view model's newest list is what the

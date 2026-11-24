@@ -81,8 +81,15 @@ object BiniLyrics {
         // An ISRC names one recording, so the first row is it. A name search
         // does not: the API ranks by length, so a 210 s music video is answered
         // with the 212 s remix before the 173 s track (pB-5XG-DbAA).
-        if (!isrc.isNullOrBlank()) results.firstOrNull() else rowFor(results, title, artist, durationMs)
+        if (!isrc.isNullOrBlank()) results.firstOrNull() else best(results, title, artist, durationMs)
     }
+
+    /**
+     * The search by name can put a different recording first. So a hit is taken only if it
+     * passes the checks in [rowFor] (the fork's, which also accept a row spelled in another script).
+     */
+    fun best(results: List<Hit>, title: String, artist: String, durationMs: Long): Hit? =
+        rowFor(results, title, artist, durationMs)
 
     /**
      * The row sure to be this recording, else the API's first as before. The rules want

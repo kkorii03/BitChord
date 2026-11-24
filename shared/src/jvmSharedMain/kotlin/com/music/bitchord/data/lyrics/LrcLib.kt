@@ -120,10 +120,12 @@ object LrcLib {
             val match = STAMP.find(line) ?: return@flatMap emptySequence()
             // [KO] a compressed row repeats one line at several times
             // ("[00:12.00][01:15.00]chorus"): every leading stamp is a line.
+            // Some writers put a space between the stamps; only words end the run.
             val stamps = mutableListOf(match)
             while (true) {
-                val next = STAMP.find(line, stamps.last().range.last + 1)
-                    ?.takeIf { it.range.first == stamps.last().range.last + 1 } ?: break
+                val end = stamps.last().range.last + 1
+                val next = STAMP.find(line, end)
+                    ?.takeIf { line.substring(end, it.range.first).isBlank() } ?: break
                 stamps += next
             }
             val body = line.substring(stamps.last().range.last + 1)

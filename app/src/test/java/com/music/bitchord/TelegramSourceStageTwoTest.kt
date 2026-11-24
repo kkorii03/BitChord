@@ -9,6 +9,7 @@ import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamRequest
+import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.telegram.TelegramTrack
 import com.music.bitchord.telegram.TelegramTrackMapper
 import org.junit.Assert.assertEquals
@@ -115,6 +116,7 @@ class TelegramSourceStageTwoTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> = emptyList()
 
         override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? = null

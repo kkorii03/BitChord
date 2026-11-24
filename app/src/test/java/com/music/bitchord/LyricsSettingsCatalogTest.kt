@@ -14,6 +14,7 @@ class LyricsSettingsCatalogTest {
         assertEquals(
             listOf(
                 "synced_lyrics",
+                "hide_lyrics_preview",
                 "lyrics_blur",
                 "lyrics_sources",
                 "translation_language",

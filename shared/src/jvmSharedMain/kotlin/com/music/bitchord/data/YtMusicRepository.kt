@@ -35,6 +35,7 @@ import com.music.bitchord.data.model.ArtistPage
 import com.music.bitchord.data.model.HomeFeed
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.HomeSource
+import com.music.bitchord.data.model.KeyedMix
 import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.LibraryState
 import com.music.bitchord.data.model.LikeStatus
@@ -680,19 +681,36 @@ object YtMusicRepository {
         }
 
     /**
-     * Live media results for the typeahead phase — a lightweight search that
-     * returns tracks, artists, and albums so the dropdown can show playable
-     * cards alongside text completions. Uses the ALL filter to get mixed
-     * results quickly; callers may want to limit how many they display.
+     * Live media results for the typeahead phase: tracks, artists and albums
+     * so the dropdown can show playable cards alongside text completions.
      *
-     * Deliberately unauthenticated: [Innertube.searchTypeahead] sends no
-     * session at all, so YouTube Music does not log each debounced keystroke
-     * to the account's server-side search history. Confirmed searches (Enter /
-     * IME Search / tapping a suggestion) go through [searchPage], which is
-     * anonymous for the same reason.
+     * Read from the suggestions endpoint first, the way YouTube Music's own
+     * search box does it: it answers with the cards the box shows for a
+     * prefix, and is a lighter request than a search. Only when it carries no
+     * cards (some short or odd prefixes) does it fall back to
+     * [Innertube.searchTypeahead].
+     *
+     * [KO] Deliberately unauthenticated, unlike upstream, which asks the
+     * suggestions signed in: both requests send no session at all, so YouTube
+     * Music does not log each debounced keystroke to the account's server-side
+     * search history. Confirmed searches (Enter / IME Search / tapping a
+     * suggestion) go through [searchPage], which is anonymous for the same
+     * reason.
      */
     suspend fun searchTypeahead(input: String): Result<SearchPage> =
         call("typeahead:length=${input.length}") {
+            // A suggestions call that fails is not an answer: the search below
+            // is the second chance it always had.
+            val cards = try {
+                InnertubeParser.parseSearchSuggestionEntities(Innertube.searchSuggestions(input))
+                    .distinctBy { it.identityKey() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "typeahead: suggestions failed: ${e.message}")
+                emptyList<SearchResult>()
+            }
+            if (cards.isNotEmpty()) return@call SearchPage(cards, continuation = null)
             InnertubeParser.parseSearchPage(
                 Innertube.searchTypeahead(input),
                 includeVideos = false,
@@ -1809,6 +1827,47 @@ object YtMusicRepository {
     suspend fun mixedForYou(): Result<List<ShelfItem>> = call("mixedForYou") {
         if (Innertube.cookie == null) return@call emptyList()
         InnertubeParser.parseTwoRowItemsDeep(Innertube.browse("FEmusic_mixed_for_you"))
+    }
+
+    /**
+     * [mixedForYou], each card beside its English title.
+     *
+     * The page says what kind of mix a card is only in its title ("Discover
+     * Mix", "Chill Mix 2"), and YouTube translates those titles. So the page is
+     * read twice when the app is in another language: once in that language,
+     * to show, and once in English, to sort by — the two matched up by the
+     * mix's playlist id, which is the same in both. In English the one request
+     * serves for both. If the English read fails, or a card is missing from
+     * it, that card's own title stands in.
+     */
+    suspend fun mixedForYouKeyed(): Result<List<KeyedMix>> = call("mixedForYouKeyed") {
+        if (Innertube.cookie == null) return@call emptyList()
+        coroutineScope {
+            val shown = async {
+                InnertubeParser.parseTwoRowItemsDeep(Innertube.browse("FEmusic_mixed_for_you"))
+            }
+            val english = if (Innertube.currentLanguage.startsWith("en")) {
+                null
+            } else {
+                async {
+                    try {
+                        InnertubeParser.parseTwoRowItemsDeep(
+                            Innertube.browse("FEmusic_mixed_for_you", language = "en"),
+                        )
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w(TAG, "mixedForYou in English failed; sorting by shown titles: ${e.message}")
+                        null
+                    }
+                }
+            }
+            val items = shown.await()
+            val englishTitles = english?.await().orEmpty()
+                .associate { (it.browseId ?: it.title) to it.title }
+            items.map { KeyedMix(it, englishTitles[it.browseId ?: it.title] ?: it.title) }
+                .also { mixes -> Log.d(TAG, "mixedForYou: ${mixes.joinToString { it.englishTitle }}") }
+        }
     }
 
     /**

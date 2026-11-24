@@ -151,7 +151,7 @@ enum class LyricsSource(
     ),
     YOUTUBE_MUSIC(
         label = "YouTube Music",
-        detail = "재생 중인 비디오의 가사 탭에서 가져온 일반 가사",
+        detail = "재생 중인 비디오의 가사 탭에서 가져온 줄 단위 싱크 가사",
         wordSynced = false,
     ),
     MEGALOBIZ(

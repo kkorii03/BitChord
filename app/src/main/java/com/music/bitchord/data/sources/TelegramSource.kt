@@ -61,6 +61,7 @@ class TelegramSource(
         limit: Int,
         waitForAll: Boolean,
         request: StreamRequest?,
+        target: TrackMatcher.Target?,
     ): List<Song> = searchRows(query, limit, limit)
 
     /**

@@ -20,6 +20,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import com.music.bitchord.data.web.QuietWebChromeClient
 
 private const val MUSIC_ORIGIN = "https://music.youtube.com"
 private const val YOUTUBE_ORIGIN = "https://www.youtube.com"
@@ -111,6 +112,7 @@ fun YtMusicLoginScreen(
                 // 없음 - 브라우저 또는 앱이 안전하지 않을 수 있습니다", seen on the
                 // S24). The Premium paywall is avoided by where the login
                 // continues to (youtube.com, not music.youtube.com) instead.
+                webChromeClient = QuietWebChromeClient()
                 configureWebView(this)
 
                 webViewClient = object : WebViewClient() {

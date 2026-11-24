@@ -88,7 +88,8 @@ internal fun koScreenLabel(
     selectedMoodGenreTitle != null -> "Explore/$selectedMoodGenreTitle"
     selectedTab == 0 -> "Home"
     selectedTab == 1 -> "Explore"
-    selectedTab == 2 -> "Library"
-    selectedTab == 3 -> "Search"
+    selectedTab == 2 -> "Radio"
+    selectedTab == 3 -> "Library"
+    selectedTab == 4 -> "Search"
     else -> "tab$selectedTab"
 }

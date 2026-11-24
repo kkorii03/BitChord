@@ -49,7 +49,9 @@ import com.composables.sfsymbols.monochrome.SFHeart
 import com.composables.sfsymbols.monochrome.SFHeartFill
 import com.composables.sfsymbols.monochrome.SFHifispeaker
 import com.composables.sfsymbols.monochrome.SFIcloud
+import com.composables.sfsymbols.monochrome.SFIcloudAndArrowUp
 import com.composables.sfsymbols.monochrome.SFIcloudSlash
+import com.composables.sfsymbols.monochrome.SFIphone
 import com.composables.sfsymbols.monochrome.SFInfoCircle
 import com.composables.sfsymbols.monochrome.SFInternaldrive
 import com.composables.sfsymbols.monochrome.SFKey
@@ -118,7 +120,6 @@ import com.composables.sfsymbols.monochrome.SFDisplay
 import com.composables.sfsymbols.monochrome.SFDocument
 import com.composables.sfsymbols.monochrome.SFFlag
 import com.composables.sfsymbols.monochrome.SFHandThumbsdown
-import com.composables.sfsymbols.monochrome.SFIphone
 import com.composables.sfsymbols.monochrome.SFLane
 import com.composables.sfsymbols.monochrome.SFLink
 import com.composables.sfsymbols.monochrome.SFMagnifyingglass
@@ -163,6 +164,8 @@ object SfIcons {
     val ChevronRight: ImageVector by lazy { bold(SfSymbols.Monochrome.SFChevronRight) }
     val Clock: ImageVector by lazy { bold(SfSymbols.Monochrome.SFClock) }
     val Cloud: ImageVector by lazy { bold(SfSymbols.Monochrome.SFIcloud) }
+    val CloudUpload: ImageVector by lazy { bold(SfSymbols.Monochrome.SFIcloudAndArrowUp) }
+    val Phone: ImageVector by lazy { bold(SfSymbols.Monochrome.SFIphone) }
     val CloudDone: ImageVector by lazy { bold(SfSymbols.Monochrome.SFCheckmarkIcloud) }
     val CloudOff: ImageVector by lazy { bold(SfSymbols.Monochrome.SFIcloudSlash) }
     val ContentCopy: ImageVector by lazy { bold(SfSymbols.Monochrome.SFDocumentOnDocument) }
@@ -266,7 +269,6 @@ object SfIcons {
     val Link: ImageVector by lazy { bold(SfSymbols.Monochrome.SFLink) }
     val Memory: ImageVector by lazy { bold(SfSymbols.Monochrome.SFMemorychip) }
     val Pause: ImageVector by lazy { bold(SfSymbols.Monochrome.SFPause) }
-    val Phone: ImageVector by lazy { bold(SfSymbols.Monochrome.SFIphone) }
     val RadioButtonUnchecked: ImageVector by lazy { bold(SfSymbols.Monochrome.SFCircle) }
     val RecordVoiceOver: ImageVector by lazy { bold(SfSymbols.Monochrome.SFWaveform) }
     val Remove: ImageVector by lazy { bold(SfSymbols.Monochrome.SFMinus) }

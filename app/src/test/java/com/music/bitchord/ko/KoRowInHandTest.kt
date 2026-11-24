@@ -128,7 +128,7 @@ class KoRowInHandTest {
 
         override suspend fun health() = SourceHealth.Ok()
 
-        override suspend fun search(query: String, limit: Int, waitForAll: Boolean, request: StreamRequest?): List<Song> = rows
+        override suspend fun search(query: String, limit: Int, waitForAll: Boolean, request: StreamRequest?, target: TrackMatcher.Target?): List<Song> = rows
 
         override suspend fun stream(trackId: String, request: StreamRequest): SourceStream {
             opened += trackId

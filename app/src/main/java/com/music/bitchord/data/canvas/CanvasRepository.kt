@@ -1,5 +1,7 @@
 package com.music.bitchord.data.canvas
 
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.async
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
@@ -96,8 +98,9 @@ object CanvasRepository {
         // a second time. [reusable] decides when the earlier answer still
         // stands instead.
         val album = song.albumName
-        val spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value
-        val key = cacheKey("song|${song.videoId}", spotifyFirst)
+        val spotifyFirst = AppSettings.effectivePrioritizeSpotifyCanvas.value
+        val spotifyDisabled = AppSettings.disableSpotifyCanvas.value
+        val key = cacheKey("song|${song.videoId}", spotifyFirst, spotifyDisabled)
 
         return resolve(key, album != null) {
             val official = if (cover || artist.isBlank()) null else officialFor(title, artist, album, seconds, spotifyFirst)
@@ -116,7 +119,7 @@ object CanvasRepository {
         val durationMs = seconds?.let { it * 1000L }
         val forTrack = if (spotifyFirst) {
             firstHit(
-                { SpotifyCanvas.search(title, artist, album) },
+                { if (AppSettings.disableSpotifyCanvas.value) null else SpotifyCanvas.search(title, artist, album) },
                 { AppleMusicCanvas.search(title, artist, album, durationMs) },
                 { TidalCanvas.search(title, artist, album) },
                 { CommunityCanvas.search(title, artist, album) },
@@ -126,7 +129,7 @@ object CanvasRepository {
                 { AppleMusicCanvas.search(title, artist, album, durationMs) },
                 { TidalCanvas.search(title, artist, album) },
                 { CommunityCanvas.search(title, artist, album) },
-                { SpotifyCanvas.search(title, artist, album) },
+                { if (AppSettings.disableSpotifyCanvas.value) null else SpotifyCanvas.search(title, artist, album) },
             ) { it.matches(title, artist, album) }
         }
         return forTrack ?: album?.cleaned()?.takeIf { it.isNotBlank() }?.let { release ->
@@ -177,6 +180,48 @@ object CanvasRepository {
 
 
     /**
+     * The animated covers the lyrics share can offer for [song], by source.
+     *
+     * Starts from the clip the player is already showing ([cached]) — that is
+     * the one the listener has seen, and it was found with the album in hand,
+     * which is what lets Apple's search land. Searching again here without it
+     * was turning the player's own clip down. Whatever source the player's
+     * clip didn't come from is then looked up on its own, Apple and Spotify
+     * each, rather than first-hit-wins. A clip from Tidal or the community
+     * index comes back under [CanvasSource.OTHER]. Each search is held to
+     * [CanvasArtwork.matches].
+     */
+    suspend fun shareClipsFor(song: Song): Map<CanvasSource, CanvasArtwork> = coroutineScope {
+        // [KO] video canvas: a stretch of a music video is not a clip to share —
+        // its link is the whole video, with sound, from the start.
+        val playing = cached(song)?.takeUnless { it.fromVideo }
+        val title = song.title.cleaned()
+        val artist = song.artist.cleaned()
+        // A cover's byline is no catalogue's credit, and the original's artwork is someone else's record.
+        if (title.isBlank() || artist.isBlank() || com.music.bitchord.data.cover.CoverTitles.isCover(song)) {
+            return@coroutineScope playing?.let { mapOf(it.source to it) }.orEmpty()
+        }
+        val album = song.albumName ?: playing?.album
+        fun CanvasArtwork?.ok() = this?.takeIf { it.matches(title, artist, album) }
+        val apple = async(Dispatchers.IO) {
+            if (playing?.source == CanvasSource.APPLE) playing
+            else runCatching { AppleMusicCanvas.search(title, artist, album) }.getOrNull().ok()
+        }
+        val spotify = async(Dispatchers.IO) {
+            when {
+                AppSettings.disableSpotifyCanvas.value -> null
+                playing?.source == CanvasSource.SPOTIFY -> playing
+                else -> runCatching { SpotifyCanvas.search(title, artist, album) }.getOrNull().ok()
+            }
+        }
+        buildMap {
+            if (playing?.source == CanvasSource.OTHER) put(CanvasSource.OTHER, playing)
+            apple.await()?.let { put(CanvasSource.APPLE, it) }
+            spotify.await()?.let { put(CanvasSource.SPOTIFY, it) }
+        }
+    }
+
+    /**
      * A canvas already worked out for [song], without going near the network.
      *
      * Lets a caller paint what it knows before it starts waiting on anything —
@@ -186,9 +231,12 @@ object CanvasRepository {
     fun cached(song: Song): CanvasArtwork? {
         val key = cacheKey(
             base = "song|${song.videoId}",
-            spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value,
+            spotifyFirst = AppSettings.effectivePrioritizeSpotifyCanvas.value,
+            spotifyDisabled = AppSettings.disableSpotifyCanvas.value,
         )
-        return synchronized(cache) { cache[key]?.artwork }?.takeUnless { it.expired() }
+        return synchronized(cache) { cache[key]?.artwork }
+            ?.takeUnless { it.expired() }
+            ?.takeUnless { AppSettings.disableSpotifyCanvas.value && it.source == CanvasSource.SPOTIFY }
     }
 
     /**
@@ -205,11 +253,12 @@ object CanvasRepository {
         val credit = artist.cleaned()
         if (name.isBlank() || credit.isBlank()) return null
 
-        val spotifyFirst = AppSettings.prioritizeSpotifyCanvas.value
-        return resolve(cacheKey("album|$name|$credit", spotifyFirst), withAlbum = true) {
+        val spotifyFirst = AppSettings.effectivePrioritizeSpotifyCanvas.value
+        val spotifyDisabled = AppSettings.disableSpotifyCanvas.value
+        return resolve(cacheKey("album|$name|$credit", spotifyFirst, spotifyDisabled), withAlbum = true) {
             if (spotifyFirst) {
                 firstHit(
-                    { SpotifyCanvas.searchAlbum(name, credit) },
+                    { if (AppSettings.disableSpotifyCanvas.value) null else SpotifyCanvas.searchAlbum(name, credit) },
                     { AppleMusicCanvas.searchAlbum(name, credit) },
                     { TidalCanvas.searchAlbum(name, credit) },
                     { CommunityCanvas.searchAlbum(name, credit) },
@@ -219,15 +268,15 @@ object CanvasRepository {
                     { AppleMusicCanvas.searchAlbum(name, credit) },
                     { TidalCanvas.searchAlbum(name, credit) },
                     { CommunityCanvas.searchAlbum(name, credit) },
-                    { SpotifyCanvas.searchAlbum(name, credit) },
+                    { if (AppSettings.disableSpotifyCanvas.value) null else SpotifyCanvas.searchAlbum(name, credit) },
                 ) { it.matches(name, credit, name) }
             }
         }
     }
 
-    /** Priority is part of the question, so a toggle never reuses the other order's answer. */
-    internal fun cacheKey(base: String, spotifyFirst: Boolean): String = // [KO] video canvas: internal for its test
-        "$base|spotifyFirst=$spotifyFirst" +
+    /** Provider settings are part of the question, not just the search order. */
+    internal fun cacheKey(base: String, spotifyFirst: Boolean, spotifyDisabled: Boolean = false): String = // [KO] video canvas: internal for its test
+        "$base|spotifyFirst=$spotifyFirst|spotifyDisabled=$spotifyDisabled" +
             "|video=${AppSettings.videoCanvas.value}" // [KO] video canvas: a cached MV loop must not outlive the switch
 
     private suspend fun resolve(
@@ -236,9 +285,14 @@ object CanvasRepository {
         lookUp: suspend () -> CanvasArtwork?,
     ): CanvasArtwork? = lock.withLock {
         synchronized(cache) {
-            cache[key]?.let { if (it.reusable(withAlbum)) return@withLock it.artwork }
+            cache[key]?.let {
+                if (it.reusable(withAlbum) &&
+                    !(AppSettings.disableSpotifyCanvas.value && it.artwork?.source == CanvasSource.SPOTIFY)
+                ) return@withLock it.artwork
+            }
         }
         val found = withContext(Dispatchers.IO) { lookUp() }
+        if (AppSettings.disableSpotifyCanvas.value && found?.source == CanvasSource.SPOTIFY) return@withLock null
         synchronized(cache) { cache[key] = Entry(found, withAlbum) }
         found
     }

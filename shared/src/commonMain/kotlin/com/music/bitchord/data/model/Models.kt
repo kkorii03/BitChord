@@ -13,6 +13,14 @@ enum class QueueTier {
     AUTOPLAY,
 }
 
+/** Identity of one occurrence in a live queue, independent of its timeline index. */
+data class QueueEntryIdentity(
+    val mediaId: String,
+    val queueEntryId: String?,
+    /** Zero-based occurrence among entries with the same media and queue-entry ids. */
+    val occurrence: Int,
+)
+
 /**
  * One credited artist, as YouTube Music itself states them.
  *
@@ -417,10 +425,10 @@ fun String?.artworkAt(px: Int): String? {
     if (this == null) return null
     val square = squareFriendlyThumbnail(this) ?: return null
     val sized = square.replace(SIZE_HINT, "w$px-h$px")
-    return if (isGoogleImageHost(this)) {
-        sized.replace(PARAM_SIZE_HINT, "=s$px")
-    } else {
-        sized
+    return when {
+        isGoogleImageHost(this) -> sized.replace(PARAM_SIZE_HINT, "=s$px")
+        isYouTubeThumbnailHost(this) -> upgradeYouTubeThumbnail(sized, px)
+        else -> sized
     }
 }
 
@@ -434,6 +442,64 @@ private fun isGoogleImageHost(url: String): Boolean {
     return host == "ggpht.com" || host.endsWith(".ggpht.com") ||
         host == "googleusercontent.com" || host.endsWith(".googleusercontent.com")
 }
+
+internal fun isYouTubeThumbnailHost(url: String): Boolean {
+    val host = url.substringAfter("://", "")
+        .ifEmpty { url.substringAfter("//", "") }
+        .substringBefore('/')
+        .substringBefore(':')
+        .substringBefore('?')
+        .lowercase()
+    return host == "i.ytimg.com" || host.endsWith(".ytimg.com") ||
+        host == "img.youtube.com" || host.endsWith(".youtube.com")
+}
+
+/** YouTube's thumbnail renditions, smallest to largest. Every video has `hqdefault`. */
+private val YT_THUMB_NAME_REGEX = Regex("/(default|mqdefault|hqdefault|sddefault|hq720|maxresdefault)\\.([a-zA-Z0-9]+)")
+
+/** The renditions an old or low-resolution upload doesn't have: each answers 404 for it. */
+private val YT_UPGRADED_RENDITIONS = setOf("sddefault", "hq720", "maxresdefault")
+
+internal fun upgradeYouTubeThumbnail(url: String, px: Int): String {
+    val match = YT_THUMB_NAME_REGEX.find(url) ?: return url
+    val current = match.groupValues[1]
+    val target = when {
+        // [KO] hq720 is the one large rung here. Upstream asks sddefault and
+        // maxresdefault, but sddefault is a 4:3 frame with the bars baked in,
+        // and maxresdefault is the same 1280x720 picture under a second URL —
+        // the row, the mini player and the full player already share hq720
+        // (see squareFriendlyThumbnail), so a second one is a second download
+        // and a cover that blinks on the way up. A large URL that says
+        // maxresdefault already is left alone for a large surface, and comes
+        // down to the copy the rows share for a small one.
+        px >= 240 && current != "maxresdefault" -> "hq720"
+        px < 240 && current == "maxresdefault" -> "hq720"
+        else -> return url
+    }
+    return if (target == current) url else withRendition(url, match, target)
+}
+
+/**
+ * The copy every YouTube video has, for a thumbnail [artworkAt] asked a larger
+ * rendition of; null when [url] is no such thumbnail. Old and low-resolution
+ * uploads have no `sddefault` or `maxresdefault` (YouTube answers 404), so
+ * whatever loads one of those needs this to fall back on — and a loader that
+ * can't fall back should be handed this instead.
+ */
+fun youTubeThumbnailFallback(url: String): String? {
+    if (!isYouTubeThumbnailHost(url)) return null
+    val match = YT_THUMB_NAME_REGEX.find(url) ?: return null
+    if (match.groupValues[1] !in YT_UPGRADED_RENDITIONS) return null
+    return withRendition(url, match, "hqdefault")
+}
+
+/**
+ * [url] naming [rendition] instead. The query (`sqp=…&rs=…`) is dropped: it
+ * signs the rendition it came with, and the bare path serves any of them.
+ */
+private fun withRendition(url: String, match: MatchResult, rendition: String): String =
+    (url.substring(0, match.range.first) + "/$rendition.${match.groupValues[2]}" + url.substring(match.range.last + 1))
+        .substringBefore('?')
 
 private val SIZE_HINT = Regex("""w\d+-h\d+""")
 private val PARAM_SIZE_HINT = Regex("""=s\d+""")
@@ -471,6 +537,9 @@ const val NOTIFICATION_ART_PX = 544
  */
 const val PLAYER_ART_PX = 1200
 
+/** Memory-cache namespace shared by the player and same-resolution widgets. */
+const val PLAYER_ART_MEMORY_CACHE_KEY_EXTRA = "bitchord_player_art_px"
+
 enum class BrowseType { ALBUM, ARTIST, PLAYLIST, OTHER }
 
 /** A queue-level origin shown above Now Playing, in the style of Spotify. */
@@ -502,7 +571,11 @@ sealed interface SearchResult {
     data class Browse(val item: BrowseItem) : SearchResult
 }
 
-enum class SearchFilter(val label: String, val params: String?) {
+enum class SearchFilter(
+    val label: String,
+    val params: String?,
+    val requiresAuth: Boolean = false,
+) {
     /** YouTube Music's mixed search page: songs, artists, albums and playlists. */
     ALL("전체", null),
     SONGS("노래", "EgWKAQIIAWoKEAkQChAFEAMQBA=="),
@@ -511,6 +584,7 @@ enum class SearchFilter(val label: String, val params: String?) {
     ALBUMS("앨범", "EgWKAQIYAWoKEAkQChAFEAMQBA=="),
     ARTISTS("아티스트", "EgWKAQIgAWoKEAkQChAFEAMQBA=="),
     PLAYLISTS("플레이리스트", "EgWKAQIoAWoKEAkQChAFEAMQBA=="),
+    LIBRARY("보관함", "agIYBA==", requiresAuth = true);
 }
 
 /** A card in a home-feed carousel: either a track (videoId) or an album/playlist (browseId). */
@@ -528,6 +602,13 @@ data class ShelfItem(
     /** True when the card opens an artist page, whatever its browse id looks like. */
     val isArtist: Boolean = false,
 )
+
+/**
+ * A "Mixed for you" card and its English title, which is what says what kind
+ * of mix it is whatever language [item] is shown in — see
+ * [com.music.bitchord.data.YtMusicRepository.mixedForYouKeyed].
+ */
+data class KeyedMix(val item: ShelfItem, val englishTitle: String)
 
 /** How a shelf's items are laid out — the web player's `ShelfLayout`, by the same rules. */
 enum class ShelfLayout {

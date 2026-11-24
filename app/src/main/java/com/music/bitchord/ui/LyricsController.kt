@@ -1860,7 +1860,12 @@ class LyricsController(
     ): Boolean {
         val preselected = com.music.bitchord.ko.KoSavedLyrics.preselected(override?.kind, override?.source)
         preselected?.let { selectedLyricsSource = it }
-        val file = if (override == null) fileLyrics(app, localUri) else null
+        // [KO] A file's plain words have no sync of their own to check again.
+        val file = if (override == null) {
+            fileLyrics(app, localUri)?.takeIf { EmbeddedLyrics.isSynced(it.lines) }
+        } else {
+            null
+        }
         // [KO] WDYM: an automatic saved sheet the words have not already turned down this playback.
         val savedLines = override?.lines ?: file?.lines
         savedSheetFrom = (override?.source ?: file?.source)?.takeIf {

@@ -637,6 +637,7 @@ class DirectSourceGateTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> {
             if (searchDelayMs > 0) kotlinx.coroutines.delay(searchDelayMs)
             return rows

@@ -1847,6 +1847,7 @@ object SourceResolver {
                         // catalogue that files its rows by tier should describe
                         // them at the tier this is about to ask for.
                         request = request,
+                        target = target,
                     )
                 } ?: return SearchOutcome(
                     verdict = if (SourceCooldown.authMark(source.configId) != authMark) "auth" else "error",

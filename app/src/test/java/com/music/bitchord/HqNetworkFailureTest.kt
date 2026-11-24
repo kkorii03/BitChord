@@ -63,6 +63,7 @@ class HqNetworkFailureTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> {
             asked += 1
             throw failure()

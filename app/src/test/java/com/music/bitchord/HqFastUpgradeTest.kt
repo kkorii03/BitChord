@@ -99,6 +99,7 @@ class HqFastUpgradeTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> {
             asked += 1
             if (answersAfterMs > 0L) delay(answersAfterMs)

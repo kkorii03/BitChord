@@ -213,6 +213,7 @@ class TelegramSourceStageThreeTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> = emptyList()
 
         override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? = null

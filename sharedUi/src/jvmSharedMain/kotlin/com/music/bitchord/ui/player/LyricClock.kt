@@ -2,6 +2,14 @@ package com.music.bitchord.ui.player
 
 import kotlin.math.abs
 
+/** One reading and its transport state, consumed identically by the observer and the frame loop. */
+internal data class LyricClockReading(
+    val positionMs: Long,
+    val sampledAtMs: Double,
+    val discontinuity: Long,
+    val isPlaying: Boolean,
+)
+
 /**
  * The lyric playhead: a clock that runs on its own frames and is *steered* by
  * the player's readings rather than set by them.
@@ -118,6 +126,29 @@ internal class LyricClock(startMs: Long) {
         restart()
         displayedMs = positionMs.toDouble()
         if (songStopped) heldAtMs = nowMs
+    }
+
+    /**
+     * One reading, seen outside the frames. Returns where the words settle, or null where [active]
+     * frames are running them and a reading only steers.
+     *
+     * Whether the song moves is told by the reading itself: a running reading is never paused
+     * truth, even when the observer still belongs to a UI that has not learned playback resumed.
+     * Held as if it stood still, the first frame of the run dated it late and started behind.
+     */
+    fun observe(reading: LyricClockReading, nowMs: Double, active: Boolean = true): Long? {
+        if (reading.isPlaying && active) return null
+        // [KO] upstream 1.10 freezes the words where they were drawn instead, and keeps them there
+        // when the resumed reading is behind. That gap would then be steered out at [STEADY_STEER]:
+        // seconds of words ahead of the song after a pause. The song's own place is shown.
+        hold(reading.positionMs, nowMs, songStopped = !reading.isPlaying)
+        return displayedMs.toLong()
+    }
+
+    /** An obsolete running effect must also stop as soon as a stopped transport sample arrives. */
+    fun frame(nowMs: Double, reading: LyricClockReading, knownSpeed: Double = Double.NaN): Long {
+        observe(reading, nowMs)?.let { return it }
+        return frame(nowMs, reading.positionMs, reading.sampledAtMs, reading.discontinuity, knownSpeed)
     }
 
     /**

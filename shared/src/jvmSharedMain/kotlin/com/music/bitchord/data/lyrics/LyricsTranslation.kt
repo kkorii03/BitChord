@@ -102,7 +102,14 @@ object LyricsTranslation {
     // private-use wrapper rather than assuming the counter remains ASCII.
     internal const val ENGINE_GEMINI = "gemini" // [KO] gemini
     internal const val ENGINE_GOOGLE = "google" // [KO] gemini
-    private val markerRegex = Regex("\\uE000[^\\uE001]*\\uE001")
+    // Either private-use character closes it: a Chinese answer (zh-CN, zh-TW)
+    // comes back with the closing U+E001 turned into a second U+E000, and a
+    // marker that never closed left the whole song as one part, so every
+    // translation into Chinese came back Unavailable.
+    private val markerRegex = Regex("\\uE000[^\\uE000\\uE001]*[\\uE000\\uE001]")
+
+    /** A batch's answer, cut back into one string per line it was sent. */
+    internal fun splitMarked(body: String): List<String> = body.split(markerRegex).map(String::trim)
     private val json = Json { ignoreUnknownKeys = true }
     private val diskMutex = Mutex()
     private val memory = object {
@@ -447,7 +454,7 @@ object LyricsTranslation {
                 segment.jsonArray.getOrNull(0)?.jsonPrimitive?.contentOrNull.orEmpty()
             }
             val source = root.getOrNull(2)?.jsonPrimitive?.contentOrNull.orEmpty()
-            val parts = translatedBody.split(markerRegex).map(String::trim)
+            val parts = splitMarked(translatedBody)
             if (parts.size != batch.slots.size || parts.any { it.isBlank() }) return@runCatching null
             BatchAnswer(parts, source, batch.payload.length)
         }.getOrNull()
@@ -480,7 +487,7 @@ object LyricsTranslation {
                 segment.jsonArray.getOrNull(3)?.jsonPrimitive?.contentOrNull.orEmpty()
             }
             val source = root.getOrNull(2)?.jsonPrimitive?.contentOrNull.orEmpty()
-            val parts = romanizedBody.split(markerRegex).map(String::trim)
+            val parts = splitMarked(romanizedBody)
             if (source.isBlank() || parts.size != batch.slots.size || parts.any { it.isBlank() }) {
                 return@runCatching null
             }

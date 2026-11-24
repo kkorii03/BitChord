@@ -221,6 +221,7 @@ class KoLeadReuseTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> {
             searches++
             return rows

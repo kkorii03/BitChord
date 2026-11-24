@@ -8,7 +8,6 @@ import com.music.bitchord.ui.components.contextClick
 import com.music.bitchord.ui.AppUi
 import com.music.bitchord.sharedui.resources.*
 import org.jetbrains.compose.resources.painterResource
-import com.music.bitchord.ui.festive.GoldenLogo
 import org.jetbrains.compose.resources.DrawableResource
 import androidx.compose.foundation.Image
 import org.jetbrains.compose.resources.stringResource
@@ -203,10 +202,6 @@ fun HomeScreen(
     title: String?,
     /** Drawn at the trailing end of the large heading; Home puts its profile there. */
     titleAccessory: (@Composable () -> Unit)? = null,
-    /** Casts the wordmark above the heading in glowing gold, for a festival. */
-    festiveLogo: Boolean = false,
-    /** Tapping the festive wordmark, e.g. to bring its greeting back. */
-    onFestiveLogoClick: (() -> Unit)? = null,
     signedIn: Boolean = true,
     onSignIn: (() -> Unit)? = null,
     /**
@@ -242,6 +237,8 @@ fun HomeScreen(
     // [KO] private listening: the notice above Recents, lost in the v1.9 merge.
     privateListening: Boolean = false,
     onDisablePrivateListening: (() -> Unit)? = null,
+    /** The Replay year story's button beside the wordmark, or null for none. See [ReplayYearButton]. */
+    replayYear: ReplayYearBadge? = null,
 ) {
     // Top Picks' pictures and motion wait for the feed — see LocalArtworkImages.
     val feedReady = state !is UiState.Loading
@@ -274,14 +271,7 @@ fun HomeScreen(
             },
         ) {
             if (title != null) {
-                item {
-                    HomeTitle(
-                        title,
-                        accessory = titleAccessory,
-                        festiveLogo = festiveLogo,
-                        onFestiveLogoClick = onFestiveLogoClick,
-                    )
-                }
+                item { HomeTitle(title, replayYear = replayYear, accessory = titleAccessory) }
             }
             if (!signedIn && onSignIn != null) {
                 item {
@@ -563,10 +553,9 @@ fun CompactTrackRow(
 @Composable
 private fun HomeTitle(
     title: String,
+    replayYear: ReplayYearBadge? = null,
     modifier: Modifier = Modifier,
     accessory: (@Composable () -> Unit)? = null,
-    festiveLogo: Boolean = false,
-    onFestiveLogoClick: (() -> Unit)? = null,
 ) {
     val style = MaterialTheme.typography.displayLarge
     val logoHeight = with(LocalDensity.current) { (style.fontSize * LOGO_TO_FONT).toDp() }
@@ -577,23 +566,25 @@ private fun HomeTitle(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            val logoModifier = Modifier
-                .padding(bottom = 14.dp)
-                .height(logoHeight)
-                .aspectRatio(LOGO_ASPECT)
-            if (festiveLogo) {
-                GoldenLogo(
-                    painter = painterResource(Res.drawable.ic_logo),
-                    modifier = logoModifier,
-                    onClick = onFestiveLogoClick,
-                )
-            } else {
+            // The wordmark, and the year story's button right after it when there
+            // is a year to tell. Sized off the wordmark so the two keep their
+            // proportion under the system font scale.
+            Row(
+                modifier = Modifier.padding(bottom = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Icon(
                     painter = painterResource(Res.drawable.ic_logo),
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onBackground,
-                    modifier = logoModifier,
+                    modifier = Modifier
+                        .height(logoHeight)
+                        .aspectRatio(LOGO_ASPECT),
                 )
+                if (replayYear != null) {
+                    Spacer(Modifier.width(14.dp))
+                    ReplayYearButton(replayYear, height = logoHeight * 0.68f)
+                }
             }
             // "Listen now" is hidden for now; the wordmark above stays.
             // Text(

@@ -13,6 +13,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import okhttp3.Request
 
 /**
@@ -382,9 +385,6 @@ class ModuleManager {
         (exceptionOrNull() as? CancellationException)?.let { throw it }
     }
 
-    /** A JS string literal, escaped by the same encoder that writes our JSON. */
-    private fun jsString(value: String): String = JsonPrimitive(value).toString()
-
     // ── Context ───────────────────────────────────────────────────────────
 
     /**
@@ -399,12 +399,20 @@ class ModuleManager {
      * out of it: every lookup landed on undefined and fell through to the
      * module's own default. Silent, and worth exactly one misplaced brace.
      */
-    private fun contextArg(settings: Map<String, String>): String =
-        settings.entries.joinToString(
-            separator = ",",
-            prefix = "{settings:{",
-            postfix = "}}",
-        ) { (key, value) -> "\"$key\":{\"value\":\"$value\"}" }
+    internal fun contextArg(settings: Map<String, String>): String =
+        buildJsonObject {
+            putJsonObject("settings") {
+                settings.forEach { (key, value) -> putJsonObject(key) { put("value", value) } }
+            }
+        }.toString()
+
+    /**
+     * [value] as a JavaScript string literal. The arguments are spliced into
+     * the source [QuickJsExecutor] evaluates, so a title with a `"` or a `\`
+     * in it must be escaped, or the call is a syntax error at best and runs
+     * whatever the rest of the title says at worst. JSON strings are valid JS.
+     */
+    internal fun jsString(value: String): String = JsonPrimitive(value).toString()
 
     // ── Lifecycle ─────────────────────────────────────────────────────────
 

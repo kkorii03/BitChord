@@ -311,9 +311,9 @@ fun SearchScreen(
             // the app has one look for "pick one of these".
             if (results != null && !suggesting && !searchingLibrary && !searchingAddons) {
                 PillSegmentedControl(
-                    options = SearchFilter.entries.map { stringResource(koSearchFilterLabel(it)) },
+                    options = SearchFilter.entries.filterNot { it.requiresAuth }.map { stringResource(koSearchFilterLabel(it)) },
                     selectedIndex = filter.ordinal,
-                    onSelect = { onFilterChange(SearchFilter.entries[it]) },
+                    onSelect = { onFilterChange(SearchFilter.entries.filterNot { f -> f.requiresAuth }[it]) },
                     modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, bottom = 6.dp),
                 )
             }
@@ -361,6 +361,7 @@ fun SearchScreen(
                             typeaheadResults = typeaheadResults,
                             onSongClick = { song -> onTopResultPlay(song) },
                             onSongLongPress = onTypeaheadLongPress,
+                            onSongSwipe = onSongSwipe,
                             onBrowseClick = { item ->
                                 onBrowseClick(item)
                             },
@@ -876,6 +877,7 @@ private fun LazyListScope.searchTypeaheadDropdown(
     typeaheadResults: List<SearchResult>,
     onSongClick: (Song) -> Unit,
     onSongLongPress: ((Song) -> Unit)?,
+    onSongSwipe: (Song) -> Unit,
     onBrowseClick: (BrowseItem) -> Unit,
     onBrowseLongPress: ((BrowseItem) -> Unit)?,
     currentSong: Song?,
@@ -904,6 +906,7 @@ private fun LazyListScope.searchTypeaheadDropdown(
                 song = result.song,
                 onClick = { onSongClick(result.song) },
                 onLongPress = onSongLongPress?.let { { it(result.song) } },
+                onSwipeToQueue = { onSongSwipe(result.song) },
                 isCurrent = isCurrentRow(result.song),
                 isPlaying = isPlaying && isCurrentRow(result.song),
             )
@@ -916,6 +919,7 @@ private fun LazyListScope.searchTypeaheadDropdown(
                 song = result.song,
                 onClick = { onSongClick(result.song) },
                 onLongPress = onSongLongPress?.let { { it(result.song) } },
+                onSwipeToQueue = { onSongSwipe(result.song) },
                 isCurrent = isCurrentRow(result.song),
                 isPlaying = isPlaying && isCurrentRow(result.song),
             )
@@ -932,51 +936,55 @@ private fun TypeaheadSongRow(
     song: Song,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
+    onSwipeToQueue: () -> Unit,
     isCurrent: Boolean = false,
     isPlaying: Boolean = false,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .longPressMenuClickable(
-                onClick = onClick,
-                onLongClick = onLongPress,
-                liftPadding = PaddingValues(horizontal = PAGE_GUTTER),
-            )
-            .contextClick(onLongPress)
-            .padding(horizontal = PAGE_GUTTER, vertical = LIST_ROW_VERTICAL_PADDING),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.trackArtSize(52.dp, song.isVideo)) {
-            AsyncImage(
-                model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .matchParentSize()
-                    .clip(RoundedCornerShape(8.dp))
-                    .thumbnailBorder(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
-            if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = song.title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = listOfNotNull(song.artist).joinToString(" · "),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+    SwipeToQueueBox(onSwipeToQueue = onSwipeToQueue, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.background)
+                .longPressMenuClickable(
+                    onClick = onClick,
+                    onLongClick = onLongPress,
+                    liftPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                )
+                .contextClick(onLongPress)
+                .padding(horizontal = PAGE_GUTTER, vertical = LIST_ROW_VERTICAL_PADDING),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.trackArtSize(52.dp, song.isVideo)) {
+                AsyncImage(
+                    model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .matchParentSize()
+                        .clip(RoundedCornerShape(8.dp))
+                        .thumbnailBorder(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                )
+                if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = song.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = listOfNotNull(song.artist).joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

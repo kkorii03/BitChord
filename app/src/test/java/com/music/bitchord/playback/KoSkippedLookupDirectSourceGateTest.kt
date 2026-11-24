@@ -253,6 +253,7 @@ class KoSkippedLookupDirectSourceGateTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> {
             // The resolver may normalise the query (case, punctuation): match the title loosely.
             val key = listOf("Skip Alpha", "Skip Bravo", "Skip Charlie", "Skip Next", "Keep November", "Cast Oscar", "Blend Bravo", "Gone Bravo")

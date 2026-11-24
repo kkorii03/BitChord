@@ -242,6 +242,7 @@ class AddonAuthFailureTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> {
             delay(delayMs)
             return listOf(

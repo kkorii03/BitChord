@@ -30,8 +30,14 @@ import kotlinx.coroutines.withContext
  * track and again only when that track's cover-save event arrives; every other
  * row resolves synchronously to what it already had, so this is safe to call
  * from shared components like [SongRow] that draw every library in the app.
- * Keyed on the track id, so a recycled row re-resolves instead of flashing a
- * stranger's cover.
+ *
+ * Keyed on the track id, its file *and* the thumbnail it came with, so a
+ * recycled row re-resolves instead of flashing a stranger's cover. The id alone
+ * is not enough: a downloaded copy of a track is filed under the id of the one
+ * it was downloaded from, so the same id turns up twice in a queue with a local
+ * `content://` cover on one row and the streaming `https://` one on the other.
+ * Keyed on the id alone, the cover of whichever came first stayed on screen
+ * while the title and the audio moved on to the other.
  */
 @Composable
 fun rememberRemoteArtworkUrl(song: Song?): String? {

@@ -91,6 +91,7 @@ class UpgradeSpeedTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> {
             asked += 1
             if (failSearch) throw IllegalStateException("source is down")

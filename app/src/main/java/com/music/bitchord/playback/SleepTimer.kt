@@ -87,4 +87,21 @@ object SleepTimer {
      */
     fun countdownTicking(deadline: Long?, foreground: Boolean): Boolean =
         deadline != null && foreground
+
+    /** Duration of the volume fade-out before playback stops (30 seconds). */
+    const val FADE_OUT_DURATION_MS = 30_000L
+
+    /**
+     * Volume multiplier (0.0f..1.0f) for [remainingMs] milliseconds before deadline.
+     * When fade is active and under [fadeDurationMs], volume decreases linearly to 0.
+     */
+    fun calculateFadeVolume(
+        remainingMs: Long,
+        fadeDurationMs: Long = FADE_OUT_DURATION_MS,
+        fadeOutEnabled: Boolean = true,
+    ): Float {
+        if (!fadeOutEnabled || remainingMs >= fadeDurationMs) return 1f
+        if (remainingMs <= 0L || fadeDurationMs <= 0L) return 0f
+        return (remainingMs.toFloat() / fadeDurationMs.toFloat()).coerceIn(0f, 1f)
+    }
 }

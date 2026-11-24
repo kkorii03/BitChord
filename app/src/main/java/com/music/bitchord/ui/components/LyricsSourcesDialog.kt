@@ -43,8 +43,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -106,7 +108,8 @@ fun LyricsSourcesDialog(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() },
                 onClick = onDismiss,
-            ),
+            )
+            .padding(horizontal = 20.dp, vertical = 24.dp),
         contentAlignment = Alignment.Center,
     ) {
         // The card never grows past the window, however many provider rows are
@@ -116,7 +119,8 @@ fun LyricsSourcesDialog(
         val cardMaxHeight = maxHeight - 32.dp
         Column(
             modifier = Modifier
-                .width(ALERT_WIDTH)
+                .widthIn(min = ALERT_WIDTH, max = 320.dp)
+                .fillMaxWidth(0.88f)
                 .heightIn(max = cardMaxHeight)
                 .clip(shape)
                 .then(
@@ -480,6 +484,7 @@ private fun ReorderableSourceList(
     Column(
         modifier = modifier
             .heightIn(max = SOURCES_MAX_HEIGHT)
+            .clipToBounds()
             // Measured outside [verticalScroll] on purpose: inside it, this
             // would report the full, unclipped height of every row stacked up
             // rather than the capped card height, since verticalScroll gives
@@ -598,9 +603,9 @@ private fun ReorderableSourceList(
                             )
                             Text(
                                 text = source.detail,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = AppType.Caption),
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = AppType.Caption, lineHeight = 15.sp),
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }

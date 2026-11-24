@@ -58,6 +58,7 @@ class KoTelegramArtistQueryTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> {
             asked += query
             return byQuery.entries.firstOrNull { it.key.equals(query, ignoreCase = true) }?.value.orEmpty()

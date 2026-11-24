@@ -82,6 +82,7 @@ fun AccountAndScrobblingScreen(
     val discordUsername by AppSettings.discordUsername.collectAsStateWithLifecycle()
     val discordRpcEnabled by AppSettings.discordRpcEnabled.collectAsStateWithLifecycle()
     val spotifyConnected by AppSettings.spotifySpdcToken.collectAsStateWithLifecycle()
+    val youtubePremiumAudio by AppSettings.youtubePremiumAudio.collectAsStateWithLifecycle()
     val telegramState by TelegramClientManager.state.collectAsStateWithLifecycle()
     val musicGated by MusicGateFallback.active.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -122,6 +123,25 @@ fun AccountAndScrobblingScreen(
                     title = stringResource(R.string.listen_as),
                     subtitle = channelName ?: stringResource(R.string.default_youtube_profile),
                     onClick = onSwitchChannel,
+                )
+                // With the account because it is a claim about the account: only a
+                // signed-in Premium session is offered the higher Opus rung.
+                RowDivider()
+                SettingsRow(
+                    icon = SfIcons.AutoAwesome,
+                    title = stringResource(R.string.youtube_premium_audio),
+                    subtitle = stringResource(R.string.youtube_premium_audio_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = youtubePremiumAudio,
+                            onCheckedChange = AppSettings::setYoutubePremiumAudio,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setYoutubePremiumAudio(!youtubePremiumAudio) },
                 )
                 FullWidthDivider()
                 DestructiveRow(label = stringResource(R.string.sign_out), onClick = onSignOut)

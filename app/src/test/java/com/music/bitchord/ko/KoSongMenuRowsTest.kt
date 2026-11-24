@@ -26,7 +26,6 @@ class KoSongMenuRowsTest {
     fun `device file offers its playlists signed out and signed in`() {
         assertTrue(KoSongMenuRows.showsAddToPlaylist(false, deviceFile))
         assertTrue(KoSongMenuRows.showsAddToPlaylist(true, deviceFile))
-        assertTrue(KoSongMenuRows.showsRemoveFromPlaylist(false, deviceFile))
     }
 
     @Test
@@ -38,7 +37,6 @@ class KoSongMenuRowsTest {
     @Test
     fun `signed out stream keeps the account rows hidden`() {
         assertFalse(KoSongMenuRows.showsAddToPlaylist(false, streamed))
-        assertFalse(KoSongMenuRows.showsRemoveFromPlaylist(false, streamed))
         assertFalse(KoSongMenuRows.showsLike(false, streamed))
         assertTrue(KoSongMenuRows.showsAddToPlaylist(true, streamed))
         assertTrue(KoSongMenuRows.showsLike(true, streamed))

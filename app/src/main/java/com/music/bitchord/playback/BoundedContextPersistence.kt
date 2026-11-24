@@ -388,6 +388,7 @@ object BoundedContextPersistence {
         val pendingExcludedCanonicalIndices: List<Int> = emptyList(),
         val preShuffleCanonicalOrder: List<Int> = emptyList(),
         val manualUpcomingOrder: Boolean = false,
+        val excludedEntries: List<StoredExclusion> = emptyList(),
     ) {
         fun toSnapshot(): QueueWindowSnapshot? {
             if (canonicalSize < 0 || order.size != canonicalSize) return null
@@ -409,6 +410,9 @@ object BoundedContextPersistence {
                 pendingExcludedCanonicalIndices = pendingExcludedCanonicalIndices,
                 preShuffleCanonicalOrder = preShuffleCanonicalOrder,
                 manualUpcomingOrder = manualUpcomingOrder,
+                excludedEntries = excludedEntries.map {
+                    QueueWindowEntry(it.canonicalIndex, it.cycleId)
+                },
             )
         }
 
@@ -428,6 +432,20 @@ object BoundedContextPersistence {
                 pendingExcludedCanonicalIndices = snapshot.pendingExcludedCanonicalIndices,
                 preShuffleCanonicalOrder = snapshot.preShuffleCanonicalOrder,
                 manualUpcomingOrder = snapshot.manualUpcomingOrder,
+                excludedEntries = snapshot.excludedEntries.map(StoredExclusion::from),
+            )
+        }
+    }
+
+    @Serializable
+    private data class StoredExclusion(
+        val canonicalIndex: Int,
+        val cycleId: Long,
+    ) {
+        companion object {
+            fun from(entry: QueueWindowEntry) = StoredExclusion(
+                canonicalIndex = entry.canonicalIndex,
+                cycleId = entry.cycleId,
             )
         }
     }

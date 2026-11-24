@@ -71,6 +71,9 @@ fun youtubeStillFallback(url: String?): String? {
 fun String?.mediaSessionArtworkAt(px: Int): String? {
     val value = this ?: return null
     if (YT_LEGACY_THUMBNAIL.matchEntire(value.trim()) != null) return value
+    // [artworkAt] renames the other stills for a large size too (an `mqdefault`
+    // that always exists becomes an `hq720` that may not); left as sent here.
+    if (YT_STILL.matchEntire(value.trim()) != null) return value
     return artworkAt(px)
 }
 

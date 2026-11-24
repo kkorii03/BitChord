@@ -46,6 +46,7 @@ import java.util.Locale
 internal object LyricsSettingsCatalog {
     val keys = listOf(
         "synced_lyrics",
+        "hide_lyrics_preview",
         "lyrics_blur",
         "lyrics_sources",
         "translation_language",
@@ -81,6 +82,7 @@ fun LyricsSettingsScreen(
 ) {
     val context = LocalContext.current
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
+    val hideLyricsPreview by AppSettings.hideLyricsPreview.collectAsStateWithLifecycle()
     val lyricsBlur by AppSettings.lyricsBlur.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
     val translationLanguage by AppSettings.translationLanguage.collectAsStateWithLifecycle()
@@ -156,6 +158,20 @@ fun LyricsSettingsScreen(
             // sources are third-party services being reached on the user's
             // connection — which is the part worth being able to narrow.
             if (syncedLyrics) {
+                RowDivider()
+                SettingsRow(
+                    icon = SfIcons.VisibilityOff,
+                    title = stringResource(R.string.hide_lyrics_preview),
+                    subtitle = stringResource(R.string.hide_lyrics_preview_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = hideLyricsPreview,
+                            onCheckedChange = AppSettings::setHideLyricsPreview,
+                            colors = settingsSwitchColors(),
+                        )
+                    },
+                    onClick = { AppSettings.setHideLyricsPreview(!hideLyricsPreview) },
+                )
                 RowDivider()
                 val lyricsBlurTitle = stringResource(R.string.blur_unfocused_lyrics)
                 SettingsRow(

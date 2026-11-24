@@ -22,10 +22,6 @@ internal object KoSongMenuRows {
     fun showsAddToPlaylist(signedIn: Boolean, song: Song): Boolean =
         if (SongOrigins.isLocalFile(song)) isDevicePlaylistRow(song) else signedIn
 
-    /** "Remove from playlist" (still only when the host passes a callback). */
-    fun showsRemoveFromPlaylist(signedIn: Boolean, song: Song): Boolean =
-        signedIn || SongOrigins.isLocalFile(song)
-
     /** The heart: the account's like, or the device Liked list for a local file. */
     fun showsLike(signedIn: Boolean, song: Song): Boolean =
         signedIn || SongOrigins.isLocalFile(song)

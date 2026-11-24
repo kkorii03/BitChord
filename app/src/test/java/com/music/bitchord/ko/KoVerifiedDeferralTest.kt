@@ -10,6 +10,7 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.StreamRequest
+import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.data.sources.addon.AddonUnavailable
 import com.music.bitchord.ko.downloads.KoDownloadPipeline
 import kotlinx.coroutines.runBlocking
@@ -126,7 +127,7 @@ class KoVerifiedDeferralTest {
 
         override suspend fun health() = SourceHealth.Ok()
 
-        override suspend fun search(query: String, limit: Int, waitForAll: Boolean, request: StreamRequest?): List<Song> =
+        override suspend fun search(query: String, limit: Int, waitForAll: Boolean, request: StreamRequest?, target: TrackMatcher.Target?): List<Song> =
             emptyList()
 
         override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? {

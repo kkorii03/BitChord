@@ -13,6 +13,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -23,6 +26,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.music.bitchord.R
 import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.SongCredit
 import com.music.bitchord.data.SongInfo
 import com.music.bitchord.data.SongInfoRepository
 import com.music.bitchord.data.model.Song
@@ -66,6 +70,7 @@ internal fun SongInfoDialog(song: Song, onDismiss: () -> Unit) {
         value = SongInfoRepository.load(song)
     }
     val snapshot by NerdStats.current.collectAsState()
+    val creditsScroll = rememberScrollState()
     val onSurface = MaterialTheme.colorScheme.onSurface
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -109,29 +114,59 @@ internal fun SongInfoDialog(song: Song, onDismiss: () -> Unit) {
             }
 
             AlertRule()
-            Column(
-                Modifier
-                    .heightIn(max = INFO_BODY_MAX_HEIGHT)
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                val unknown = stringResource(R.string.song_info_unknown)
-                val quality = SongInfoQuality.label(song, snapshot)
-                val lines = info?.let { SongInfoDisplay.lines(it, song, quality, unknown) }
-                    ?: SongInfoDisplay.loadingLines(song)
-                lines.forEachIndexed { index, line ->
-                    if (index > 0) AlertRule(Modifier.padding(start = 16.dp))
-                    SongInfoRow(
-                        label = stringResource(line.field.labelRes()),
-                        value = line.value,
-                        unknown = line.unknown,
-                    )
+            // [KO] up110: the body still hugs its rows up to the cap (the fork's row
+            // count varies), so the credits and the error never hide below the fold.
+            val surface = MaterialTheme.colorScheme.surface
+            Box(Modifier.fillMaxWidth()) {
+                Column(
+                    Modifier
+                        .heightIn(max = INFO_BODY_MAX_HEIGHT)
+                        .drawWithContent {
+                            drawContent()
+                            if (creditsScroll.canScrollForward) {
+                                drawRect(
+                                    Brush.verticalGradient(
+                                        0f to Color.Transparent,
+                                        1f to surface,
+                                        startY = size.height - 28.dp.toPx(),
+                                        endY = size.height,
+                                    )
+                                )
+                            }
+                        }
+                        .verticalScroll(creditsScroll),
+                ) {
+                    val unknown = stringResource(R.string.song_info_unknown)
+                    val quality = SongInfoQuality.label(song, snapshot)
+                    val lines = info?.let { SongInfoDisplay.lines(it, song, quality, unknown) }
+                        ?: SongInfoDisplay.loadingLines(song)
+                    lines.forEachIndexed { index, line ->
+                        if (index > 0) AlertRule(Modifier.padding(start = 16.dp))
+                        SongInfoRow(
+                            label = stringResource(line.field.labelRes()),
+                            value = line.value,
+                            unknown = line.unknown,
+                        )
+                    }
+                    extraCredits(info).forEach { credit ->
+                        AlertRule(Modifier.padding(start = 16.dp))
+                        SongInfoCreditRow(role = credit.role, names = credit.text)
+                    }
+                    if (info?.failed == true) {
+                        Text(
+                            text = stringResource(R.string.song_info_error),
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = AppType.Caption, lineHeight = 15.sp),
+                            color = onSurface.copy(alpha = 0.6f),
+                        )
+                    }
                 }
-                if (info?.failed == true) {
-                    Text(
-                        text = stringResource(R.string.song_info_error),
-                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = AppType.Caption, lineHeight = 15.sp),
-                        color = onSurface.copy(alpha = 0.6f),
+                if (creditsScroll.canScrollForward) {
+                    Icon(
+                        imageVector = SfIcons.ChevronDown,
+                        contentDescription = null,
+                        tint = onSurface.copy(alpha = 0.35f),
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 2.dp).size(16.dp),
                     )
                 }
             }
@@ -239,6 +274,9 @@ internal fun SongInfoPage(song: Song, palette: ArtworkPalette, onBack: () -> Uni
                 palette = palette,
             )
         }
+        extraCredits(info).forEach { credit ->
+            SongInfoPageRow(label = credit.role, value = credit.text, unknown = false, palette = palette)
+        }
 
         if (info?.failed == true) {
             ActionRow(SfIcons.Cached, stringResource(R.string.song_info_retry), accent = palette.accent) {
@@ -286,5 +324,31 @@ private fun SongInfoPageRow(label: String, value: String?, unknown: Boolean, pal
                 )
             }
         }
+    }
+}
+
+/** The credits YouTube lists that the composer and lyricist lines do not already say. */
+private fun extraCredits(info: SongInfo?): List<SongCredit> =
+    info?.credits.orEmpty().filter { it.text != info?.composer && it.text != info?.lyricist }
+
+@Composable
+private fun SongInfoCreditRow(role: String, names: String) {
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = role,
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = AppType.Caption, lineHeight = 17.sp),
+            color = onSurface.copy(alpha = 0.6f),
+        )
+        Text(
+            text = names,
+            modifier = Modifier.padding(top = 2.dp),
+            style = MaterialTheme.typography.bodyLarge.copy(fontSize = AppType.Secondary),
+            color = onSurface,
+        )
     }
 }

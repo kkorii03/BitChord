@@ -137,7 +137,7 @@ class KoLateWindowSearchTest {
 
         override suspend fun health() = SourceHealth.Ok()
 
-        override suspend fun search(query: String, limit: Int, waitForAll: Boolean, request: StreamRequest?): List<Song> {
+        override suspend fun search(query: String, limit: Int, waitForAll: Boolean, request: StreamRequest?, target: TrackMatcher.Target?): List<Song> {
             searches++
             return rows
         }

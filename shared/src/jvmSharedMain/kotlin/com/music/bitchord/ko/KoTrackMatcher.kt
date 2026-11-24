@@ -147,9 +147,11 @@ internal object KoTrackMatcher {
     internal fun artistNames(value: String): Set<List<String>> =
         artistNamesMemo.getOrPut(value) { artistNamesUncached(value) }
 
+    // Upstream c61fa96c0: compared without Latin accents. [nameWords] and
+    // [releaseWordForms] are compared with these and fold the same way.
     private fun artistNamesUncached(value: String): Set<List<String>> = artistVariants(value)
         .map { name ->
-            name.split(WORD_SPLIT)
+            TrackMatcher.foldLatin(name).split(WORD_SPLIT)
                 .map { it.replace(NON_ALNUM, "") }
                 .filter { it.length > 1 }
         }
@@ -390,7 +392,7 @@ internal object KoTrackMatcher {
 
     /** The comparable words of [text], as [artistNames] cuts a name. */
     private fun nameWords(text: String): List<String> =
-        normalize(text).split(WORD_SPLIT)
+        TrackMatcher.foldLatin(normalize(text)).split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.length > 1 }
 
@@ -460,7 +462,7 @@ internal object KoTrackMatcher {
     private fun releaseWordForms(text: String): List<List<String>> = listOf(
         nameWords(text),
         nameWords(text.replace(POSSESSIVE, "")),
-        text.split(RELEASE_WORD_SPLIT)
+        TrackMatcher.foldLatin(text).split(RELEASE_WORD_SPLIT)
             .map { it.removeSuffix("'s").removeSuffix("’s").replace(NON_ALNUM, "") }
             .filter { it.length > 1 },
     ).distinct()
@@ -2085,7 +2087,7 @@ internal object KoTrackMatcher {
             CORE_PART_NUMBER.replace(coreText) { "part${partNumberOf(it.groupValues[1]) ?: it.groupValues[1]}" }
                 .replace(NON_ALNUM, "").replace("ー", "")
         } else {
-            canonicalPartWords(words).joinToString("")
+            TrackMatcher.foldLatin(canonicalPartWords(words).joinToString("")) // upstream c61fa96c0
         }
 
         val altWords = mutableListOf<List<String>>()
@@ -2149,7 +2151,7 @@ internal object KoTrackMatcher {
         val core = if (cjk) {
             clean.replace(NON_ALNUM, "").replace("ー", "")
         } else {
-            words.joinToString("")
+            TrackMatcher.foldLatin(words.joinToString("")) // as [TitleParts.core] is
         }
         return if (core.isBlank()) null else words to core
     }

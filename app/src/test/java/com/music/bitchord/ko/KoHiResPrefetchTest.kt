@@ -12,6 +12,7 @@ import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.TrackMatcher
 import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -123,7 +124,7 @@ class KoHiResPrefetchTest {
     ) : MusicSource {
         override val displayName: String get() = configId
         override suspend fun health() = SourceHealth.Ok()
-        override suspend fun search(query: String, limit: Int, waitForAll: Boolean, request: StreamRequest?): List<Song> = emptyList()
+        override suspend fun search(query: String, limit: Int, waitForAll: Boolean, request: StreamRequest?, target: TrackMatcher.Target?): List<Song> = emptyList()
         override suspend fun stream(trackId: String, request: StreamRequest): SourceStream =
             SourceStream(url = "https://$configId/$trackId", format = StreamFormat("flac"), sourceConfigId = configId, trackId = trackId)
     }

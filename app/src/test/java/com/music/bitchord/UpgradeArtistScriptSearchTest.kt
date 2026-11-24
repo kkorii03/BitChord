@@ -45,6 +45,7 @@ class UpgradeArtistScriptSearchTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> = rows
 
         override suspend fun stream(trackId: String, request: StreamRequest): SourceStream =

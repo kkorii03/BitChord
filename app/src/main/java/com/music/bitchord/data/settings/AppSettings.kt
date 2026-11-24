@@ -15,6 +15,7 @@ import com.music.bitchord.data.DebugLog as Debug
 import com.music.bitchord.data.ExploreCategoryFilter
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.canvas.SpotifyToken
+import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.net.ProxyConfig
@@ -22,11 +23,14 @@ import com.music.bitchord.data.net.ProxyMode
 import com.music.bitchord.data.net.ProxyScope
 import com.music.bitchord.data.net.YouTubeProxy
 import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.playback.AutoMixVisualFeed
 import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
 import com.music.bitchord.playback.PlaybackParametersMath
 import com.music.bitchord.playback.SyncSafetyPolicy
+import com.music.bitchord.ui.player.AutoMixArtworkPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
 
@@ -186,6 +190,12 @@ enum class LocalMusicSort {
  */
 enum class SongSort {
     DEFAULT,
+
+    /**
+     * By the file's own track-number tag — only offered on a page whose rows
+     * carry one, which in practice means an album off the device's files.
+     */
+    TRACK_NUMBER,
     TITLE_ASC,
     TITLE_DESC,
     DATE_ADDED_ASC,
@@ -285,6 +295,14 @@ object AppSettings {
      */
     val syncDownloadedPlaylists = MutableStateFlow(false)
 
+    /**
+     * Keep every liked song downloaded: the account's Liked Music is fetched
+     * whole once, then each new like follows it. Off by default for the same
+     * reason as [syncDownloadedPlaylists], which does the work for it — see
+     * [com.music.bitchord.download.PlaylistSync].
+     */
+    val downloadLikedSongs = MutableStateFlow(false)
+
     /** Whether the active network charges for data. `null` while offline. */
     val meteredConnection = MutableStateFlow<Boolean?>(null)
 
@@ -308,6 +326,9 @@ object AppSettings {
      * See [com.music.bitchord.playback.smart.TransitionPlanner].
      */
     val smartFadeEnabled = MutableStateFlow(false)
+    private val _autoMixArtwork = MutableStateFlow(AutoMixArtworkPreferences())
+    val autoMixArtwork = _autoMixArtwork.asStateFlow()
+    val sleepTimerFadeOut = MutableStateFlow(true)
 
     val automixVideos get() = KoAppSettings.automixVideos // [KO] automix videos
 
@@ -401,6 +422,19 @@ object AppSettings {
     val directSourceStream = MutableStateFlow(false)
 
     /**
+     * The listener's word that their YouTube account has Premium, and that
+     * YouTube playback should take the signed-in route that reaches Premium's
+     * ~256kbps Opus (itag 774) instead of the anonymous 251 — the route
+     * age-restricted tracks already take. See
+     * [InnerTubeXResolver.extract][com.music.bitchord.data.innertube.InnerTubeXResolver.extract].
+     *
+     * Off by default and asked rather than detected: nothing InnerTubeX
+     * exposes confirms the entitlement, and claiming it for an account
+     * without Premium only costs that account the faster anonymous route.
+     */
+    val youtubePremiumAudio = MutableStateFlow(false)
+
+    /**
      * Widens stereo output via [com.music.bitchord.playback.SpatialAudioProcessor],
      * a stereo widening + cross-feed effect running inside ExoPlayer's own
      * pipeline. Not true object-based spatial audio — YouTube only ever hands
@@ -476,6 +510,12 @@ object AppSettings {
      */
     val mainStallLog = MutableStateFlow(true)
 
+    /**
+     * The "Best Part" button on the player's artwork, which skips to the part of
+     * the song listeners replay most. On unless turned off.
+     */
+    val showBestPart = MutableStateFlow(true)
+
     /** Show the output / Listen Together pill under the player's transport. */
     val showListenTogetherButton = MutableStateFlow(false)
 
@@ -501,9 +541,6 @@ object AppSettings {
      */
     val onboardingComplete = MutableStateFlow(false)
 
-    /** Whether the one-time Diwali 2026 greeting has been seen and dismissed. */
-    val diwaliGreetingShown = MutableStateFlow(false)
-
     /** Requests a sustained high-refresh UI. Off keeps Android's automatic policy. */
     val highPerformanceMode = MutableStateFlow(false)
 
@@ -523,6 +560,12 @@ object AppSettings {
     val hideSongStatus = MutableStateFlow(false)
 
     val widgetOpensPlayer get() = KoAppSettings.widgetOpensPlayer // [KO] widget
+
+    /** Hides the lyrics preview strip on the main and mini player screens. */
+    val hideLyricsPreview = MutableStateFlow(false)
+
+    /** Draws the BitChord mark at the top of a shared lyrics card. */
+    val lyricsCardLogo = MutableStateFlow(true)
 
     val showQueueHistory = MutableStateFlow(false)
 
@@ -630,11 +673,20 @@ object AppSettings {
      */
     val canvasOverCellular = MutableStateFlow(false)
 
+    val disableSpotifyCanvas = MutableStateFlow(false)
+
     /** Automatically collapses the lower controls after Spotify Canvas settles. */
     val spotifyCanvasAutoHide = MutableStateFlow(true)
 
     /** Tries Spotify before Apple Music and the other animated-art providers. */
     val prioritizeSpotifyCanvas = MutableStateFlow(false)
+    val effectiveSpotifyCanvasAutoHide = MutableStateFlow(true)
+    val effectivePrioritizeSpotifyCanvas = MutableStateFlow(false)
+
+    private fun updateEffectiveSpotifyCanvasSettings() {
+        effectiveSpotifyCanvasAutoHide.value = spotifyCanvasAutoHide.value && !disableSpotifyCanvas.value
+        effectivePrioritizeSpotifyCanvas.value = prioritizeSpotifyCanvas.value && !disableSpotifyCanvas.value
+    }
 
     val videoCanvas get() = KoAppSettings.videoCanvas // [KO] video canvas
 
@@ -669,6 +721,9 @@ object AppSettings {
      * default, the framed sleeve being the page's own look.
      */
     val fullBleedDetailArtwork = MutableStateFlow(false)
+
+    /** Shows the track's total duration at the end of the player scrubber. */
+    val showTotalDuration = MutableStateFlow(false)
 
     /**
      * What the main player stands on below the artwork.
@@ -964,6 +1019,7 @@ object AppSettings {
      */
     val versionAlignmentInProgress = MutableStateFlow(false)
 
+
     /**
      * How much of the *upcoming* transition has been analysed, for stats for
      * nerds. Published by the crossfade controller, which is the only thing
@@ -1108,9 +1164,15 @@ object AppSettings {
         KoAppSettings.readHqSettings() // [KO] hq automation
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
         syncDownloadedPlaylists.value = prefs.getBoolean(KEY_SYNC_DOWNLOADED_PLAYLISTS, false)
+        downloadLikedSongs.value = prefs.getBoolean(KEY_DOWNLOAD_LIKED_SONGS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
         KoAppSettings.readAutomixVideos() // [KO] automix videos
+        _autoMixArtwork.value = AutoMixArtworkPreferences(
+            artTransition = prefs.getBoolean(KEY_AUTOMIX_ART_TRANSITION, false),
+            miniPlayerTransition = prefs.getBoolean(KEY_AUTOMIX_MINI_ART_TRANSITION, false),
+        )
+        sleepTimerFadeOut.value = prefs.getBoolean(KEY_SLEEP_TIMER_FADE_OUT, true)
         automixPerformanceMode.value = runCatching {
             AutomixPerformanceMode.valueOf(
                 prefs.getString(KEY_AUTOMIX_PERFORMANCE_MODE, null) ?: AutomixPerformanceMode.BALANCED.name,
@@ -1134,6 +1196,7 @@ object AppSettings {
         loudnessOffOnSpeaker.value = prefs.getBoolean(KEY_LOUDNESS_OFF_ON_SPEAKER, true)
         dolbyAtmos.value = prefs.getBoolean(KEY_DOLBY_ATMOS, true)
         directSourceStream.value = prefs.getBoolean(KEY_DIRECT_SOURCE_STREAM, false)
+        youtubePremiumAudio.value = prefs.getBoolean(KEY_YOUTUBE_PREMIUM_AUDIO, false)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
         equalizerEnabled.value = prefs.getBoolean(KEY_EQ_ENABLED, false)
         equalizerMode.value = runCatching {
@@ -1162,10 +1225,10 @@ object AppSettings {
         reconcileAutoplayWithRepeatAll()
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
         mainStallLog.value = prefs.getBoolean(KEY_MAIN_STALL_LOG, true)
+        showBestPart.value = prefs.getBoolean(KEY_BEST_PART, true)
         showListenTogetherButton.value = prefs.getBoolean(KEY_LISTEN_TOGETHER_BUTTON, false)
         reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, false)
         KoAppSettings.readLowPowerAndOnboarding(onboardingSaved, existingInstall) // [KO] low power
-        diwaliGreetingShown.value = prefs.getBoolean(KEY_DIWALI_GREETING_SHOWN, false)
         highPerformanceMode.value = prefs.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
         performanceRefreshRate.value = normalizePerformanceRefreshRate(
             prefs.getInt(KEY_PERFORMANCE_REFRESH_RATE, DEFAULT_PERFORMANCE_REFRESH_RATE),
@@ -1175,6 +1238,8 @@ object AppSettings {
         hideStatusBarInPlayer.value = prefs.getBoolean(KEY_HIDE_STATUS_BAR_IN_PLAYER, false)
         hideSongStatus.value = prefs.getBoolean(KEY_HIDE_SONG_STATUS, false)
         KoAppSettings.readWidgetOpensPlayerSetting() // [KO] widget
+        hideLyricsPreview.value = prefs.getBoolean(KEY_HIDE_LYRICS_PREVIEW, false)
+        lyricsCardLogo.value = prefs.getBoolean(KEY_LYRICS_CARD_LOGO, true)
         showQueueHistory.value = prefs.getBoolean(KEY_SHOW_QUEUE_HISTORY, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
@@ -1203,14 +1268,17 @@ object AppSettings {
         }
         animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
         canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
+        disableSpotifyCanvas.value = prefs.getBoolean(KEY_DISABLE_SPOTIFY_CANVAS, false)
         spotifyCanvasAutoHide.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, true)
         prioritizeSpotifyCanvas.value = prefs.getBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, false)
         KoAppSettings.readVideoCanvas() // [KO] video canvas
         KoAppSettings.readMvVideo() // [KO] mv-video
+        updateEffectiveSpotifyCanvasSettings()
         signatureApiEnabled.value = prefs.getBoolean(KEY_SIGNATURE_API_ENABLED, false)
         signatureApiUrl.value = normalizeSignatureApiUrl(prefs.getString(KEY_SIGNATURE_API_URL, "").orEmpty())
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
         fullBleedDetailArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_DETAIL_ARTWORK, false)
+        showTotalDuration.value = prefs.getBoolean(KEY_SHOW_TOTAL_DURATION, false)
         // The old legacy mesh switch answers until a theme has been picked.
         playerTheme.value = runCatching {
             PlayerTheme.valueOf(prefs.getString(KEY_PLAYER_THEME, null).orEmpty())
@@ -1499,12 +1567,49 @@ object AppSettings {
     }
 
     fun setSmartFadeEnabled(value: Boolean) {
+        if (smartFadeEnabled.value != value) {
+            val previous = _autoMixArtwork.value
+            _autoMixArtwork.value = previous.copy(
+                skipArtworkThrough = artworkCutoff(previous.skipArtworkThrough),
+                skipMiniThrough = artworkCutoff(previous.skipMiniThrough),
+            )
+        }
         smartFadeEnabled.value = value
         prefs.edit().putBoolean(KEY_SMART_FADE, value).apply()
     }
 
     fun setAutomixVideos(value: Boolean) =
         KoAppSettings.setAutomixVideos(value) // [KO] automix videos
+
+    fun setAutoMixArtTransition(value: Boolean) {
+        val previous = _autoMixArtwork.value
+        if (previous.artTransition == value) return
+        _autoMixArtwork.value = previous.copy(
+            artTransition = value,
+            skipArtworkThrough = artworkCutoff(previous.skipArtworkThrough),
+        )
+        prefs.edit().putBoolean(KEY_AUTOMIX_ART_TRANSITION, value).apply()
+    }
+
+    fun setAutoMixMiniPlayerTransition(value: Boolean) {
+        val previous = _autoMixArtwork.value
+        if (previous.miniPlayerTransition == value) return
+        _autoMixArtwork.value = previous.copy(
+            miniPlayerTransition = value,
+            skipMiniThrough = artworkCutoff(previous.skipMiniThrough),
+        )
+        prefs.edit().putBoolean(KEY_AUTOMIX_MINI_ART_TRANSITION, value).apply()
+    }
+
+    // At either edge, skip the generation already in flight. Even a rapid
+    // off/on round trip cannot revive the artwork on a renderer just mounting.
+    private fun artworkCutoff(previous: Long): Long =
+        maxOf(previous, AutoMixVisualFeed.state.value?.generation ?: 0L)
+
+    fun setSleepTimerFadeOut(value: Boolean) {
+        sleepTimerFadeOut.value = value
+        prefs.edit().putBoolean(KEY_SLEEP_TIMER_FADE_OUT, value).apply()
+    }
 
     fun setAutomixPerformanceMode(value: AutomixPerformanceMode) {
         automixPerformanceMode.value = value
@@ -1529,6 +1634,13 @@ object AppSettings {
     fun setDirectSourceStream(value: Boolean) {
         directSourceStream.value = value
         prefs.edit().putBoolean(KEY_DIRECT_SOURCE_STREAM, value).apply()
+    }
+
+    fun setYoutubePremiumAudio(value: Boolean) {
+        youtubePremiumAudio.value = value
+        prefs.edit().putBoolean(KEY_YOUTUBE_PREMIUM_AUDIO, value).apply()
+        // Remembered URLs were picked under the old route; the next play asks again.
+        StreamResolver.forgetResolved()
     }
 
     fun setSpatialAudio(value: Boolean) {
@@ -1621,6 +1733,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_NERD_STATS, value).apply()
     }
 
+    fun setShowBestPart(value: Boolean) {
+        showBestPart.value = value
+        prefs.edit().putBoolean(KEY_BEST_PART, value).apply()
+    }
+
     fun setShowListenTogetherButton(value: Boolean) {
         showListenTogetherButton.value = value
         prefs.edit().putBoolean(KEY_LISTEN_TOGETHER_BUTTON, value).apply()
@@ -1655,11 +1772,6 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETE, true).apply()
     }
 
-    fun setDiwaliGreetingShown() {
-        diwaliGreetingShown.value = true
-        prefs.edit().putBoolean(KEY_DIWALI_GREETING_SHOWN, true).apply()
-    }
-
     fun setStopOnTaskRemoved(value: Boolean) {
         stopOnTaskRemoved.value = value
         prefs.edit().putBoolean(KEY_STOP_ON_TASK_REMOVED, value).apply()
@@ -1685,6 +1797,16 @@ object AppSettings {
 
     fun readWidgetOpensPlayer(context: Context): Boolean =
         KoAppSettings.readWidgetOpensPlayer(context) // [KO] widget
+
+    fun setHideLyricsPreview(value: Boolean) {
+        hideLyricsPreview.value = value
+        prefs.edit().putBoolean(KEY_HIDE_LYRICS_PREVIEW, value).apply()
+    }
+
+    fun setLyricsCardLogo(value: Boolean) {
+        lyricsCardLogo.value = value
+        prefs.edit().putBoolean(KEY_LYRICS_CARD_LOGO, value).apply()
+    }
 
     fun setShowQueueHistory(value: Boolean) {
         showQueueHistory.value = value
@@ -2002,8 +2124,15 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_CANVAS_OVER_CELLULAR, value).apply()
     }
 
+    fun setDisableSpotifyCanvas(value: Boolean) {
+        disableSpotifyCanvas.value = value
+        updateEffectiveSpotifyCanvasSettings()
+        prefs.edit().putBoolean(KEY_DISABLE_SPOTIFY_CANVAS, value).apply()
+    }
+
     fun setSpotifyCanvasAutoHide(value: Boolean) {
         spotifyCanvasAutoHide.value = value
+        updateEffectiveSpotifyCanvasSettings()
         prefs.edit().putBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, value).apply()
     }
 
@@ -2015,6 +2144,7 @@ object AppSettings {
 
     fun setPrioritizeSpotifyCanvas(value: Boolean) {
         prioritizeSpotifyCanvas.value = value
+        updateEffectiveSpotifyCanvasSettings()
         prefs.edit().putBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, value).apply()
     }
 
@@ -2038,6 +2168,11 @@ object AppSettings {
     fun setFullBleedDetailArtwork(value: Boolean) {
         fullBleedDetailArtwork.value = value
         prefs.edit().putBoolean(KEY_FULL_BLEED_DETAIL_ARTWORK, value).apply()
+    }
+
+    fun setShowTotalDuration(value: Boolean) {
+        showTotalDuration.value = value
+        prefs.edit().putBoolean(KEY_SHOW_TOTAL_DURATION, value).apply()
     }
 
     fun setPlayerTheme(value: PlayerTheme) {
@@ -2149,6 +2284,11 @@ object AppSettings {
     fun setSyncDownloadedPlaylists(value: Boolean) {
         syncDownloadedPlaylists.value = value
         prefs.edit().putBoolean(KEY_SYNC_DOWNLOADED_PLAYLISTS, value).apply()
+    }
+
+    fun setDownloadLikedSongs(value: Boolean) {
+        downloadLikedSongs.value = value
+        prefs.edit().putBoolean(KEY_DOWNLOAD_LIKED_SONGS, value).apply()
     }
 
     fun setLastfmPrimaryArtistOnly(value: Boolean) {
@@ -2611,8 +2751,12 @@ object AppSettings {
     private const val KEY_WIFI_ONLY_DOWNLOADS = "wifi_only_downloads"
     private const val KEY_EXPORT_DOWNLOADS = "export_downloads"
     private const val KEY_SYNC_DOWNLOADED_PLAYLISTS = "sync_downloaded_playlists"
+    private const val KEY_DOWNLOAD_LIKED_SONGS = "download_liked_songs"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"
+    private const val KEY_AUTOMIX_ART_TRANSITION = "automix_art_transition"
+    private const val KEY_AUTOMIX_MINI_ART_TRANSITION = "automix_mini_art_transition"
+    private const val KEY_SLEEP_TIMER_FADE_OUT = "sleep_timer_fade_out"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
@@ -2624,6 +2768,7 @@ object AppSettings {
     private const val KEY_LOUDNESS_OFF_ON_SPEAKER = "loudness_off_on_speaker"
     private const val KEY_DOLBY_ATMOS = "dolby_atmos"
     private const val KEY_DIRECT_SOURCE_STREAM = "direct_source_stream"
+    private const val KEY_YOUTUBE_PREMIUM_AUDIO = "youtube_premium_audio"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"
     private const val KEY_EQ_ENABLED = "equalizer_enabled"
     private const val KEY_EQ_MODE = "equalizer_mode"
@@ -2643,17 +2788,19 @@ object AppSettings {
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_NERD_STATS = "show_nerd_stats"
     private const val KEY_MAIN_STALL_LOG = "main_stall_log"
+    private const val KEY_BEST_PART = "show_best_part"
     private const val KEY_LISTEN_TOGETHER_BUTTON = "show_listen_together_button"
     private const val KEY_CACHE_LIMIT = "audio_cache_limit_bytes"
     private const val KEY_REDUCE_ANIMATION = "reduce_animation"
     internal const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
-    private const val KEY_DIWALI_GREETING_SHOWN = "diwali_greeting_2026_shown"
     private const val KEY_HIGH_PERFORMANCE_MODE = "high_performance_mode"
     private const val KEY_PERFORMANCE_REFRESH_RATE = "performance_refresh_rate"
     private const val KEY_STOP_ON_TASK_REMOVED = "stop_on_task_removed"
     private const val KEY_HIDE_VOLUME_BAR = "hide_volume_bar"
     private const val KEY_HIDE_STATUS_BAR_IN_PLAYER = "hide_status_bar_in_player"
     private const val KEY_HIDE_SONG_STATUS = "hide_song_status"
+    private const val KEY_HIDE_LYRICS_PREVIEW = "hide_lyrics_preview"
+    private const val KEY_LYRICS_CARD_LOGO = "lyrics_card_logo"
     private const val KEY_SHOW_QUEUE_HISTORY = "show_queue_history"
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
@@ -2676,12 +2823,14 @@ object AppSettings {
     private const val KEY_TRANSLATION_LANGUAGE = "translation_language"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_CANVAS_OVER_CELLULAR = "canvas_over_cellular"
+    private const val KEY_DISABLE_SPOTIFY_CANVAS = "disable_spotify_canvas"
     private const val KEY_SPOTIFY_CANVAS_AUTO_HIDE = "spotify_canvas_auto_hide"
     private const val KEY_PRIORITIZE_SPOTIFY_CANVAS = "prioritize_spotify_canvas"
     private const val KEY_SIGNATURE_API_ENABLED = "signature_api_enabled"
     private const val KEY_SIGNATURE_API_URL = "signature_api_url"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
     private const val KEY_FULL_BLEED_DETAIL_ARTWORK = "full_bleed_detail_artwork"
+    private const val KEY_SHOW_TOTAL_DURATION = "show_total_duration"
     private const val KEY_PLAYER_THEME = "player_theme"
     private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"
     private const val KEY_LAST_PLAYER_SCREEN = "last_player_screen"

@@ -2,6 +2,7 @@ package com.music.bitchord.ko
 
 import com.music.bitchord.data.SongInfo
 import com.music.bitchord.data.SongInfoParser
+import com.music.bitchord.data.SongInfoRepository
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.Innertube
@@ -97,6 +98,13 @@ internal object KoSongInfoRepository {
             }
         }
 
+        // Upstream 1.10's credits page. A nicety like the album link, and held
+        // to the same deadline: it starts with the rest and never holds the
+        // panel past it.
+        val credits = async {
+            withTimeoutOrNull(LINK_LOOKUP_MS) { attempt { SongInfoRepository.fetchCredits(target) }.getOrNull() }
+        }
+
         val playerResult = player.await()
         val watchResult = watch.await()
         val parsed = attempt {
@@ -146,6 +154,7 @@ internal object KoSongInfoRepository {
             views = stats?.views,
             likes = stats?.likes,
             comments = stats?.comments,
+            credits = credits.await().orEmpty().ifEmpty { stats?.credits.orEmpty() },
             failed = failed,
         )
     }

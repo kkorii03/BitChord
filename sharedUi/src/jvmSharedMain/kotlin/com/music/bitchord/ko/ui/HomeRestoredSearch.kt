@@ -8,6 +8,7 @@ import com.music.bitchord.sharedui.resources.album
 import com.music.bitchord.sharedui.resources.albums
 import com.music.bitchord.sharedui.resources.artist
 import com.music.bitchord.sharedui.resources.artists
+import com.music.bitchord.sharedui.resources.library
 import com.music.bitchord.sharedui.resources.playlist
 import com.music.bitchord.sharedui.resources.playlists
 import com.music.bitchord.sharedui.resources.search_filter_all
@@ -52,4 +53,5 @@ fun koSearchFilterLabel(filter: SearchFilter): StringResource = when (filter) {
     SearchFilter.ALBUMS -> Res.string.albums
     SearchFilter.ARTISTS -> Res.string.artists
     SearchFilter.PLAYLISTS -> Res.string.playlists
+    SearchFilter.LIBRARY -> Res.string.library
 }

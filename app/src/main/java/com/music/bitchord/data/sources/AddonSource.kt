@@ -319,12 +319,19 @@ class AddonSource(
         limit: Int,
         waitForAll: Boolean,
         request: StreamRequest?,
+        target: TrackMatcher.Target?,
     ): List<Song> =
         withContext(Dispatchers.IO) {
             if (query.isBlank()) return@withContext emptyList()
             if (!admitted("a search")) return@withContext emptyList()
             val tier = request?.tier ?: AddonClient.TIER_LOSSLESS
-            val tracks = client.search(query, tier).getOrElse { failure ->
+            val tracks = client.search(
+                query,
+                tier,
+                // The track's own metadata, not the query's folded words.
+                title = target?.title.orEmpty(),
+                artist = target?.artist.orEmpty(),
+            ).getOrElse { failure ->
                 if (failure is CancellationException) throw failure
                 TrackLog.w(TAG, "${config.displayName}: search failed — ${failure.message}")
                 if (failure is AddonAuthException) {

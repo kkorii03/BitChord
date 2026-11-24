@@ -3,6 +3,7 @@ package com.music.bitchord.data.lyrics
 import com.music.bitchord.data.innertube.Innertube
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -19,13 +20,56 @@ object YouTubeMusicLyrics {
         val browseId = (endpoint["browseId"] as? JsonPrimitive)?.contentOrNull
             ?: return@withContext null
         val params = (endpoint["params"] as? JsonPrimitive)?.contentOrNull
-        val page = runCatching { Innertube.browse(browseId, params) }.getOrNull() ?: return@withContext null
-        val shelf = page.objectsNamed("musicDescriptionShelfRenderer").firstOrNull()
-            ?: return@withContext null
-        val text = shelf["description"]?.youtubeStrings()?.joinToString("").orEmpty().trim()
-        text.lineSequence().map(String::trim).filter(String::isNotEmpty)
-            .map { LyricLine(0L, it) }.toList().takeIf { it.isNotEmpty() }
+        // The web client is answered with the plain description shelf even
+        // when the track has timed lyrics; only the mobile client gets the
+        // timedLyricsModel. Ask as the phone first, then fall back to the
+        // shelf it returns (if any) or the web client's, which always has it.
+        // [KO] Bounded, so a phone client that does not answer still leaves the
+        // source's own budget enough time to ask the web client.
+        val mobile = withTimeoutOrNull(MOBILE_LIMIT_MS) {
+            runCatching { Innertube.browseMobile(browseId, params) }.getOrNull()
+        }
+        mobile?.let(::timedLyrics)?.let { return@withContext it }
+        mobile?.let(::plainLyrics)?.let { return@withContext it }
+        val web = runCatching { Innertube.browse(browseId, params) }.getOrNull()
+        web?.let(::plainLyrics)
     }
+
+    private const val MOBILE_LIMIT_MS = 4_000L
+}
+
+/** YouTube Music's timed lyrics, where the track has them. */
+internal fun timedLyrics(page: JsonObject): List<LyricLine>? {
+    val data = findArray(page, "timedLyricsData") ?: return null
+    return data.mapNotNull { element ->
+        val line = element as? JsonObject ?: return@mapNotNull null
+        // [KO] A note-only row is a break, not a sung line; the gaps below stand for it.
+        val text = (line["lyricLine"] as? JsonPrimitive)?.contentOrNull?.trim(' ', '\n', '♪').orEmpty()
+        if (text.isEmpty()) return@mapNotNull null
+        val cue = line["cueRange"] as? JsonObject
+        val start = (cue?.get("startTimeMilliseconds") as? JsonPrimitive)
+            ?.contentOrNull?.toLongOrNull() ?: return@mapNotNull null
+        val end = (cue?.get("endTimeMilliseconds") as? JsonPrimitive)
+            ?.contentOrNull?.toLongOrNull()
+        LyricLine(start, text, sungUntilMs = end)
+    }.sortedBy { it.timeMs }.withInstrumentalGaps().takeIf { it.isNotEmpty() } // [KO] gaps
+}
+
+/** The untimed description shelf the web client gets; the old behaviour. */
+internal fun plainLyrics(page: JsonObject): List<LyricLine>? {
+    val shelf = page.objectsNamed("musicDescriptionShelfRenderer").firstOrNull()
+        ?: return null
+    val text = shelf["description"]?.youtubeStrings()?.joinToString("").orEmpty().trim()
+    return text.lineSequence().map(String::trim).filter(String::isNotEmpty)
+        .map { LyricLine(0L, it) }.toList().takeIf { it.isNotEmpty() }
+}
+
+/** First array named [name] anywhere in [element], depth-first. */
+private fun findArray(element: JsonElement, name: String): JsonArray? = when (element) {
+    is JsonObject -> (element[name] as? JsonArray)
+        ?: element.values.firstNotNullOfOrNull { findArray(it, name) }
+    is JsonArray -> element.firstNotNullOfOrNull { findArray(it, name) }
+    else -> null
 }
 
 /** Timed YouTube transcript/captions for the exact playing video. */

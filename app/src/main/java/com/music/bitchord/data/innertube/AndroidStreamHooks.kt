@@ -57,6 +57,7 @@ object AndroidStreamHooks {
             )
         }
         StreamResolver.maxKbps = { AppSettings.effectiveAudioQuality.maxKbps }
+        StreamResolver.premiumAudio = { AppSettings.youtubePremiumAudio.value }
         // A rate-limited URL must leave the playback layer's pins too, not only
         // the resolver's URL cache: otherwise the next open is handed the same
         // paused URL from StreamChoice/QualityUpgrade without asking again.

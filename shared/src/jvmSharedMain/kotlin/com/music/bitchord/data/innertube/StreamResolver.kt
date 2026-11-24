@@ -90,6 +90,20 @@ object StreamResolver {
     @Volatile
     var maxKbps: () -> Int = { Int.MAX_VALUE }
 
+    /**
+     * Whether the listener says their account has YouTube Premium and wants
+     * its higher Opus rung — see [InnerTubeXResolver.extract]'s `premium`.
+     */
+    @Volatile
+    var premiumAudio: () -> Boolean = { false }
+
+    /**
+     * Drops the remembered stream URLs, so the next play of a track resolves
+     * afresh — for a setting that changes which stream a resolve picks.
+     */
+    fun forgetResolved() {
+        recent.clear()
+    }
 
     private const val TAG = "BitChord"
 
@@ -746,7 +760,9 @@ object StreamResolver {
         // The path that served the last track goes first — see [ResolutionOrder].
         // A winner that has missed twice in a row has already been forgotten, and
         // a benched direct path is not a winner worth leading with either.
-        val learned = order.preferred()
+        // [KO] Premium's rung is only offered to a signed-in walk, so with it on no
+        // remembered (usually anonymous) client leads; the direct ask stays behind it.
+        val learned = order.preferred().takeUnless { premiumAudio() }
         val preferredItx = ResolutionOrder.itxManifest(learned)
         val preferDirect = learned == ResolutionOrder.DIRECT
         val orderLabel = if (learned != null) "learned" else "default"
@@ -1959,6 +1975,7 @@ object StreamResolver {
                     requireM4a,
                     uploaded,
                     viaProxy = viaProxy,
+                    premium = premiumAudio() && !viaProxy, // [KO] the bounded proxy rescue keeps its own order
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -2130,6 +2147,7 @@ object StreamResolver {
                 requireM4a,
                 uploaded = true,
                 viaProxy = viaProxy,
+                premium = premiumAudio() && !viaProxy, // [KO] the bounded proxy rescue keeps its own order
             )
         } catch (e: CancellationException) {
             throw e
@@ -2782,6 +2800,14 @@ object StreamResolver {
      */
     suspend fun signatureTimestamp(videoId: String): Int? {
         cachedSignatureTimestamp?.let { return it }
+        // NewPipe fetches the player script through the downloader [init]
+        // installs. Every other caller has already been through [resolve] or
+        // [downloadStream] by the time it gets here, which hid that this one
+        // never touched it. With Direct Source Stream a track plays from an
+        // addon and YouTube is never resolved at all, so the parse failed
+        // with no downloader, the tracker never got a timestamp, and no play
+        // reached the account's history.
+        init
         return runCatching {
             jsPlayerManager { YoutubeJavaScriptPlayerManager.getSignatureTimestamp(videoId) }
         }

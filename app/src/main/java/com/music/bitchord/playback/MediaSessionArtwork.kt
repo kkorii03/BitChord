@@ -12,7 +12,6 @@ import com.music.bitchord.data.cover.mediaSessionArtworkAt
 import com.music.bitchord.data.cover.videoThumbnailUrl
 import com.music.bitchord.data.model.NOTIFICATION_ART_PX
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.model.artworkAt
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -85,7 +84,7 @@ internal object MediaSessionArtwork {
     /** As [uriFor], for a browse item that has a URL but no [Song]. */
     fun uriForUrl(context: Context?, url: String?): String? {
         if (url.isNullOrBlank()) return null
-        if (!isLocalArtworkUri(url)) return url.artworkAt(NOTIFICATION_ART_PX)
+        if (!isLocalArtworkUri(url)) return url.mediaSessionArtworkAt(NOTIFICATION_ART_PX)
         if (!localArtworkExists(url)) return null
         return context?.let { ctx ->
             readableContentUri(ctx, url)?.also { grantRead(ctx, Uri.parse(it)) }

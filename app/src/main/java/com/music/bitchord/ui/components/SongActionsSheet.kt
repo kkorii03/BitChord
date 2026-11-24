@@ -113,6 +113,8 @@ internal fun ActionRow(
  * The track a sheet is about, drawn at its head. Shared by the actions menu
  * and the playlist picker, which is the same track two taps later.
  *
+ * [title] is set when that track's artwork and artist preview an album instead.
+ *
  * [subtitleColor] exists because the two sheets stand on different ground: the
  * picker's is the flat theme background, where the usual dim grey is right,
  * while the actions sheet is tinted from this very artwork and needs the
@@ -123,6 +125,7 @@ internal fun SheetTrackHeader(
     song: Song,
     modifier: Modifier = Modifier,
     subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    title: String? = null,
 ) {
     Row(
         modifier = modifier
@@ -142,11 +145,21 @@ internal fun SheetTrackHeader(
         )
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            ExplicitSongTitle(
-                song = song,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
+            if (title == null) {
+                ExplicitSongTitle(
+                    song = song,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+            } else {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Text(
                 text = song.artist,
                 style = MaterialTheme.typography.bodyMedium,

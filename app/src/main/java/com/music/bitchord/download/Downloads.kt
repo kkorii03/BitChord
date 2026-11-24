@@ -956,8 +956,13 @@ object Downloads {
      * that did go are forgotten individually. A false here is the caller's
      * cue to say so rather than let the card disappear.
      */
-    suspend fun deleteCollection(context: Context, id: String): Boolean =
-        deleteCollection(id) { videoId -> delete(context, videoId) }
+    suspend fun deleteCollection(context: Context, id: String): Boolean {
+        // Deleting the liked songs while they are kept downloaded would have
+        // the next check fetch every one of them again. Taking them off the
+        // device says the listener no longer wants that, so it ends here.
+        if (id == com.music.bitchord.data.YtMusicRepository.LIKED_MUSIC) AppSettings.setDownloadLikedSongs(false)
+        return deleteCollection(id) { videoId -> delete(context, videoId) }
+    }
 
     /** [deleteCollection]'s decision, with the file removal supplied by the caller. */
     internal suspend fun deleteCollection(

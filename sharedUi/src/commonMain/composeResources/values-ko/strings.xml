@@ -339,4 +339,18 @@
     <string name="mix_view_one_bar">1마디</string>
     <string name="mix_view_seconds">%1$d초</string>
     <string name="mix_view_bpm">%1$d bpm</string>
+    <!-- upstream 1.10 -->
+    <string name="mixes_yours">내 믹스</string>
+    <string name="mixes_none">아직 믹스가 없습니다. 계속 들으면 YouTube Music이 믹스를 만들어 드립니다.</string>
+    <string name="add_to_queue">대기열에 추가</string>
+    <string name="queue_selected_count">%1$d개 선택됨</string>
+    <string name="queue_select_all">모두 선택</string>
+    <string name="queue_select">선택</string>
+    <string name="queue_close_selection">선택 모드 닫기</string>
+    <string name="queue_add_to_playlist">플레이리스트</string>
+    <string name="queue_download">다운로드</string>
+    <string name="queue_selection_remove">제거</string>
+    <string name="queue_add_all_to_playlist">모두 플레이리스트에 추가</string>
+    <string name="best_part">하이라이트</string>
+    <string name="best_part_description">하이라이트로 이동</string>
 </resources>

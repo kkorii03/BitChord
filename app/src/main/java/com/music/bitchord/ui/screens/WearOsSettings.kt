@@ -330,7 +330,7 @@ private fun StatusLine(state: WatchPairingState) {
 
 /** The page's one big action: full width, fully rounded. */
 @Composable
-private fun PrimaryButton(text: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun PrimaryButton(text: String, enabled: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()

@@ -313,6 +313,17 @@ internal object KoAppSettingsTransfer {
             KEY_SYNC_SAFETY_DOWNLOAD_RECHECK,
             KEY_SYNC_SAFETY_HQ_SYNC,
             KEY_SYNC_SAFETY_PER_LINE,
+            // Upstream 1.10 switches: AppSettings keeps their names private.
+            "download_liked_songs",
+            "automix_art_transition",
+            "automix_mini_art_transition",
+            "sleep_timer_fade_out",
+            "youtube_premium_audio",
+            "show_best_part",
+            "hide_lyrics_preview",
+            "lyrics_card_logo",
+            "disable_spotify_canvas",
+            "show_total_duration",
         )
         ints(
             KEY_UPGRADE_LENGTH_SLACK_SECONDS,

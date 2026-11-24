@@ -179,6 +179,7 @@ class KoLeadSkipTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> {
             gate?.await()
             return emptyList()

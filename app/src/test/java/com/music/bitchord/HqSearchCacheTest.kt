@@ -57,6 +57,7 @@ class HqSearchCacheTest {
             limit: Int,
             waitForAll: Boolean,
             request: StreamRequest?,
+            target: TrackMatcher.Target?,
         ): List<Song> {
             asked += 1
             if (reportsFailure) {

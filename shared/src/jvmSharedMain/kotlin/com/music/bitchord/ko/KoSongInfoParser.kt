@@ -73,6 +73,7 @@ internal object KoSongInfoParser {
             ),
             likes = countValue(newLike ?: oldLike),
             comments = comments,
+            credits = SongInfoParser.parseMusicSectionCredits(data), // upstream 1.10
             failed = !hasPlayer && data == null,
         )
     }
