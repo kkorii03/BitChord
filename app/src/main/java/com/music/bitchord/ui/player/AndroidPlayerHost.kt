@@ -143,7 +143,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
     // the first look at a song costs a request. What is known stays offered.
     override suspend fun bestPartMs(song: Song): Long? =
         (com.music.bitchord.ui.replay.year.BestParts.known(song.videoId)
-            ?: if (AppSettings.lowPower.value || AppSettings.meteredConnection.value) return null
+            ?: if (AppSettings.lowPower.value || AppSettings.meteredConnection.value == true) return null
             else com.music.bitchord.ui.replay.year.BestParts.startFor(app, song))
             .takeIf { it.source != com.music.bitchord.ui.replay.year.BestPartStart.Source.FALLBACK }
             ?.startMs
