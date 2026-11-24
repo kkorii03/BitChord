@@ -1940,10 +1940,10 @@ object AudioCache {
      * Null until the cache and the player's upstream exist.
      */
     fun opusShareSource(videoId: String): Pair<DataSource.Factory, Uri>? {
-        if (!::cache.isInitialized) return null
+        val opened = openedCache ?: return null // [KO] cache-open
         val upstream = upstreamFactory ?: return null
         val factory = CacheDataSource.Factory()
-            .setCache(cache)
+            .setCache(opened)
             .setUpstreamDataSourceFactory(upstream)
             .setCacheKeyFactory { videoId }
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
