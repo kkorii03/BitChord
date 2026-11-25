@@ -35,6 +35,7 @@ import com.music.bitchord.ko.koLogHqAhead
 import com.music.bitchord.ko.koFollowSession
 import com.music.bitchord.ko.koRefreshArmedIncomingLossless
 import com.music.bitchord.ko.koCheckNextDownloadAhead
+import com.music.bitchord.ko.koDropCoverNext
 
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -2067,6 +2068,7 @@ class PlaybackService : MediaLibraryService() {
                 // its old seed memoized. Detect that state at its source and
                 // make the current track eligible for a fresh load.
                 refreshAutoplayIfQueueEmpty()
+                koDropCoverNext() // [KO] autoplay-cover: a drop put off until the queue could take it
             }
         }
     }
@@ -4199,7 +4201,7 @@ class PlaybackService : MediaLibraryService() {
         ) invalidateQueueUndo()
     }
 
-    private fun isQueueUndoRestoring(raw: ExoPlayer): Boolean = queueUndoRestoreBatch?.let {
+    internal fun isQueueUndoRestoring(raw: ExoPlayer): Boolean = queueUndoRestoreBatch?.let {
         it.player === raw && (it.applying || it.matches(raw))
     } == true
 
@@ -11350,6 +11352,7 @@ class PlaybackService : MediaLibraryService() {
                 ) && trackAnalyzer.analysisFor(id).isUsable
             },
             cancelMix = { id -> trackAnalyzer.cancelAnalysis(id) },
+            dropCoverNext = { koDropCoverNext() }, // [KO] autoplay-cover
         )
     }
 

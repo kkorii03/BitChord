@@ -66,6 +66,8 @@ internal class NextTrackPreparation(
     private val mixReady: (String) -> Boolean,
     private val awaitMix: suspend (String) -> Boolean,
     private val cancelMix: (String) -> Unit,
+    /** [KO] autoplay-cover: drops the next row when it was rejected; true when it is on its way out. */
+    private val dropCoverNext: () -> Boolean = { false },
 ) {
 
     private var job: Job? = null
@@ -351,6 +353,14 @@ internal class NextTrackPreparation(
             ),
         )
 
+        // [KO] autoplay-cover: an unmarked cover leaves the queue before anything else is spent on it.
+        suspend fun coverDropped(): Boolean {
+            val player = currentPlayer() ?: return false
+            return NextPrepPolicy.canStartStep(remainingMs(player)) &&
+                com.music.bitchord.ko.KoAutoplayCovers.isCover(context, player, song, lyrics) && dropCoverNext()
+        }
+        if (coverDropped()) return
+
         for (step in plan.steps) {
             if (step == Step.MIX) continue
             if (!stillCurrent()) return
@@ -524,6 +534,7 @@ internal class NextTrackPreparation(
                 deadlineHit = true
                 break
             }
+            if (step == Step.LYRICS && coverDropped()) return
         }
 
         if (!stillCurrent()) return

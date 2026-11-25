@@ -639,7 +639,7 @@ private suspend fun loadNormalAutoplayTracks(
     // final gate as well as at the source, and say which id it was. The cover
     // filter is repeated for the sources that did not pass through the radio
     // list above (similar rows and favourites), so every path is held to it.
-    val relatedExtra = autoplayRowsAfterCoverFilter(extra, seedSong)
+    val relatedExtra = KoAutoplayCovers.withoutRejected(autoplayRowsAfterCoverFilter(extra, seedSong), seedSong)
     val playable = relatedExtra.filter {
         it.title.isNotBlank() && it.artist.isNotBlank()
     }
