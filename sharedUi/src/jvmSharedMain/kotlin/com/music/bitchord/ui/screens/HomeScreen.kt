@@ -241,7 +241,9 @@ fun HomeScreen(
     replayYear: ReplayYearBadge? = null,
 ) {
     // Top Picks' pictures and motion wait for the feed — see LocalArtworkImages.
-    val feedReady = state !is UiState.Loading
+    // [KO] Recents alone, up from the device before the feed has answered, is not the feed yet.
+    val feedReady = state !is UiState.Loading &&
+        !(loadingMore && state is UiState.Success && state.data.size <= 1)
     CompositionLocalProvider(
         LocalArtworkMotion provides (artworkMotion && feedReady),
         LocalArtworkImages provides feedReady,

@@ -44,6 +44,8 @@ class KoUpgradeOverlapWiringTest {
         assertTrue(load.indexOf("YtMusicRepository.homeRecentlyPlayed()") > early)
         val ko = source("ko/ui/KoRecents.kt").substringAfter("suspend fun koEarlyRecents()").substringBefore("\n}")
         assertTrue(ko.contains("MusicGateFallback.storedOpen()"))
+        val home = file("sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/screens/HomeScreen.kt")
+        assertTrue("Top Picks' pictures still wait for the feed", home.contains("!(loadingMore && state is UiState.Success && state.data.size <= 1)"))
     }
 
     @Test
