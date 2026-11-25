@@ -57,7 +57,7 @@ class KoNamelessCreditTest {
         assertEquals("artist-unverified", verdict(row("Various Artists", null)))
         val own = TrackMatcher.Target("피아노", "박효신", durationSec = 340)
         assertEquals("artist-unverified", verdict(row("Various Artists", "피아노", title = "피아노"), own))
-        assertEquals(null, verdict(row("박효신", "피아노 앨범")))
+        assertFalse(KoTrackMatcher.isInstrumentReleaseOf(row("박효신", "바이올린 앨범"), request))
     }
 
     @Test
