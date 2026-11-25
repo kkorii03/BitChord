@@ -50,6 +50,12 @@ object HqVerificationStore {
          * under it is heard once ([HqAudioVerify.auditCachedCopy]).
          */
         val guardSeen: Boolean = false,
+        /**
+         * [KO] Whether the two recordings' prints were compared
+         * ([com.music.bitchord.ko.KoRecordingPrint]) and not found to be two.
+         * False for every verdict stored before that check.
+         */
+        val printChecked: Boolean = false,
     )
 
     /** One accepted pair, with the ids needed to ask for the very same stream again. */
@@ -141,6 +147,9 @@ object HqVerificationStore {
      * unmarked, so its library fetch waits and its saved file is heard again.
      */
     private const val NAMELESS_WORDS = "named"
+
+    /** [KO] The ninth field of a line whose recording print was compared. */
+    private const val PRINT_CHECKED = "print"
 
     /**
      * Format 1 stored a rejection whenever a comparison did not accept, even
@@ -413,7 +422,7 @@ object HqVerificationStore {
             val wordsChecked = parts.getOrNull(7) == wordsMark
             val guardSeen = parts.getOrNull(7) == GUARD_SEEN && !KoVersionGuard.namesNobody(sourceArtist) // [KO]
             data.verified[parts[0]] =
-                Verified(offset, rate, match, tier, sourceTitle, sourceArtist, wordsChecked, guardSeen)
+                Verified(offset, rate, match, tier, sourceTitle, sourceArtist, wordsChecked, guardSeen, parts.getOrNull(8) == PRINT_CHECKED)
         }
         val version = prefs.getInt(KEY_VERSION, 1)
         if (version < STORE_VERSION) {
@@ -477,7 +486,7 @@ object HqVerificationStore {
         val verified = data.verified.entries.joinToString("\n") { (key, value) ->
             // The source names are appended only when known, so a verdict
             // without them keeps the five-field line older builds wrote.
-            val marked = value.wordsChecked || value.guardSeen
+            val marked = value.wordsChecked || value.guardSeen || value.printChecked
             val names = if (value.sourceTitle == null && value.sourceArtist == null && !marked) {
                 emptyList()
             } else {
@@ -488,8 +497,9 @@ object HqVerificationStore {
             val words = when {
                 value.wordsChecked -> listOf(if (KoVersionGuard.namesNobody(value.sourceArtist)) NAMELESS_WORDS else WORDS_CHECKED)
                 value.guardSeen -> listOf(GUARD_SEEN) // [KO]
+                value.printChecked -> listOf("")
                 else -> emptyList()
-            }
+            } + if (value.printChecked) listOf(PRINT_CHECKED) else emptyList() // [KO]
             (listOf(key, value.offsetMs, value.rate, value.matchPercent, value.tier.name) + names + words)
                 .joinToString("\t")
         }

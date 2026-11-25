@@ -75,6 +75,11 @@ class HqVerifyRgaWiringTest {
         // A row with a doubted credit owes its words before the library may fetch it.
         assertTrue(outcome.contains("guardSeen = !needsWords && !KoUnverifiedRows.contains(sourceId, trackId)"))
         // A file far smaller than its claimed bitrate is measured before anything is compared.
+        // [KO] print: another recording is refused before its words are heard, and an old verdict is measured again.
+        val other = outcome.indexOf("if (verdict.accepted && otherRecording(")
+        assertTrue(other >= 0 && other < outcome.indexOf("if (youtubeWords != null && verdict.accepted) {"))
+        assertTrue(outcome.contains("= stored.printChecked && KoVersionGuard.storedVerdictStands("))
+        assertTrue(outcome.contains("printChecked = true,"))
         val thin = outcome.indexOf("KoThinRendition.thin(stream.format,")
         assertTrue(thin >= 0 && thin < outcome.indexOf("ChromaAlignment.align("))
     }

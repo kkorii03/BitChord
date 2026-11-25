@@ -178,7 +178,7 @@ class HqVerifyNoAlignmentLogTest {
             "a remembered missing reference must answer before the candidate fetch",
             first.replace(Regex("\\s+"), " ").contains("|| noReferenceRemembered(youtubeId, manual)"),
         )
-        assertTrue("profiles written from a substitute are rebuilt", verify.contains("REFERENCE_DIR = \"hq_reference2\""))
+        assertTrue("profiles written from a substitute are rebuilt", verify.contains("REFERENCE_DIR = \"hq_reference3\""))
         val ready = source("playback/smart/VideoAudio.kt")
             .substringAfter("internal fun referenceReady(song: Song, untilSeconds: Double): Boolean {")
             .substringBefore("/** [referenceReady]'s rule")

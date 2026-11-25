@@ -51,13 +51,14 @@ class HqLibraryUpgradeSelectionTest {
     // 11-13 Despacito remix, match=96%) replaced the saved file with the remix.
     @Test
     fun `a pair whose words were never compared is not a library download`() {
-        val old = com.music.bitchord.playback.smart.HqVerificationStore.Verified(0L, 1.0, 96, HqTier.DOLBY_ATMOS)
+        val old = com.music.bitchord.playback.smart.HqVerificationStore.Verified(0L, 1.0, 96, HqTier.DOLBY_ATMOS, printChecked = true)
         fun entry(track: String, verified: com.music.bitchord.playback.smart.HqVerificationStore.Verified) =
             com.music.bitchord.playback.smart.HqVerificationStore.Entry("video-1", "source", track, verified)
 
         val kept = HqLibraryUpgrade.fetchable(
             listOf(
                 entry("before-the-guard", old),
+                entry("recording-never-compared", old.copy(wordsChecked = true, printChecked = false)),
                 entry("words-heard", old.copy(wordsChecked = true)),
                 entry("no-other-version", old.copy(guardSeen = true)),
             ),

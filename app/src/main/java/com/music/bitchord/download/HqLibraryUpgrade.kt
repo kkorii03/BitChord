@@ -926,11 +926,13 @@ object HqLibraryUpgrade {
      * were compared (11-13 Despacito: the remix at match=96%) carries neither
      * mark and was fetched like any other. It is left out until a check has
      * closed the words question; a request for one song then goes to its
-     * search, where the verification asks it.
+     * search, where the verification asks it. The same for one stored before
+     * the recording print was compared.
      */
     internal fun fetchable(entries: List<HqVerificationStore.Entry>): List<HqVerificationStore.Entry> =
         entries.filter {
-            com.music.bitchord.ko.KoVersionGuard.closesWordsQuestion(it.verified.wordsChecked, it.verified.guardSeen)
+            it.verified.printChecked &&
+                com.music.bitchord.ko.KoVersionGuard.closesWordsQuestion(it.verified.wordsChecked, it.verified.guardSeen)
         }
 
     /**
@@ -1253,14 +1255,14 @@ object HqLibraryUpgrade {
             pending.target.sourceConfigId,
             pending.target.trackId,
         )
-        // [KO] A plan kept from before may still name a pair whose words were never compared.
-        if (verified == null ||
+        // [KO] A plan kept from before may still name a pair whose words or recording were never compared.
+        if (verified == null || !verified.printChecked ||
             !com.music.bitchord.ko.KoVersionGuard.closesWordsQuestion(verified.wordsChecked, verified.guardSeen)
         ) {
             TrackLog.w(
                 TAG,
                 "hq-library: '${pending.song.title}' " +
-                    (if (verified == null) "has no stored verdict any more" else "waits for the words check") +
+                    (if (verified == null) "has no stored verdict any more" else "waits for its sound check") +
                     "; skipping",
                 pending.target.videoId,
             )

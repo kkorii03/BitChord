@@ -79,6 +79,22 @@ class HqVerificationStoreFormatTest {
         assertFalse(HqVerificationStore.get(context, "yt2", "src1", "track1")!!.wordsChecked)
     }
 
+    // Phone 11-25: verdicts stored before the recordings were compared are measured once more.
+    @Test
+    fun `a compared recording keeps its mark across a reload and older lines stay unmarked`() {
+        val words = verified().copy(wordsChecked = true, printChecked = true)
+        val plain = verified().copy(printChecked = true)
+        HqVerificationStore.put(context, "yt1", "src1", "track1", words)
+        HqVerificationStore.put(context, "yt2", "src1", "track1", plain)
+        cachedField.set(HqVerificationStore, null)
+
+        assertEquals(words, HqVerificationStore.get(context, "yt1", "src1", "track1"))
+        assertEquals(plain, HqVerificationStore.get(context, "yt2", "src1", "track1"))
+        prefs.values["verified"] = "yt3\u0001src1\u0001track1\t1234\t1.001\t87\tLOSSLESS_16\tTitle\tArtist\twords"
+        cachedField.set(HqVerificationStore, null)
+        assertFalse(HqVerificationStore.get(context, "yt3", "src1", "track1")!!.printChecked)
+    }
+
     // Phone 11-25: the violin's stored "words" mark came from hearing no words at all.
     @Test
     fun `a nameless row's old marks are owed again and a new one survives a reload`() {

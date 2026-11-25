@@ -12,6 +12,7 @@ import com.music.bitchord.ko.KoEarlyHearing
 import com.music.bitchord.ko.KoHqWarp
 import com.music.bitchord.ko.KoManifestHead
 import com.music.bitchord.ko.KoOpeningClip
+import com.music.bitchord.ko.KoRecordingPrint
 import com.music.bitchord.ko.KoThinRendition
 import com.music.bitchord.ko.KoUnverifiedRows
 import com.music.bitchord.ko.KoVerifiedHead
@@ -423,10 +424,10 @@ object HqAudioVerify {
      * partial profile is never written, for the same reason it is not kept in
      * memory (see [HqReferenceCache]).
      */
-    private const val REFERENCE_DIR = "hq_reference2" // [KO] U1121 VERIFY-1: rebuilt once, see storeReference
+    private const val REFERENCE_DIR = "hq_reference3" // [KO] rebuilt once: the profile now carries the recording print
 
-    /** Profiles written before a substitute's opening was refused as the reference; they cannot be told apart. */
-    private const val OLD_REFERENCE_DIR = "hq_reference"
+    /** Profiles from before a substitute's opening was refused as the reference, and from before the print. */
+    private val OLD_REFERENCE_DIRS = listOf("hq_reference", "hq_reference2")
 
     /**
      * A kept profile is the 4.7 s reference decode of a track's next first play
@@ -571,7 +572,8 @@ object HqAudioVerify {
         }
         val key = "$youtubeId\u0001$sourceId\u0001${trackId.orEmpty()}"
         // [KO] RG1-4: a doubted pair heard twice this run on too few words is not downloaded a third time.
-        fun storedStands(stored: HqVerificationStore.Verified) = KoVersionGuard.storedVerdictStands(
+        // [KO] A verdict from before the recording print is measured once more.
+        fun storedStands(stored: HqVerificationStore.Verified) = stored.printChecked && KoVersionGuard.storedVerdictStands(
             wordsChecked = stored.wordsChecked,
             needsWords = needsWords,
             unsettledHearings = riskyUnsettledHearings[key] ?: 0,
@@ -828,6 +830,18 @@ object HqAudioVerify {
                         UnmeasuredMemory.note(sourceId, trackId, "bent match", restSource = false)
                         return@coroutineScope Outcome.Unavailable()
                     }
+                    // [KO] The same chords and the same lyrics by someone else: another recording.
+                    if (verdict.accepted && otherRecording(referenceFeatures, candidate.features, HqQuality.tierOf(stream.format), youtubeId, sourceName)) {
+                        logVerdict(
+                            target.title, sourceName, match, offset, accepted = false, about = youtubeId,
+                            reference = "wav", candidate = "file", bytes = candidate.bytes, why = "another recording",
+                        )
+                        sourceId?.let(SourceResolver.SourceCooldown::measured)
+                        if (HqVerifyPolicy.shouldPersistRejection(referenceAvailable = referenceComplete && candidateComplete, accepted = false)) {
+                            reject(context, youtubeId, sourceId, trackId)
+                        }
+                        return@coroutineScope Outcome.Mismatch
+                    }
                     // [KO] Only a chroma match is worth hearing; a refusal stands without it.
                     val words = if (youtubeWords != null && verdict.accepted) {
                         heardWords(youtubeId, youtubeWords, candidate.opening, offset, rate, ahead = early?.take(candidate.opening))
@@ -898,6 +912,7 @@ object HqAudioVerify {
                         // [KO] No other version in this row's search: a cached copy of it owes no hearing.
                         // [KO] violin: a row admitted on a doubted credit still owes its words before the library may fetch it.
                         guardSeen = !needsWords && !KoUnverifiedRows.contains(sourceId, trackId),
+                        printChecked = true,
                     )
                     HqVerificationStore.put(context, youtubeId, sourceId, trackId, verified)
                     // [KO] RG1-4: count a doubted pair's hearing that did not settle it.
@@ -1144,6 +1159,8 @@ object HqAudioVerify {
          * unverified file must be heard before it can be promoted.
          */
         allowCached: Boolean = true,
+        /** [KO] False for a file whose sound is another id's by design: its recording is not this one's. */
+        sameRecording: Boolean = true,
     ): DownloadedSound = withContext(Dispatchers.IO) {
         if (youtubeId.isBlank() || uri.isBlank()) return@withContext DownloadedSound.Unavailable
         if (SourceTrackKeys.parse(youtubeId) != null) {
@@ -1152,7 +1169,7 @@ object HqAudioVerify {
             )
         }
         if (allowCached) {
-            HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId)?.let {
+            HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId)?.takeIf { it.printChecked }?.let {
                 return@withContext DownloadedSound.Accepted(it, cached = true)
             }
         }
@@ -1166,7 +1183,7 @@ object HqAudioVerify {
             return@withContext lock.withLock {
                 coroutineScope {
                     if (allowCached) {
-                        HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId)?.let {
+                        HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId)?.takeIf { it.printChecked }?.let {
                             return@coroutineScope DownloadedSound.Accepted(it, cached = true)
                         }
                     }
@@ -1206,7 +1223,21 @@ object HqAudioVerify {
                     }
                     val result = runCatching {
                         ChromaAlignment.align(reference, candidate, videoComplete = false)
-                    }.getOrNull() ?: return@coroutineScope DownloadedSound.Unavailable
+                    }.getOrNull()
+                    // [KO] Full openings of two recordings: a cover on the same chords, or a file the aligner could not even place.
+                    if (sameRecording && referenceComplete && candidateComplete &&
+                        otherRecording(reference, candidate, tier, youtubeId, "download")
+                    ) {
+                        logVerdict(
+                            "downloaded file", "download", result?.matchPercent ?: 0, 0L, accepted = false,
+                            about = youtubeId, why = "another recording",
+                        )
+                        if (!sourceConfigId.isNullOrBlank() && !trackId.isNullOrBlank()) {
+                            HqVerificationStore.reject(context, youtubeId, sourceConfigId, trackId)
+                        }
+                        return@coroutineScope DownloadedSound.Rejected
+                    }
+                    if (result == null) return@coroutineScope DownloadedSound.Unavailable
                     val match = result.matchPercent ?: 0
                     val offset = result.map?.map(0L) ?: 0L
                     val rate = result.rate ?: 1.0
@@ -1243,13 +1274,15 @@ object HqAudioVerify {
                         rate = rate,
                         matchPercent = match,
                         tier = tier ?: HqTier.NORMAL,
+                        printChecked = true,
                     )
                     // The only map between this file's clock and YouTube's; a kept verdict
                     // stays for its source names (11-06 MUny_GDYIDM: measured, then no map).
-                    if (!sourceConfigId.isNullOrBlank() && !trackId.isNullOrBlank() &&
-                        HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId) == null
-                    ) {
-                        HqVerificationStore.put(context, youtubeId, sourceConfigId, trackId, measured)
+                    if (!sourceConfigId.isNullOrBlank() && !trackId.isNullOrBlank()) {
+                        val kept = HqVerificationStore.get(context, youtubeId, sourceConfigId, trackId)
+                        if (kept == null || !kept.printChecked) {
+                            HqVerificationStore.put(context, youtubeId, sourceConfigId, trackId, kept?.copy(printChecked = true) ?: measured)
+                        }
                     }
                     DownloadedSound.Accepted(measured)
                 }
@@ -1257,6 +1290,23 @@ object HqAudioVerify {
         } finally {
             locks.remove(key, lock)
         }
+    }
+
+    /**
+     * [KO] Whether two full openings are two recordings of the song ([KoRecordingPrint]).
+     * An Atmos mix is the same performance mixed again, and is not asked.
+     */
+    private fun otherRecording(
+        reference: ChromaAlignment.Features,
+        candidate: ChromaAlignment.Features,
+        tier: HqTier?,
+        youtubeId: String,
+        what: String,
+    ): Boolean {
+        if (tier == HqTier.DOLBY_ATMOS) return false
+        val sound = KoRecordingPrint.compare(reference.print, candidate.print)
+        TrackLog.i(TAG, "hq-verify recording: $what ${sound.name.lowercase()} differs=${KoRecordingPrint.figures(reference.print, candidate.print)}", youtubeId)
+        return sound == KoRecordingPrint.Sound.DIFFERENT
     }
 
     /** The downloaded file's opening, read through the same extractor as a stream. */
@@ -1431,11 +1481,18 @@ object HqAudioVerify {
         for (entry in HqVerificationStore.entries(context)) {
             if (entry.youtubeId != youtubeId) continue
             val key = "$youtubeId\u0001${entry.sourceConfigId}\u0001${entry.trackId}"
-            if (!owesCachedWords(entry.verified, key)) continue
+            val owesWords = owesCachedWords(entry.verified, key)
+            val owesPrint = !entry.verified.printChecked && key !in cachedCopyPrinted
+            if (!owesWords && !owesPrint) continue
             val rendition = com.music.bitchord.playback.AudioCache
                 .playedCopyWrittenBy(uri, entry.sourceConfigId, entry.trackId) ?: continue
             // A saved download is what sounds, not this copy; its own check is the download's.
             if (com.music.bitchord.download.Downloads.savedUri(context, youtubeId) != null) return
+            // [KO] The copy's recording before its words: no engine, and other words are another recording anyway.
+            if (owesPrint && !com.music.bitchord.data.settings.AppSettings.lowPower.value &&
+                cachedCopyIsOtherRecording(context, entry, key) { com.music.bitchord.playback.AudioCache.renditionDataSource(uri, rendition) }
+            ) return
+            if (!owesWords) return
             // Neither costs anything to find missing, so neither spends a hearing.
             if (wordsHearer() == KoVersionGuard.Hearer.NONE) return
             val youtubeWords = SongHearing.keptYouTubeWords(context, youtubeId) ?: return
@@ -1451,6 +1508,53 @@ object HqAudioVerify {
                 locks.remove(key, lock)
             }
             return
+        }
+    }
+
+    /** [KO] The pairs whose cached copy was asked its recording this run: once each, answered or not. */
+    private val cachedCopyPrinted: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /**
+     * [KO] The recording check a copy cached before it existed still owes
+     * ([KoRecordingPrint]). True when the copy is another recording: its row is
+     * refused and the copy dropped, as [hearCachedCopyLocked] does for other words.
+     */
+    private suspend fun cachedCopyIsOtherRecording(
+        context: Context,
+        entry: HqVerificationStore.Entry,
+        key: String,
+        open: () -> android.media.MediaDataSource?,
+    ): Boolean {
+        cachedCopyPrinted.add(key)
+        val youtubeId = entry.youtubeId
+        val lock = locks.getOrPut(key) { Mutex() }
+        try {
+            return lock.withLock {
+                val reference = (referenceFeatures(context, youtubeId, "cached copy", manual = false) as? Reference.Ready)
+                    ?.features ?: return@withLock false
+                val source = runCatching(open).getOrNull() ?: return@withLock false
+                val coroutine = currentCoroutineContext()
+                val candidate = try {
+                    featuresOf(source, abort = { !coroutine.isActive })
+                } finally {
+                    runCatching { source.close() }
+                } ?: return@withLock false
+                if (!HqReferenceCache.completeEnough(reference, COMPARE_SECONDS) ||
+                    !HqReferenceCache.completeEnough(candidate, COMPARE_SECONDS)
+                ) return@withLock false
+                // Read again under the lock: a verification of this pair may have just answered.
+                val stored = HqVerificationStore.get(context, youtubeId, entry.sourceConfigId, entry.trackId)
+                if (stored == null || stored.printChecked) return@withLock false
+                if (otherRecording(reference, candidate, stored.tier, youtubeId, "cached copy")) {
+                    reject(context, youtubeId, entry.sourceConfigId, entry.trackId)
+                    TrackLog.i(TAG, "hq-verify cached copy: another recording; row refused, cached copy dropped", youtubeId)
+                    return@withLock true
+                }
+                HqVerificationStore.put(context, youtubeId, entry.sourceConfigId, entry.trackId, stored.copy(printChecked = true))
+                false
+            }
+        } finally {
+            locks.remove(key, lock)
         }
     }
 
@@ -1675,7 +1779,7 @@ object HqAudioVerify {
         runCatching {
             val dir = File(context.filesDir, REFERENCE_DIR)
             // [KO] U1121: true only the once the new directory is made; the old one goes with it.
-            if (dir.mkdirs()) File(context.filesDir, OLD_REFERENCE_DIR).deleteRecursively()
+            if (dir.mkdirs()) OLD_REFERENCE_DIRS.forEach { File(context.filesDir, it).deleteRecursively() }
             val file = referenceFile(context, youtubeId)
             val temporary = File(dir, file.name + ".tmp")
             temporary.writeBytes(features.toBytes())
@@ -1879,7 +1983,7 @@ object HqAudioVerify {
     private fun featuresOfWav(wav: ByteArray): ChromaAlignment.Features? {
         val pcm = WavAudio.monoFloat(wav) ?: return null
         if (pcm.samples.isEmpty() || pcm.sampleRate <= 0) return null
-        val extractor = ChromaAlignment.Extractor(pcm.sampleRate)
+        val extractor = ChromaAlignment.Extractor(pcm.sampleRate, print = true)
         extractor.push(pcm.samples)
         return extractor.finish(startSeconds = 0.0).takeIf { it.frames > 0 }
     }
@@ -2786,7 +2890,7 @@ object HqAudioVerify {
                     if (current == null) {
                         sampleRate = rate
                         startSeconds = at
-                        extractor = ChromaAlignment.Extractor(rate).also { it.push(samples) }
+                        extractor = ChromaAlignment.Extractor(rate, print = true).also { it.push(samples) }
                     } else if (rate == sampleRate) {
                         current.push(samples)
                     }

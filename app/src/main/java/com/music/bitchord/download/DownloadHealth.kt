@@ -119,8 +119,11 @@ object DownloadHealth {
      *
      * 5: a saved lossy file now asks for one search for a better copy, and every
      * such file is already recorded as checked (11-07 cCkAcVOS3ig).
+     *
+     * 6: [KO] a saved cover on the same chords and lyrics passed every check so
+     * far (11-24 눈의 꽃, 11-25 Viva La Vida); each file's recording is compared once.
      */
-    const val CHECK_VERSION = 5
+    const val CHECK_VERSION = 6
 
     data class Outcome(
         val verdict: DownloadHealthPolicy.Verdict,
@@ -293,6 +296,7 @@ object DownloadHealth {
                 // A stored pair verdict is not proof about these bytes, so an
                 // unverified file is decoded again before it may be promoted.
                 allowCached = meta.recordingVerified,
+                sameRecording = meta.soundSourceVideoId == null || meta.soundSourceVideoId == id,
             )
             val soundAccepted = when (sound) {
                 is HqAudioVerify.DownloadedSound.Accepted -> true

@@ -136,6 +136,8 @@ object ChromaAlignment {
         /** Where frame 0 is centred, seconds into the audio. */
         val firstCenterSeconds: Double,
         internal val silent: BooleanArray,
+        /** [KO] The recording print of the same samples, when the extractor was asked for one. */
+        val print: LongArray? = null,
     ) {
         fun secondsAt(frame: Double): Double = firstCenterSeconds + frame * hopSeconds
         val durationSeconds: Double get() = secondsAt((frames - 1).coerceAtLeast(0).toDouble())
@@ -155,6 +157,11 @@ object ChromaAlignment {
                 for (i in 0 until frames) {
                     data.writeByte(if (silent[i]) 1 else 0)
                     for (pc in 0 until 12) data.writeByte((chroma[i * 12 + pc].coerceIn(0f, 1f) * 255f).roundToInt())
+                }
+                // [KO] After the profile, so a reader that stops there is unmoved.
+                print?.let { frames ->
+                    data.writeInt(frames.size)
+                    frames.forEach { data.writeInt(it.toInt()); data.writeByte((it ushr 32).toInt()) }
                 }
             }
             return out.toByteArray()
@@ -178,7 +185,10 @@ object ChromaAlignment {
                         for (pc in 0 until 12) chroma[i * 12 + pc] = data.readUnsignedByte() / 255f
                         normalizeRow(chroma, i * 12)
                     }
-                    Features(chroma, frames, hop, first, silent)
+                    val print = if (data.available() < 4) null else data.readInt().takeIf { it in 0..200_000 }?.let { size ->
+                        LongArray(size) { (data.readInt().toLong() and 0xFFFFFFFFL) or (data.readUnsignedByte().toLong() shl 32) }
+                    }
+                    Features(chroma, frames, hop, first, silent, print)
                 }
             }.getOrNull()
 
@@ -199,7 +209,7 @@ object ChromaAlignment {
      *
      * Feed it with [push] in order, then call [finish] once.
      */
-    class Extractor(sourceRate: Int) {
+    class Extractor(sourceRate: Int, print: Boolean = false) {
         private val factor = max(1, sourceRate / TARGET_RATE)
         private val rate = sourceRate.toDouble() / factor
         private val hop = max(1, (rate * HOP_SECONDS).roundToInt())
@@ -223,6 +233,8 @@ object ChromaAlignment {
             if (hz < MIN_HZ || hz > MAX_HZ) -1 else Math.floorMod((69.0 + 12.0 * log2(hz / 440.0)).roundToInt(), 12)
         }
 
+        private val printer = if (print) com.music.bitchord.ko.KoRecordingPrint.Printer(rate) else null // [KO]
+
         private var out = FloatArray(12 * 2048)
         private var silentOut = BooleanArray(2048)
         private var frames = 0
@@ -244,6 +256,7 @@ object ChromaAlignment {
                     h--
                 }
                 window[(reduced % FFT_SIZE).toInt()] = acc
+                printer?.push(acc)
                 reduced++
                 if (reduced == nextFrameAt) {
                     frame()
@@ -321,6 +334,7 @@ object ChromaAlignment {
                 hopSeconds = hop / rate,
                 firstCenterSeconds = startSeconds + (FFT_SIZE / 2.0) / rate,
                 silent = silentOut.copyOf(n),
+                print = printer?.print(),
             )
         }
     }
@@ -857,7 +871,7 @@ object ChromaAlignment {
     }
 
     /** In-place radix-2 FFT; size must be a power of two. */
-    private fun fft(re: DoubleArray, im: DoubleArray) {
+    internal fun fft(re: DoubleArray, im: DoubleArray) {
         val n = re.size
         var j = 0
         for (i in 1 until n) {

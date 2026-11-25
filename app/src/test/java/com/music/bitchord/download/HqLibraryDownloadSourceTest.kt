@@ -45,6 +45,7 @@ class HqLibraryDownloadSourceTest {
         matchPercent = 100,
         tier = tier,
         wordsChecked = true,
+        printChecked = true,
     )
 
     @Test
