@@ -28,6 +28,10 @@ class KoRecordingPrintTest {
         val cover = features(render(song = 1, take = 2, rate = 16_000, beat = 0.83), 16_000)
 
         assertEquals(KoRecordingPrint.Sound.DIFFERENT, KoRecordingPrint.compare(reference.print, cover.print))
+        val (sound, figures) = KoRecordingPrint.measure(reference.print, cover.print)
+        assertEquals(KoRecordingPrint.Sound.DIFFERENT, sound)
+        assertEquals(true, Regex("\\d+/\\d+%").matches(figures), figures)
+        assertEquals("none", KoRecordingPrint.measure(reference.print, null).second)
     }
 
     @Test

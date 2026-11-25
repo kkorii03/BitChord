@@ -126,23 +126,21 @@ object KoRecordingPrint {
      * too little of it sounds, or the figures lie between a recording and
      * another performance (a remix, a remaster from other tapes).
      */
-    fun compare(reference: LongArray?, candidate: LongArray?): Sound {
-        val errors = errors(reference ?: return Sound.UNCLEAR, candidate ?: return Sound.UNCLEAR)
-        if (errors.size < MIN_BLOCKS) return Sound.UNCLEAR
-        return when {
-            errors[errors.size / 2] <= SAME_MEDIAN -> Sound.SAME
-            errors[0] >= OTHER_BEST && errors[errors.size / 4] >= OTHER_QUARTER &&
-                errors[errors.size / 2] >= OTHER_MEDIAN -> Sound.DIFFERENT
+    fun compare(reference: LongArray?, candidate: LongArray?): Sound = measure(reference, candidate).first
+
+    /** The verdict and the log's figures (quarter and median share of differing bits), from one search. */
+    fun measure(reference: LongArray?, candidate: LongArray?): Pair<Sound, String> {
+        val errors = if (reference == null || candidate == null) DoubleArray(0) else errors(reference, candidate)
+        if (errors.isEmpty()) return Sound.UNCLEAR to "none"
+        val quarter = errors[errors.size / 4]
+        val median = errors[errors.size / 2]
+        val sound = when {
+            errors.size < MIN_BLOCKS -> Sound.UNCLEAR
+            median <= SAME_MEDIAN -> Sound.SAME
+            errors[0] >= OTHER_BEST && quarter >= OTHER_QUARTER && median >= OTHER_MEDIAN -> Sound.DIFFERENT
             else -> Sound.UNCLEAR
         }
-    }
-
-    /** The log's figures: quarter and median share of differing bits. */
-    fun figures(reference: LongArray?, candidate: LongArray?): String {
-        val errors = errors(reference ?: return "none", candidate ?: return "none")
-        if (errors.isEmpty()) return "none"
-        fun percent(v: Double) = (v * 100).roundToInt()
-        return "${percent(errors[errors.size / 4])}/${percent(errors[errors.size / 2])}%"
+        return sound to "${(quarter * 100).roundToInt()}/${(median * 100).roundToInt()}%"
     }
 
     /**

@@ -2,9 +2,12 @@ package com.music.bitchord.ko.ui
 
 import com.music.bitchord.data.DebugLog
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.innertube.MusicGateFallback
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.ui.MainViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /** The app's own Recents key, as the feed and the shelf-title localiser use it. */
@@ -22,6 +25,16 @@ internal fun MainViewModel.koRecentsLog(message: String) {
 internal fun MainViewModel.koLogRecentsPublished(source: String, shelves: List<HomeShelf>) {
     val shelf = shelves.firstOrNull { isRecentsTitle(it.title) } ?: return
     koRecentsLog("recents: published by $source top=${shelf.items.firstOrNull()?.title.orEmpty()}")
+}
+
+/**
+ * Recents from this device alone, for a load's first paint. The real shelf
+ * waits for the session page that says whether Music is gated; when no stored
+ * verdict says so, these rows are the same shelf's head a second or two sooner.
+ */
+internal suspend fun koEarlyRecents(): HomeShelf? = withContext(Dispatchers.IO) {
+    if (!MusicGateFallback.storedOpen()) return@withContext null
+    runCatching { YtMusicRepository.localRecentShelf() }.getOrNull()?.takeIf { it.items.isNotEmpty() }
 }
 
 /** A counted local play: repaint Recents without a request or a timer. */

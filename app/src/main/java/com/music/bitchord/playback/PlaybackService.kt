@@ -245,6 +245,7 @@ import com.music.bitchord.playback.smart.AnalysisWindow
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import com.music.bitchord.playback.smart.ByteLru
 import com.music.bitchord.playback.smart.HqAudioVerify
+import com.music.bitchord.startup.AppForeground
 import com.music.bitchord.playback.smart.HqVerificationStore
 import com.music.bitchord.playback.smart.VersionAudioAligner
 import com.music.bitchord.playback.smart.VersionSwapPolicy
@@ -3035,6 +3036,12 @@ class PlaybackService : MediaLibraryService() {
         autoMixArtworkGeneration = coverGeneration
         if (coverGeneration == null) return
         autoMixArtworkJob = scope.launch {
+            // [KO] battery: nobody sees a hidden app's transition. Opening the app
+            // while the mix is still armed prepares it then; otherwise the next arm cancels this.
+            AppForeground.foreground.first { it }
+            if (AutoMixVisualFeed.pending(coverGeneration)?.phase != AutoMixVisualPhase.ARMED ||
+                !allowsAnyAutoMixArtwork(coverGeneration)
+            ) return@launch
             val song = item.toSong()
             // Canvas resolution is independent of still-art extraction and decoding.
             launch {

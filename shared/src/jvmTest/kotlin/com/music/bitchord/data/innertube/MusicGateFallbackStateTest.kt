@@ -69,6 +69,15 @@ class MusicGateFallbackStateTest {
     }
 
     @Test
+    fun `the stored verdicts read open only when none of them is gated`() {
+        assertFalse(MusicGateFallback.storedOpen())
+        MusicGateFallback.markOpen("u:one", now = 5_000L)
+        assertTrue(MusicGateFallback.storedOpen())
+        MusicGateFallback.markGated("test", key = "u:two", now = 5_000L)
+        assertFalse(MusicGateFallback.storedOpen())
+    }
+
+    @Test
     fun `a gated verdict is trusted for the daily window without a proxy`() {
         val key = "u:gated"
         val at = 1_000_000L

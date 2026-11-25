@@ -160,6 +160,13 @@ object MusicGateFallback {
     /** The identity gate state belongs to; anonymous has one shared entry. */
     fun currentKey(): String = Innertube.sessionKey()
 
+    /**
+     * [KO] Whether every stored verdict says the Music route is open, before
+     * the session is known to say whose verdict applies.
+     */
+    fun storedOpen(): Boolean = !forced && entries.values.any { it.state == State.OPEN } &&
+        entries.values.none { it.state == State.GATED }
+
     fun state(key: String = currentKey()): State =
         if (forced) State.GATED else (entries[key]?.state ?: State.UNKNOWN)
 

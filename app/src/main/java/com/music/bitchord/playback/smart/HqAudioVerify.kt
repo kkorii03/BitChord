@@ -1304,8 +1304,8 @@ object HqAudioVerify {
         what: String,
     ): Boolean {
         if (tier == HqTier.DOLBY_ATMOS) return false
-        val sound = KoRecordingPrint.compare(reference.print, candidate.print)
-        TrackLog.i(TAG, "hq-verify recording: $what ${sound.name.lowercase()} differs=${KoRecordingPrint.figures(reference.print, candidate.print)}", youtubeId)
+        val (sound, figures) = KoRecordingPrint.measure(reference.print, candidate.print)
+        TrackLog.i(TAG, "hq-verify recording: $what ${sound.name.lowercase()} differs=$figures", youtubeId)
         return sound == KoRecordingPrint.Sound.DIFFERENT
     }
 
@@ -1532,6 +1532,8 @@ object HqAudioVerify {
             return lock.withLock {
                 val reference = (referenceFeatures(context, youtubeId, "cached copy", manual = false) as? Reference.Ready)
                     ?.features ?: return@withLock false
+                // Before the copy is decoded: a short reference answers nothing.
+                if (!HqReferenceCache.completeEnough(reference, COMPARE_SECONDS)) return@withLock false
                 val source = runCatching(open).getOrNull() ?: return@withLock false
                 val coroutine = currentCoroutineContext()
                 val candidate = try {
@@ -1539,9 +1541,7 @@ object HqAudioVerify {
                 } finally {
                     runCatching { source.close() }
                 } ?: return@withLock false
-                if (!HqReferenceCache.completeEnough(reference, COMPARE_SECONDS) ||
-                    !HqReferenceCache.completeEnough(candidate, COMPARE_SECONDS)
-                ) return@withLock false
+                if (!HqReferenceCache.completeEnough(candidate, COMPARE_SECONDS)) return@withLock false
                 // Read again under the lock: a verification of this pair may have just answered.
                 val stored = HqVerificationStore.get(context, youtubeId, entry.sourceConfigId, entry.trackId)
                 if (stored == null || stored.printChecked) return@withLock false

@@ -142,6 +142,7 @@ import com.music.bitchord.ko.ui.koEnrichVisibleDetailCovers
 import com.music.bitchord.ko.ui.koKnownSong
 import com.music.bitchord.ko.ui.koLoadCharts
 import com.music.bitchord.ko.ui.koLoadMoodGenreArtwork
+import com.music.bitchord.ko.ui.koEarlyRecents
 import com.music.bitchord.ko.ui.koLogRecentsPublished
 import com.music.bitchord.ko.ui.koPublishExplore
 import com.music.bitchord.ko.ui.koRenameLocalPlaylist
@@ -211,6 +212,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The launch doing a full Home load, so a refresh joins it. */ // [KO] home load dedupe
     private var homeLoadJob: Job? = null
+
+    /** [KO] The core feed's part of [homeLoadJob]: what Top Picks reads the account's mixes off. */
+    private var homeFeedJob: Job? = null
 
     /**
      * Home's "Top Picks for You" row: null until built, empty if there was
@@ -1558,7 +1562,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     init {
         startSearchPipeline()
         startSuggestPipeline()
-        startTypeaheadMediaPipeline()
         loadHome()
         // Explore, Library and the account menus are none of them on the first
         // screen, and each one starts network work. The two feeds load only
@@ -1901,7 +1904,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _homePendingShelves.value = 1 + YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.size
         loadTopPicks(identity, rebuild = false)
         homeLoadJob = viewModelScope.launch {
-            launch {
+            homeFeedJob = launch {
                 try {
                     YtMusicRepository.home()
                         .onSuccess { feed ->
@@ -1923,6 +1926,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             // Not signed-in gated: the local half of Recents needs no account.
             launch {
+                // [KO] recents: the device's own rows need no session page.
+                koEarlyRecents()?.let { early ->
+                    if (isCurrentHomeLoad(identity, generation)) {
+                        _homeRecentlyPlayedLoading.value = false
+                        publishHomeShelves(listOf(early), prepend = true)
+                        koLogRecentsPublished("device", listOf(early))
+                    }
+                }
                 YtMusicRepository.homeRecentlyPlayed()
                     .onSuccess { shelf ->
                         if (isCurrentHomeLoad(identity, generation)) {
@@ -2016,8 +2027,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun buildTopPicks(): List<TopPick>? {
         // Home's first page may already hold the account's mixes; give it a
         // moment to land so the builder reads them off it instead of asking.
-        val shelves = withTimeoutOrNull(8_000L) { _home.first { it !is UiState.Loading } }
-            .let { (it as? UiState.Success)?.data.orEmpty() }
+        // [KO] The core feed itself, not the first shelf on screen: Recents is up before it.
+        val shelves = withTimeoutOrNull(8_000L) {
+            homeFeedJob?.join()
+            _home.first { it !is UiState.Loading }
+        }.let { (it as? UiState.Success)?.data.orEmpty() }
         return try {
             TopPicks.build(shelves, localTaste())
         } catch (e: CancellationException) {
@@ -2774,43 +2788,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         suggestRequests
             .debounce(TYPEAHEAD_DEBOUNCE_MS)
             .collectLatest { input ->
-                // The field moves while a keystroke is waiting out the timer;
-                // only the text still on screen is worth asking about.
-                val target = typeaheadLookupTarget(input, _query.value, searchSubmitted)
-                    ?: return@collectLatest
-                val key = typeaheadCacheKey(target)
-                koTypeahead.suggestions(key)?.let { cached ->
-                    _suggestions.value = cached
-                    return@collectLatest
-                }
-                val fetched = YtMusicRepository.searchSuggestions(target).getOrNull()
-                    ?: return@collectLatest
-                // Asked again on the way back; the field is live throughout.
-                if (typeaheadLookupTarget(input, _query.value, searchSubmitted) == null) {
-                    return@collectLatest
-                }
-                val rows = suggestionRows(target, fetched)
-                koTypeahead.putSuggestions(key, rows)
-                _suggestions.value = rows
-            }
-    }
-
-    /**
-     * Parallel pipeline that fetches live media results (tracks, artists,
-     * albums) for the current query text. Runs alongside [startSuggestPipeline]
-     * with the same debounce, so a pause in typing sends one of each rather
-     * than one per keystroke.
-     */
-    @OptIn(FlowPreview::class)
-    private fun startTypeaheadMediaPipeline() = viewModelScope.launch {
-        suggestRequests
-            .debounce(TYPEAHEAD_DEBOUNCE_MS)
-            .collectLatest { input ->
                 if (input.isBlank()) {
                     _typeaheadResults.value = emptyList()
                     return@collectLatest
                 }
-                // Only show media results while the user is still typing — not
+                // The field moves while a keystroke is waiting out the timer;
+                // only the text still on screen is worth asking about. Media
+                // results show only while the user is still typing — not
                 // reading committed search results. The query-text check on its
                 // own isn't enough: a late suggestion callback can repopulate
                 // _suggestions after submission, and we must not re-open the
@@ -2820,19 +2804,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (searchSubmitted) _typeaheadResults.value = emptyList()
                     return@collectLatest
                 }
+                // [KO] typeahead-one-request: the completions and the cards are
+                // two halves of one answer, so one request fills both caches.
                 val key = typeaheadCacheKey(target)
-                koTypeahead.media(key)?.let { cached ->
-                    _typeaheadResults.value = cached
+                val knownRows = koTypeahead.suggestions(key)
+                val knownCards = koTypeahead.media(key)
+                knownRows?.let { _suggestions.value = it }
+                knownCards?.let { _typeaheadResults.value = it }
+                if (knownRows != null && knownCards != null) return@collectLatest
+                val answer = YtMusicRepository.searchSuggestions(target).getOrNull()
+                // Asked again on the way back; the field is live throughout.
+                if (typeaheadLookupTarget(input, _query.value, searchSubmitted) == null) {
+                    _typeaheadResults.value = emptyList()
                     return@collectLatest
                 }
-                val result = YtMusicRepository.searchTypeahead(target).getOrNull()
+                if (knownRows == null && answer != null) {
+                    val rows = suggestionRows(target, answer.completions)
+                    koTypeahead.putSuggestions(key, rows)
+                    _suggestions.value = rows
+                }
+                if (knownCards != null) return@collectLatest
+                val found = answer?.cards?.takeIf { it.isNotEmpty() }
+                    ?: YtMusicRepository.searchTypeahead(target).getOrNull()?.rows.orEmpty()
                 // If the field moved on, drop the result silently.
                 if (typeaheadLookupTarget(input, _query.value, searchSubmitted) == null) {
                     _typeaheadResults.value = emptyList()
                     return@collectLatest
                 }
                 // Cap results so the dropdown doesn't grow unbounded.
-                val rows = result?.rows.orEmpty().take(TYPEAHEAD_MAX_RESULTS)
+                val rows = found.take(TYPEAHEAD_MAX_RESULTS)
                 koTypeahead.putMedia(key, rows)
                 _typeaheadResults.value = rows
             }

@@ -675,20 +675,25 @@ object YtMusicRepository {
      * field's typeahead. Unfiltered on purpose: a suggestion is a query, and
      * which tab it is then run against is the user's to pick afterwards.
      */
-    suspend fun searchSuggestions(input: String): Result<List<String>> =
+    suspend fun searchSuggestions(input: String): Result<SearchSuggestions> =
         call("suggest") {
-            InnertubeParser.parseSearchSuggestions(Innertube.searchSuggestions(input))
+            val response = Innertube.searchSuggestions(input)
+            SearchSuggestions(
+                completions = InnertubeParser.parseSearchSuggestions(response),
+                cards = InnertubeParser.parseSearchSuggestionEntities(response).distinctBy { it.identityKey() },
+            )
         }
+
+    /** [KO] typeahead-one-request: both halves of the one suggestions answer. */
+    class SearchSuggestions(val completions: List<String>, val cards: List<SearchResult>)
 
     /**
      * Live media results for the typeahead phase: tracks, artists and albums
      * so the dropdown can show playable cards alongside text completions.
      *
-     * Read from the suggestions endpoint first, the way YouTube Music's own
-     * search box does it: it answers with the cards the box shows for a
-     * prefix, and is a lighter request than a search. Only when it carries no
-     * cards (some short or odd prefixes) does it fall back to
-     * [Innertube.searchTypeahead].
+     * Asked only when the cards of [searchSuggestions], which YouTube Music's
+     * own search box shows, are missing: that request failed, or carries none
+     * for this prefix (some short or odd ones).
      *
      * [KO] Deliberately unauthenticated, unlike upstream, which asks the
      * suggestions signed in: both requests send no session at all, so YouTube
@@ -699,18 +704,6 @@ object YtMusicRepository {
      */
     suspend fun searchTypeahead(input: String): Result<SearchPage> =
         call("typeahead:length=${input.length}") {
-            // A suggestions call that fails is not an answer: the search below
-            // is the second chance it always had.
-            val cards = try {
-                InnertubeParser.parseSearchSuggestionEntities(Innertube.searchSuggestions(input))
-                    .distinctBy { it.identityKey() }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w(TAG, "typeahead: suggestions failed: ${e.message}")
-                emptyList<SearchResult>()
-            }
-            if (cards.isNotEmpty()) return@call SearchPage(cards, continuation = null)
             InnertubeParser.parseSearchPage(
                 Innertube.searchTypeahead(input),
                 includeVideos = false,
