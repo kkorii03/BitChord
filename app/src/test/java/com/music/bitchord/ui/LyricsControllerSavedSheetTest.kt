@@ -301,6 +301,46 @@ class LyricsControllerSavedSheetTest {
     }
 
     /**
+     * 4WpwsUGuoGQ (11-25): the saved copy was the provider's own sheet read back from the file tag,
+     * with an intro row first and centisecond times. It counted as another sheet, so the sync bought
+     * for it was dropped on the next online play.
+     */
+    @Test
+    fun `the saved sheet with an intro row keeps its check under the provider's lines`() = runBlocking {
+        val fromTag = listOf(LyricLine(0L, "")) + saved
+        val provider = saved.map { it.copy(timeMs = it.timeMs + 7L) }
+        LyricsOverrideStore.write(context, "video", fromTag, LyricsSource.KUGOU)
+        seedChecked(key(fromTag, "video|file"))
+        answer(LyricsSource.KUGOU, provider, LyricsSource.VIBE, other)
+
+        loadDownloaded()
+
+        withTimeout(10_000L) { controller.lyricsChecked.first { it } }
+        assertEquals(LyricsSource.KUGOU, controller.lyricsSource.value)
+        // Before: FORGET_VERSION or KEEP, the answer dropped with the saved form of the sheet.
+        assertEquals(
+            KoSavedLyrics.SavedCheck.FORGET_ANSWER,
+            LyricsTiming.forgetSavedSheetCheck(context, "video", provider, isVideo = false),
+        )
+    }
+
+    /** A per-line answer from before the fits is tied to the rows: it goes, as before. */
+    @Test
+    fun `an old per-line answer is not carried onto other rows`() = runBlocking {
+        val fromTag = listOf(LyricLine(0L, "")) + saved
+        openStore(
+            """{"entries":{"video":{"syncCheckVersion":1,"aiTextKey":${key(fromTag, "video|file")},""" +
+                """"aiStarts":[${fromTag.joinToString(",") { it.timeMs.toString() }}]}}}""",
+        )
+
+        assertEquals(false, LyricsTiming.carrySavedSheetCheck(context, "video", fromTag, saved, isVideo = false))
+        assertEquals(
+            KoSavedLyrics.SavedCheck.FORGET_ANSWER,
+            LyricsTiming.forgetSavedSheetCheck(context, "video", fromTag, isVideo = false),
+        )
+    }
+
+    /**
      * LYR7-B (RG6 LYR6-B): with the listener's own pick saved, the picked provider missing let the
      * lookup's best (another provider) replace it, forced, and kept the words from judging it.
      */

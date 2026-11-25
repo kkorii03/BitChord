@@ -32,6 +32,7 @@ import android.os.Process
 import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.util.UnstableApi
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.lyrics.RefineExtendPolicy
@@ -295,7 +296,10 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // The shared trackers report model failures and their timings through
         // this; with no sink they went nowhere on the phone, which is how a
         // beat model that found nothing went unnoticed.
-        AnalysisLog.install { message, error -> Log.w(TAG, message, error) }
+        // [KO] The exported log, with the engine's own lines: R8 strips android.util.Log.
+        AnalysisLog.install { message, error ->
+            if (error != null) TrackLog.w(TAG, message, error) else TrackLog.i(TAG, message)
+        }
         AutomixModels.install(context)
     }
 
@@ -506,7 +510,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         if (!restoreAttempted.add(trackId)) return
         executor.execute {
             val stored = store.load(trackId) ?: return@execute
-            Log.d(
+            TrackLog.d(
                 TAG,
                 "Restored analysis for $trackId: bpm=${stored.bpm} conf=${stored.beatConfidence} " +
                     "key=${stored.key} keyConf=${"%.2f".format(Locale.ROOT, stored.keyConfidence)}",
@@ -603,7 +607,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             try {
                 requestWindowNow(trackId, uri, durationSeconds, window)
             } catch (error: Throwable) {
-                Log.w(TAG, "Analysis request for $trackId ($window) failed", error)
+                TrackLog.w(TAG, "Analysis request for $trackId ($window) failed", error)
             } finally {
                 requestPending.remove(pendingKey)
             }
@@ -753,7 +757,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             // Throwable, not Exception: decode leans on MediaCodec, and an OOM
             // or codec-level Error uncaught on a pool thread that is nobody's
             // parent takes the whole app down.
-            Log.w(TAG, "Analysis of $trackId ($window) failed", error)
+            TrackLog.w(TAG, "Analysis of $trackId ($window) failed", error)
             if (!stopped && !analysisCancel.isCancelled(trackId) &&
                 windowFailureCounts(partialRendition = headRendition != null)
             ) {
@@ -804,7 +808,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             store.save(trackId, merged)
             restoreAttempted.add(trackId)
         }
-        Log.d(
+        TrackLog.d(
             TAG,
             "Analysed ${window.name.lowercase(Locale.ROOT)} of $trackId: " +
                 "bpm=${analysis.bpm} conf=${analysis.beatConfidence} " +
@@ -820,7 +824,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         if (attempts < MAX_REGION_ATTEMPTS) return
         // Bounded, so a container that is genuinely truncated is not decoded
         // on every tick for the rest of the session.
-        Log.w(TAG, "Giving up on $trackId ($window) after $MAX_REGION_ATTEMPTS attempts")
+        TrackLog.w(TAG, "Giving up on $trackId ($window) after $MAX_REGION_ATTEMPTS attempts")
         windowsOf(trackId).add(window)
         if (results[trackId] == null) results[trackId] = empty(trackId, durationSeconds)
         completeWindow(trackId, window)
@@ -1156,7 +1160,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             return null
         }
 
-        Log.d(
+        TrackLog.d(
             TAG,
             "Analysed head of $trackId: bpm=${grid?.bpm ?: entry?.bpm} " +
                 "conf=${grid?.beatConfidence ?: entry?.beatConfidence} " +
@@ -1411,7 +1415,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // while a confidently wrong one does not degrade at all.
         val decodedSeconds = if (pcm.sampleRate > 0) pcm.samples.size / pcm.sampleRate else 0.0
         if (decodedSeconds < effectiveDuration * MIN_DECODED_FRACTION) {
-            Log.w(
+            TrackLog.w(
                 TAG,
                 "Analysis of $trackId refused: ${copy.key} decoded " +
                     "${"%.1f".format(Locale.ROOT, decodedSeconds)}s of a " +
@@ -1558,7 +1562,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // head is what a track uses when it is the *incoming* side of a different transition.
         val leading = tailGrid ?: headGrid
 
-        Log.d(
+        TrackLog.d(
             TAG,
             "Analysed $trackId: bpm=${leading?.bpm ?: features.bpm} " +
                 "conf=${leading?.beatConfidence ?: features.beatConfidence} " +

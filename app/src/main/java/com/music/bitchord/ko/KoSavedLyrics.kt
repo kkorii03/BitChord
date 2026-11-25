@@ -178,4 +178,21 @@ object KoSavedLyrics {
     fun sameLines(a: List<LyricLine>?, b: List<LyricLine>?): Boolean =
         a != null && b != null && a.size == b.size &&
             a.indices.all { a[it].timeMs == b[it].timeMs && a[it].text == b[it].text }
+
+    /**
+     * The same sheet after a trip through a file tag: LRC keeps centiseconds, and reading it back
+     * puts an empty intro row first that most providers' own answers do not have (4WpwsUGuoGQ 11-25:
+     * VIBE's 21 lines came back as 22, and the check bought for them was dropped). Only the sung
+     * lines count; their times may differ by the rounding, no more.
+     */
+    fun sameSung(a: List<LyricLine>?, b: List<LyricLine>?): Boolean {
+        val one = a.orEmpty().filter { it.text.isNotBlank() }
+        val two = b.orEmpty().filter { it.text.isNotBlank() }
+        return one.isNotEmpty() && one.size == two.size && one.indices.all {
+            kotlin.math.abs(one[it].timeMs - two[it].timeMs) <= LRC_ROUNDING_MS &&
+                one[it].text.trim() == two[it].text.trim()
+        }
+    }
+
+    private const val LRC_ROUNDING_MS = 10L
 }

@@ -5204,6 +5204,45 @@ object LyricsTiming {
         verdict
     }
 
+    /**
+     * [KO] The provider's sheet is the saved one's own ([com.music.bitchord.ko.KoSavedLyrics.sameSung])
+     * and only its rows differ (an intro row, centiseconds), so what was bought for [from] on the
+     * file's clock is keyed to [to] instead of forgotten. False: the answer is tied to the rows
+     * themselves (a ko-21/22 per-line one), so it cannot move.
+     */
+    suspend fun carrySavedSheetCheck(
+        context: Context,
+        videoId: String,
+        from: List<LyricLine>,
+        to: List<LyricLine>,
+        isVideo: Boolean,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val audioSource = if (isVideo) null else audioSourceKey(videoId, localFile = true)
+        val old = textKey(from, audioSource)
+        val new = textKey(to, audioSource)
+        val entry = store(context).get(videoId) ?: return@withContext true
+        if (old == new) return@withContext true
+        if (entry.aiTextKey == old && entry.ai == null && entry.aiShiftMs == null &&
+            entry.aiStarts != null && from.size != to.size
+        ) return@withContext false
+        fun Int?.moved() = if (this == old) new else this
+        fun Entry.carried() = copy(
+            aiTextKey = aiTextKey.moved(),
+            aiFailedKey = aiFailedKey.moved(),
+            whisperKey = whisperKey.moved(),
+            heardCheckKey = heardCheckKey.moved(),
+            refineHeardKey = refineHeardKey.moved(),
+            refitKey = refitKey.moved(),
+            aiAttemptedKey = aiAttemptedKey.moved(),
+            songRetryKey = songRetryKey.moved(),
+        )
+        if (entry.carried() == entry) return@withContext true
+        store(context).update(videoId) { it.carried() }
+        TrackLog.i(TAG, "lyrics-fix: $videoId saved-check carried lines=${from.size}->${to.size}", videoId)
+        _changes.tryEmit(videoId)
+        true
+    }
+
     // ---- Downloaded files' stored sync ------------------------------------------------
 
     /** The last re-check state per video, for the `lyrics-sync:` line only. */

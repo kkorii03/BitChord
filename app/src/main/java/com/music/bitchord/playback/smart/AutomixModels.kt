@@ -2,8 +2,8 @@ package com.music.bitchord.playback.smart
 
 import android.content.Context
 import android.os.SystemClock
-import android.util.Log
 import com.music.bitchord.data.Http
+import com.music.bitchord.data.TrackLog as Log // [KO] the exported log: R8 strips android.util.Log
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ko.KoHiResPrefetch
 import kotlinx.coroutines.CoroutineScope
@@ -96,7 +96,9 @@ object AutomixModels {
             if (filesDir != null) return
             filesDir = context.applicationContext.filesDir
         }
-        if (ALL.all(::isPresent)) _state.value = State.Ready
+        val present = ALL.filter(::isPresent)
+        if (present.size == ALL.size) _state.value = State.Ready
+        Log.i(TAG, "Automix models on disk: ${present.map { it.fileName }}")
         scope.launch {
             var restored = true
             AppSettings.smartFadeEnabled.collect { on ->

@@ -1,10 +1,12 @@
 package com.music.bitchord.ko
 
+import com.music.bitchord.data.lyrics.LrcLib
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsMismatch
 import com.music.bitchord.data.lyrics.LyricsOverrideFile.Kind
 import com.music.bitchord.data.lyrics.LyricsOverrideFile.Stored
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.lyrics.toLrc
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -127,6 +129,22 @@ class KoSavedLyricsTest {
         assertTrue(KoSavedLyrics.savedCheckStale(old, old.map { it.copy(timeMs = it.timeMs + 500L) }))
         assertTrue(KoSavedLyrics.savedCheckStale(old, old.dropLast(1)))
         assertFalse(KoSavedLyrics.savedCheckStale(null, new))
+    }
+
+    /** 4WpwsUGuoGQ 11-25: a provider's 21 lines came back from the file tag as 22. */
+    @Test
+    fun `a sheet read back from a file tag is the same sung sheet`() {
+        val provider = List(4) { LyricLine(12_344L + it * 2_507L, "cc$it dd$it") }
+        val readBack = LrcLib.parseLrc(provider.toLrc())
+        assertEquals(provider.size + 1, readBack.size)
+        assertFalse(KoSavedLyrics.sameLines(readBack, provider))
+        assertTrue(KoSavedLyrics.sameSung(readBack, provider))
+
+        assertFalse(KoSavedLyrics.sameSung(readBack, provider.map { it.copy(timeMs = it.timeMs + 500L) }))
+        assertFalse(KoSavedLyrics.sameSung(readBack, provider.dropLast(1)))
+        assertFalse(KoSavedLyrics.sameSung(readBack, provider.map { it.copy(text = it.text + "x") }))
+        assertFalse(KoSavedLyrics.sameSung(emptyList(), emptyList()))
+        assertFalse(KoSavedLyrics.sameSung(null, provider))
     }
 
     /** LYR7-A: an automatic copy of a sheet the words rejected is passed over; the listener's own pick never. */

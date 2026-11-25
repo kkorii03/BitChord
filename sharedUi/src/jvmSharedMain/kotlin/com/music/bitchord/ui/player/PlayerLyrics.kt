@@ -644,8 +644,9 @@ internal fun CurrentLyricStrip(
     val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
     var stripRtl by remember { mutableStateOf(false) }
     var activeText by remember { mutableStateOf("") }
-    if (isSynced) {
-        val clock = rememberLyricClock(trackKey, playhead, isPlaying)
+    // [KO] One clock for the strip: the direction here and the line below read the same one.
+    val clock = if (isSynced) rememberLyricClock(trackKey, playhead, isPlaying) else null
+    if (clock != null) {
         val index by rememberKoLineIndex(lines, clock) // [KO] lyric-line-index
         val current = lines.getOrNull(index)
         val instrumental = current == null || current.isGap
@@ -677,8 +678,7 @@ internal fun CurrentLyricStrip(
                 CurrentLyricLine(
                     lines = lines,
                     trackKey = trackKey,
-                    playhead = playhead,
-                    isPlaying = isPlaying,
+                    clock = clock,
                     durationMs = durationMs,
                     onClick = onClick,
                     heardWords = heardWords,
@@ -3038,15 +3038,14 @@ private const val LYRIC_FADE_MAX_MS = 700f
 private fun CurrentLyricLine(
     lines: List<LyricLine>,
     trackKey: Any,
-    playhead: LyricPlayhead,
-    isPlaying: Boolean,
+    /** The strip's clock; null when the sheet has no times. */
+    clock: MutableLongState?,
     durationMs: Long,
     onClick: () -> Unit,
     /** Words a transcript heard for this video, on [lines]' clock; empty keeps the guess. */
     heardWords: List<LyricsWordAlign.Heard> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
-    val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
     // One line box whatever the script: left to the font, a Devanagari or
     // Gurmukhi line is taller than a Latin one and the credits and artwork
     // above this strip shift up and down as lines change language.
@@ -3057,7 +3056,7 @@ private fun CurrentLyricLine(
             trim = LineHeightStyle.Trim.None,
         ),
     )
-    if (!isSynced) {
+    if (clock == null) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = modifier
@@ -3090,8 +3089,6 @@ private fun CurrentLyricLine(
         }
         return
     }
-
-    val clock = rememberLyricClock(trackKey, playhead, isPlaying)
 
     val index by rememberKoLineIndex(lines, clock) // [KO] lyric-line-index
     val current = lines.getOrNull(index)

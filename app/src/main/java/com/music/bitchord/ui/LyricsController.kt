@@ -1896,7 +1896,12 @@ class LyricsController(
         val settles = rawLyricsResult?.takeIf { selectedLyricsSource == null && _lyrics.value != null } ?: selected
         (override?.lines ?: file?.lines)
             ?.takeIf { com.music.bitchord.ko.KoSavedLyrics.savedCheckStale(it, settles.lines) }
-            ?.let { LyricsTiming.forgetSavedSheetCheck(app, videoId, it, isVideo) }
+            ?.let {
+                // The same sheet, only re-read from the file: its check moves to the provider's form of it.
+                val carried = com.music.bitchord.ko.KoSavedLyrics.sameSung(it, settles.lines) &&
+                    LyricsTiming.carrySavedSheetCheck(app, videoId, it, settles.lines, isVideo)
+                if (!carried) LyricsTiming.forgetSavedSheetCheck(app, videoId, it, isVideo)
+            }
         publishLyrics(selected, force = selectedLyricsSource != null)
         _lyricsChecked.value = true
         // What settled on screen: a late answer may have stayed a candidate (publishLyrics).
