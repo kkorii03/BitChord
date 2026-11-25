@@ -307,6 +307,9 @@ object InnerTubeXResolver {
     /** [KO] oom1119 test seam: the proxy walk must not get a second cipher service. */
     internal fun proxySharesCipherForTest(): Boolean = proxyCipherService === cipherService
 
+    /** [KO] cold1125 test seam: where the cipher service looks for remote player configs. */
+    internal fun playerConfigsForTest(): PlayerConfigRepository = repository
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** What each minted URL was, so its fetch can be dressed and its refusal attributed. */
@@ -686,8 +689,17 @@ object InnerTubeXResolver {
     /** [KO] review R1 test seam: the clients skipped for [videoId] now. */
     internal fun excludedForTest(videoId: String): Set<String> = excludedFor(videoId)
 
-    private const val PLAYER_CONFIG_URL =
-        "https://raw.githubusercontent.com/ZemerTeam/zemer-cipher/master/library/src/main/assets/player_configs.json"
+    /**
+     * [KO] cold1125: none. This was ZemerTeam's player_configs.json, which
+     * InnerTubeX cc74e737b6 refuses (its stores take MetrolistGroup/faraday URLs
+     * only), so no table was ever loaded from it. All the URL still did was make
+     * GitHubPlayerConfigClient ask cdn.jsdelivr.net and then
+     * raw.githubusercontent.com for faraday's old registry/players/<hash>.json,
+     * removed there on 2026-07-09: two 404s (up to 2 s each, never remembered)
+     * inside the one cipher lock, on every song's solve. Blank skips both; the
+     * local EJS player solves as it always did.
+     */
+    private const val PLAYER_CONFIG_URL = ""
     /** The client a picture asks when the video ranking found nothing and audio learned no InnerTubeX path. */
     private const val DEFAULT_VIDEO_FALLBACK_CLIENT = "WEB_CREATOR"
     private const val LOW_KBPS = 64
