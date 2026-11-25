@@ -3,6 +3,7 @@ package com.music.bitchord.playback.smart
 import android.content.Context
 import com.music.bitchord.data.sources.HqTier
 import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.ko.KoVersionGuard
 
 /**
  * The device's memory of what the sound comparison already decided.
@@ -132,6 +133,14 @@ object HqVerificationStore {
      * A build that only knows [WORDS_CHECKED] reads it as "not words-checked".
      */
     private const val GUARD_SEEN = "seen"
+
+    /**
+     * [KO] violin: the same field for a row credited to nobody whose words were
+     * heard to be the song's. Such a line with any older mark was settled by a
+     * hearing that heard no words (11-24 눈의 꽃, a violin): it reads as
+     * unmarked, so its library fetch waits and its saved file is heard again.
+     */
+    private const val NAMELESS_WORDS = "named"
 
     /**
      * Format 1 stored a rejection whenever a comparison did not accept, even
@@ -400,8 +409,9 @@ object HqVerificationStore {
             val tier = runCatching { HqTier.valueOf(parts[4]) }.getOrNull() ?: return@forEach
             val sourceTitle = parts.getOrNull(5)?.takeIf { it.isNotBlank() }
             val sourceArtist = parts.getOrNull(6)?.takeIf { it.isNotBlank() }
-            val wordsChecked = parts.getOrNull(7) == WORDS_CHECKED
-            val guardSeen = parts.getOrNull(7) == GUARD_SEEN // [KO]
+            val wordsMark = if (KoVersionGuard.namesNobody(sourceArtist)) NAMELESS_WORDS else WORDS_CHECKED // [KO] violin
+            val wordsChecked = parts.getOrNull(7) == wordsMark
+            val guardSeen = parts.getOrNull(7) == GUARD_SEEN && !KoVersionGuard.namesNobody(sourceArtist) // [KO]
             data.verified[parts[0]] =
                 Verified(offset, rate, match, tier, sourceTitle, sourceArtist, wordsChecked, guardSeen)
         }
@@ -476,7 +486,7 @@ object HqVerificationStore {
             // The words mark is an eighth field after the (possibly empty) names,
             // so a line without it reads exactly as older builds wrote it.
             val words = when {
-                value.wordsChecked -> listOf(WORDS_CHECKED)
+                value.wordsChecked -> listOf(if (KoVersionGuard.namesNobody(value.sourceArtist)) NAMELESS_WORDS else WORDS_CHECKED)
                 value.guardSeen -> listOf(GUARD_SEEN) // [KO]
                 else -> emptyList()
             }

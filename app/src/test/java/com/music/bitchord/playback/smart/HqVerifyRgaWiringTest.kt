@@ -66,6 +66,19 @@ class HqVerifyRgaWiringTest {
         assertTrue(outcome.contains("KoVersionGuard.decide(verdict.accepted, needsWords, words)"))
     }
 
+    // Phone 11-25: an instrumental credited to Various Artists was stored on its backing alone.
+    @Test
+    fun `a nameless row is asked its words and stored only on them`() {
+        assertTrue(outcome.contains("val needsWords = if (nameless || KoVersionGuard.risky(sourceId, trackId)) {"))
+        val held = outcome.indexOf("if (nameless && decision == KoVersionGuard.Decision.ACCEPT && !KoVersionGuard.namelessStands(words)) {")
+        assertTrue(held >= 0 && held < outcome.indexOf("HqVerificationStore.put(context, youtubeId, sourceId, trackId, verified)"))
+        // A row with a doubted credit owes its words before the library may fetch it.
+        assertTrue(outcome.contains("guardSeen = !needsWords && !KoUnverifiedRows.contains(sourceId, trackId)"))
+        // A file far smaller than its claimed bitrate is measured before anything is compared.
+        val thin = outcome.indexOf("KoThinRendition.thin(stream.format,")
+        assertTrue(thin >= 0 && thin < outcome.indexOf("ChromaAlignment.align("))
+    }
+
     // Review OPT1 (hq-path-second-proof): the automatic look proved its winner in
     // the race, then verified it again; a doubted pair on too few words was
     // downloaded and heard twice within seconds, spending RG1-4's two hearings in one play.

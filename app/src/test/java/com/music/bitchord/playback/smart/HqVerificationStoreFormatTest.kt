@@ -79,6 +79,25 @@ class HqVerificationStoreFormatTest {
         assertFalse(HqVerificationStore.get(context, "yt2", "src1", "track1")!!.wordsChecked)
     }
 
+    // Phone 11-25: the violin's stored "words" mark came from hearing no words at all.
+    @Test
+    fun `a nameless row's old marks are owed again and a new one survives a reload`() {
+        val line = "src1\u0001track1\t1234\t1.001\t87\tLOSSLESS_16\tTitle\tVarious Artists\t"
+        prefs.values["verified"] = "yt1\u0001${line}words\nyt2\u0001${line}seen"
+        listOf("yt1", "yt2").forEach {
+            val old = HqVerificationStore.get(context, it, "src1", "track1")!!
+            assertEquals(1234L, old.offsetMs)
+            assertFalse(old.wordsChecked)
+            assertFalse(old.guardSeen)
+        }
+
+        val heard = verified().copy(sourceTitle = "Title", sourceArtist = "Various Artists", wordsChecked = true)
+        HqVerificationStore.put(context, "yt1", "src1", "track1", heard)
+        cachedField.set(HqVerificationStore, null)
+
+        assertEquals(heard, HqVerificationStore.get(context, "yt1", "src1", "track1"))
+    }
+
     // Review 11-15 (H3): a cached copy swapped in before the words guard plays
     // with no search. Its verdict has to be told from one the guard has seen,
     // or every good copy would be heard again on every play.

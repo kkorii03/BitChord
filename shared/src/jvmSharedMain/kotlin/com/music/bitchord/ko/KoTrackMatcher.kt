@@ -415,7 +415,54 @@ internal object KoTrackMatcher {
      * performed by Justin Bieber)"), so the title alone cannot rule them out.
      */
     internal fun isCoverOf(candidate: Song, target: Target): Boolean =
-        isCoverArrangement(candidate, seedOf(target)) || isLabelTributeOf(candidate, target)
+        isCoverArrangement(candidate, seedOf(target)) || isLabelTributeOf(candidate, target) ||
+            isInstrumentReleaseOf(candidate, target)
+
+    /**
+     * [KO] violin: a row credited only to a compilation label on a release that
+     * says it is played on instruments ("바이올린 연주로 듣는 최신드라마 OST 베스트",
+     * "첼로&피아노 자장가"). Phone 11-24, 박효신's 눈의 꽃: JioSaavn filed three such
+     * rows under the song's own title and length, credited to Various Artists,
+     * and the violin copy (the same backing) passed the sound check at 100%.
+     * The target's own title, credit and album may use the same word; a row
+     * with a real credit is untouched.
+     */
+    internal fun isInstrumentReleaseOf(candidate: Song, target: Target): Boolean {
+        if (!isGenericCredit(candidate.artist)) return false
+        val album = candidate.albumName?.takeIf { it.isNotBlank() } ?: return false
+        if (sharesRelease(target, candidate)) return false
+        val sleeve = normalize(album)
+        if (target.album?.let { normalize(it) } == sleeve) return false
+        val own = normalize(listOfNotNull(target.title, target.artist, target.album).joinToString(" "))
+        return INSTRUMENT_RELEASE_WORDS.any { it.containsMatchIn(sleeve) && !it.containsMatchIn(own) }
+    }
+
+    private val INSTRUMENT_RELEASE_WORDS = listOf(
+        Regex("""바이올린|\bviolins?\b"""),
+        Regex("""첼로|\bcellos?\b"""),
+        Regex("""피아노|\bpianos?\b"""),
+        Regex("""통기타|기타\s*연주|\bguitars?\b"""),
+        Regex("""색소폰|\bsax(ophones?)?\b"""),
+        Regex("""플루트|플룻|\bflutes?\b"""),
+        Regex("""하모니카|\bharmonicas?\b"""),
+        Regex("""오카리나|\bocarinas?\b"""),
+        Regex("""해금|가야금|\bgayageum\b"""),
+        Regex("""오르골|뮤직\s*박스|\bmusic box(es)?\b"""),
+        Regex("""자장가|\blullab(y|ies)\b"""),
+        Regex("""현악\s*(사|4)\s*중주|\bstring quartets?\b"""),
+        Regex("""연주곡|연주로|연주음악|경음악|반주|\binstrument(s|als?)?\b"""),
+    )
+
+    /**
+     * [KO] violin: [credit] is a "Various Artists" label. It names nobody, so
+     * such a row may only play on words heard to be the song's
+     * ([KoVersionGuard.namelessStands]). A soundtrack label ("Original
+     * Soundtrack") is left to the sound check: a score has no words to hear.
+     */
+    fun isVariousCredit(credit: String): Boolean =
+        isGenericCredit(credit) && wordsOf(credit).any { it in VARIOUS_LABELS }
+
+    private val VARIOUS_LABELS = setOf("various", "여러")
 
     /**
      * [KO] tribute: a row credited only to a compilation label ("Various

@@ -146,6 +146,37 @@ object KoVersionGuard {
         maxHearings: Int,
     ): Boolean = !needsWords || wordsChecked || unsettledHearings >= maxHearings
 
+    /**
+     * [KO] violin: [check] with an instrumental candidate called by its name.
+     *
+     * An instrumental made on the song's own backing passes the sound at 100%
+     * and has no words, so [compareWords] answers "undecided" and the chroma
+     * verdict stood (phone 11-24, 눈의 꽃: youtube=9 candidate=0 over 53 s,
+     * accepted; it was a violin). A singing YouTube copy against a copy with
+     * next to nothing sung over the same long stretch is another recording.
+     * Only for an aligned pair: [KoUnverifiedRows.unalignedWords] tries shifts.
+     */
+    fun judged(check: WordsCheck): WordsCheck = if (
+        check.verdict == Words.UNDECIDED &&
+        check.windowMs >= SETTLED_WINDOW_MS &&
+        check.referenceWords >= MIN_WORDS &&
+        check.candidateWords * 3 <= check.referenceWords &&
+        check.shared < MIN_SHARED_SHARE * check.referenceWords
+    ) {
+        check.copy(verdict = Words.DIFFERENT)
+    } else {
+        check
+    }
+
+    /** [KO] violin: whether [credit] is a compilation label naming nobody ("Various Artists"). */
+    fun namesNobody(credit: String?): Boolean = KoTrackMatcher.isVariousCredit(credit.orEmpty())
+
+    /**
+     * [KO] violin: whether a row credited to nobody ([namesNobody])
+     * may play. Its sound proves only the backing, so the words must be the song's.
+     */
+    fun namelessStands(words: WordsCheck?): Boolean = words?.verdict == Words.SAME
+
     /** The engine that hears a candidate's opening for [compareWords]. */
     enum class Hearer { GROQ, DEEPGRAM, NONE }
 

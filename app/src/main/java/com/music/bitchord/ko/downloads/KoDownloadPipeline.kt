@@ -16,6 +16,7 @@ import com.music.bitchord.data.sources.DownloadedRecordingPolicy
 import com.music.bitchord.data.sources.HqQuality
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.DownloadHttpException
 import com.music.bitchord.download.Downloader
 import com.music.bitchord.download.DownloadStore
@@ -24,6 +25,7 @@ import com.music.bitchord.download.ManifestFile
 import com.music.bitchord.download.OfflineDash
 import com.music.bitchord.download.SavedSongMetadata
 import com.music.bitchord.download.downloadBadge
+import com.music.bitchord.ko.KoThinRendition
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.HqHostTracker
 import kotlinx.coroutines.flow.asSharedFlow
@@ -84,6 +86,11 @@ internal object KoDownloadPipeline {
         val storable = DownloadStore.storable(stream.format.codec)
             ?: error("이 기기에 저장할 수 없는 형식입니다 (${stream.format.codec})")
         val probe = Downloader.probe(stream.url, stream.headers, stream.format.codec)
+        // [KO] violin: a "320 kbps" row that serves a 96 kbps file is not the upgrade it was stored as.
+        val bytes = (probe as? Downloader.Probe.File)?.totalBytes ?: 0L
+        if (KoThinRendition.thin(stream.format, stream.durationSec ?: TrackMatcher.secondsOf(track.durationText), bytes)) {
+            error("검증된 고음질 음원의 파일이 표시된 음질보다 작습니다 ($bytes B)")
+        }
         return routeFromSource(context, track, stream, storable, probe, recordingVerified = true)
             ?: error("고음질 음원을 내보낼 수 없습니다")
     }

@@ -12,6 +12,7 @@ import com.music.bitchord.ko.KoEarlyHearing
 import com.music.bitchord.ko.KoHqWarp
 import com.music.bitchord.ko.KoManifestHead
 import com.music.bitchord.ko.KoOpeningClip
+import com.music.bitchord.ko.KoThinRendition
 import com.music.bitchord.ko.KoUnverifiedRows
 import com.music.bitchord.ko.KoVerifiedHead
 import com.music.bitchord.ko.KoVersionGuard
@@ -292,6 +293,8 @@ object HqAudioVerify {
         val audioMs: Long = -1L,
         /** [KO] UPG-7: this head, kept for the swap if the check accepts it. */
         val held: KoVerifiedHead.Entry? = null,
+        /** [KO] violin: the whole file's size as its server stated it; 0 when unknown or a lighter tier was read. */
+        val totalBytes: Long = 0L,
     )
 
     /** Chroma construction time inside one decode, so it can be told apart from the codec. */
@@ -558,7 +561,9 @@ object HqAudioVerify {
         // words decide; a verdict stored before they were heard is measured again.
         // The search's mark lives in memory; it is kept with the pair so a play after a
         // restart that reaches here without a search still asks for the words.
-        val needsWords = if (KoVersionGuard.risky(sourceId, trackId)) {
+        // [KO] violin: a row credited to nobody (Various Artists) is asked its words like a risky one.
+        val nameless = KoVersionGuard.namesNobody(stream.trackArtist) && !KoVersionGuard.namesNobody(target.artist)
+        val needsWords = if (nameless || KoVersionGuard.risky(sourceId, trackId)) {
             HqVerificationStore.markRisky(context, youtubeId, sourceId, trackId)
             true
         } else {
@@ -631,6 +636,7 @@ object HqAudioVerify {
                     // already at hand the candidate is heard all the same; when they
                     // are not, the sound decides alone, as it always did.
                     val hearer = wordsHearer()
+                    val doubt = if (nameless) "credited to nobody" else "another version in the search"
                     val keptWords = SongHearing.keptYouTubeWords(context, youtubeId)
                         ?.takeIf { hearer != KoVersionGuard.Hearer.NONE }
                     val youtubeWords = if (needsWords) {
@@ -640,7 +646,7 @@ object HqAudioVerify {
                                 if (noHearerLogged.add(youtubeId)) {
                                     TrackLog.i(
                                         TAG,
-                                        "hq-verify: '${target.title}' $sourceName another version in the search; " +
+                                        "hq-verify: '${target.title}' $sourceName $doubt; " +
                                             "no Groq or Deepgram key to hear it, stays on YouTube",
                                         youtubeId,
                                     )
@@ -649,7 +655,7 @@ object HqAudioVerify {
                             }
                             TrackLog.d(
                                 TAG,
-                                "hq-verify: '${target.title}' $sourceName another version in the search; " +
+                                "hq-verify: '${target.title}' $sourceName $doubt; " +
                                     "words check waits for the YouTube copy's words",
                                 youtubeId,
                             )
@@ -749,6 +755,12 @@ object HqAudioVerify {
                         UnmeasuredMemory.note(sourceId, trackId, "incomplete head", restSource = false)
                         return@coroutineScope Outcome.Unavailable(transient = true)
                     }
+                    // [KO] violin: a "320 kbps" row whose file is a 96 kbps one is a downgrade wearing a badge.
+                    if (KoThinRendition.thin(stream.format, stream.durationSec ?: target.durationSec, candidate.totalBytes)) {
+                        logVerdict(target.title, sourceName, 0, 0L, accepted = false, about = youtubeId, measured = false, why = "thin file ${candidate.totalBytes} B")
+                        UnmeasuredMemory.note(sourceId, trackId, "thin file", restSource = false)
+                        return@coroutineScope Outcome.Unavailable()
+                    }
                     val alignStarted = System.nanoTime()
                     val aligned = runCatching {
                         ChromaAlignment.align(
@@ -842,6 +854,12 @@ object HqAudioVerify {
                     if (decision == KoVersionGuard.Decision.UNMEASURED) {
                         return@coroutineScope Outcome.Unavailable(transient = true)
                     }
+                    // [KO] violin: accepted on the sound, yet its words were not heard to be the song's.
+                    if (nameless && decision == KoVersionGuard.Decision.ACCEPT && !KoVersionGuard.namelessStands(words)) {
+                        TrackLog.i(TAG, "hq-verify: '${target.title}' $sourceName credited to nobody, words not settled; stays on YouTube", youtubeId)
+                        UnmeasuredMemory.note(sourceId, trackId, "nameless words", restSource = false)
+                        return@coroutineScope Outcome.Unavailable()
+                    }
                     if (decision == KoVersionGuard.Decision.REJECT) {
                         // [KO] RG2-1: an unasked "different" skips the swap for this run and
                         // stores nothing; a false one must not delete a good lossless copy.
@@ -878,7 +896,8 @@ object HqAudioVerify {
                         // words accept this play and are asked again.
                         wordsChecked = KoVersionGuard.settles(words),
                         // [KO] No other version in this row's search: a cached copy of it owes no hearing.
-                        guardSeen = !needsWords,
+                        // [KO] violin: a row admitted on a doubted credit still owes its words before the library may fetch it.
+                        guardSeen = !needsWords && !KoUnverifiedRows.contains(sourceId, trackId),
                     )
                     HqVerificationStore.put(context, youtubeId, sourceId, trackId, verified)
                     // [KO] RG1-4: count a doubted pair's hearing that did not settle it.
@@ -1312,7 +1331,7 @@ object HqAudioVerify {
             offsetMs = shiftMs,
             rate = pace,
         )
-        val check = if (unaligned) KoUnverifiedRows.unalignedWords { compare(it, 1.0) } else compare(offsetMs, rate)
+        val check = if (unaligned) KoUnverifiedRows.unalignedWords { compare(it, 1.0) } else compare(offsetMs, rate).let(KoVersionGuard::judged)
         TrackLog.i(
             TAG,
             "hq-verify words: ${check.verdict.name.lowercase()} youtube=${check.referenceWords} " +
@@ -1520,7 +1539,12 @@ object HqAudioVerify {
         } else {
             null
         }
-        val verdict = KoVersionGuard.cachedCopyVerdict(words)
+        // [KO] violin: a copy credited to nobody is settled only by the song's own words.
+        val verdict = KoVersionGuard.cachedCopyVerdict(words).let {
+            val unsettled = it == KoVersionGuard.CachedCopy.SETTLED && KoVersionGuard.namesNobody(stored.sourceArtist) &&
+                !KoVersionGuard.namelessStands(words)
+            if (unsettled) KoVersionGuard.CachedCopy.ASK_AGAIN else it
+        }
         when (verdict) {
             KoVersionGuard.CachedCopy.REFUSE -> {
                 cachedCopyAttempts.remove(key)
@@ -2045,6 +2069,8 @@ object HqAudioVerify {
                     maxRead = slot.maxRead,
                     audioMs = slot.audioMs,
                     held = held,
+                    // A manifest's own size is smaller than the segments read through it.
+                    totalBytes = if (stream === original && slot.headTotal >= bytes) slot.headTotal else 0L,
                 ),
             )
         } catch (cancelled: CancellationException) {
