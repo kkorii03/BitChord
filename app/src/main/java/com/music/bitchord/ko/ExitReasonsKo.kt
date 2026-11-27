@@ -37,6 +37,20 @@ internal object ExitReasonsKo {
     /** Enough of the ANR stack to see the call that stalled the main thread. */
     private const val MAX_ANR_TRACE_LINES = 40
 
+    /** Threads and frames come before the memory maps and log buffers; this is far more than they take. */
+    private const val MAX_TOMBSTONE_BYTES = 4 * 1024 * 1024
+
+    private fun readCapped(stream: java.io.InputStream, cap: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(64 * 1024)
+        while (out.size() < cap) {
+            val n = stream.read(buffer, 0, minOf(buffer.size, cap - out.size()))
+            if (n < 0) break
+            out.write(buffer, 0, n)
+        }
+        return out.toByteArray()
+    }
+
     fun report(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
 
@@ -86,6 +100,24 @@ internal object ExitReasonsKo {
                     }
                 }.onFailure {
                     TrackLog.w(TAG, "exit-reason: ANR trace unreadable: ${it.message}")
+                }
+            }
+            // [KO] native-crash: Android hands the tombstone over as protobuf
+            // from API 31. Without it a CRASH_NATIVE line says nothing about
+            // which library or thread went down (11-27 16:55:58).
+            if (exit.reason == ApplicationExitInfo.REASON_CRASH_NATIVE &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            ) {
+                runCatching {
+                    val stream = exit.traceInputStream
+                    if (stream == null) {
+                        TrackLog.w(TAG, "exit-native: no tombstone attached")
+                    } else {
+                        val bytes = stream.use { readCapped(it, MAX_TOMBSTONE_BYTES) }
+                        nativeCrashLines(bytes).forEach { line -> TrackLog.i(TAG, line) }
+                    }
+                }.onFailure {
+                    TrackLog.w(TAG, "exit-native: tombstone unreadable: ${it.message}")
                 }
             }
             if (exit.timestamp > newest) newest = exit.timestamp
