@@ -81,6 +81,30 @@ internal object QuickJsExecutor {
      */
     private const val ENGINES_PER_MODULE = 3
 
+    private const val STACK_BYTES = 512 * 1024L
+
+    /**
+     * [KO] freeze1127: one interpreter is built at a time, process-wide.
+     * 11-27 16:54:40 four modules were built at once on Default; none of the
+     * four ever logged its exports, the app went silent 36 s later and died
+     * with CRASH_NATIVE. A build is ~10 ms, so taking turns costs nothing a
+     * listener notices.
+     */
+    private val building = Mutex()
+
+    /**
+     * QuickJS measures its stack limit from the native thread it last saw, and
+     * `evaluate` does not refresh it (quickjs-kt 1.0.14: only
+     * `withNativeContext` and `close` call `updateStackTop`). A call that
+     * resumes on another Default thread would be checked against the wrong
+     * stack, so the top is taken again right before each evaluate.
+     */
+    @OptIn(com.dokar.quickjs.ExperimentalQuickJsApi::class)
+    private suspend inline fun <reified T> QuickJs.evalHere(code: String): T {
+        withNativeContext { }
+        return evaluate<T>(code)
+    }
+
     /**
      * One module's interpreters, and the source to make more from.
      *
@@ -153,17 +177,17 @@ internal object QuickJsExecutor {
     }
 
     /** A fresh interpreter with [jsCode] evaluated into it, or a throw saying why not. */
-    private suspend fun newEngine(jsCode: String, fetchBase: String): QuickJs {
+    private suspend fun newEngine(jsCode: String, fetchBase: String): QuickJs = building.withLock {
         val qjs = QuickJs.create(Dispatchers.Default)
-        qjs.maxStackSize = 512 * 1024L
+        qjs.maxStackSize = STACK_BYTES
         try {
             bindConsole(qjs)
             bindAsyncFetch(qjs, fetchBase)
 
-            qjs.evaluate<String>(POLYFILLS)
+            qjs.evalHere<String>(POLYFILLS)
             val cleanCode = preprocessModuleCode(jsCode)
 
-            qjs.evaluate<String>(
+            qjs.evalHere<String>(
                 """
                 var __spine_iife_error = null;
                 var __spine_mod = (function() {
@@ -185,12 +209,12 @@ internal object QuickJsExecutor {
                 """.trimIndent()
             )
 
-            val iifeError = qjs.evaluate<String>("__spine_iife_error || 'none'")
+            val iifeError = qjs.evalHere<String>("__spine_iife_error || 'none'")
             if (iifeError != "none") throw IllegalStateException("Module init error: $iifeError")
 
-            val keys = qjs.evaluate<String>("Object.keys(__spine_mod).join(', ')")
+            val keys = qjs.evalHere<String>("Object.keys(__spine_mod).join(', ')")
             TrackLog.d(TAG, "  Module exports: [$keys]")
-            return qjs
+            qjs
         } catch (e: Throwable) {
             qjs.close()
             throw e
@@ -261,7 +285,7 @@ internal object QuickJsExecutor {
     ): Result<String> =
         run {
             runCatching {
-                val hasFn = qjs.evaluate<String>("typeof __spine_mod['$functionName']")
+                val hasFn = qjs.evalHere<String>("typeof __spine_mod['$functionName']")
                 if (hasFn != "function") {
                     throw IllegalStateException("$functionName is not a function on module $moduleId")
                 }
@@ -271,7 +295,7 @@ internal object QuickJsExecutor {
                 // evaluate() converts a Promise via toString() instead of awaiting it.
                 // Workaround: store the resolved JSON in a global var inside the async
                 // IIFE, then read it in a second evaluate() call.
-                qjs.evaluate<String>(
+                qjs.evalHere<String>(
                     """
                     var __spine_resolved_json = undefined;
                     (async function() {
@@ -290,7 +314,7 @@ internal object QuickJsExecutor {
                     """.trimIndent()
                 )
 
-                val rawResult = qjs.evaluate<String>("__spine_resolved_json")
+                val rawResult = qjs.evalHere<String>("__spine_resolved_json")
                 TrackLog.d(TAG, "  callExport result (${rawResult.length} chars): ${rawResult.take(500)}")
                 rawResult
             }.onFailure {
@@ -391,7 +415,11 @@ internal object QuickJsExecutor {
                     val url = resolveUrl(rawUrl, fetchBase)
 
                     TrackLog.d(TAG, "  → fetch $method ${redactModuleUrl(url)}")
-                    val (statusCode, responseBody) = fetchUrlSync(url, method, headersJson, body)
+                    // [KO] freeze1127: OkHttp blocks for up to 20 + 20 s; on the
+                    // job dispatcher (Default) that is a CPU thread gone per fetch.
+                    val (statusCode, responseBody) = withContext(Dispatchers.IO) {
+                        fetchUrlSync(url, method, headersJson, body)
+                    }
                     TrackLog.d(TAG, "    HTTP $statusCode (${responseBody.length} bytes)")
 
                     val respObj = JSONObject().apply {
@@ -415,7 +443,7 @@ internal object QuickJsExecutor {
         }
 
         // Expose a web-compatible fetch() surface over the native binding.
-        qjs.evaluate<Unit>(
+        qjs.evalHere<Unit>(
             """
             var fetch = async function(url, options) {
                 var method = 'GET';
